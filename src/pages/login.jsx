@@ -7,8 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Label } from '@/components/ui/label'
-import { Header } from '@/components/layout/Header'
-import { Footer } from '@/components/layout/Footer'
+import { AuthLayout } from '@/components/layout/AuthLayout'
 import { useAuth } from '@/hooks/useAuth'
 
 const loginSchema = z.object({
@@ -50,20 +49,9 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <Header />
-      
-      <main className="flex-1 flex items-center justify-center py-12 px-6">
-        <div className="w-full max-w-md">
-          <div className="bg-white shadow-xl rounded-xl p-8">
-            <div className="text-center mb-8">
-              <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                Sistema Licitação
-              </h1>
-              <p className="text-gray-600">Faça login para continuar</p>
-            </div>
-
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+    <AuthLayout title="Entrar" subtitle="Acesse sua conta">
+      <div className="bg-white shadow-2xl rounded-2xl p-8 md:p-10 border border-gray-100 max-w-md mx-auto">
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
               <div>
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -100,32 +88,20 @@ export function LoginPage() {
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? 'Entrando...' : 'Entrar'}
               </Button>
-            </form>
+        </form>
 
-            <div className="mt-6 text-center">
-              <p className="text-sm text-gray-600">
-                Não tem uma conta?{' '}
-                <Link href="/cadastro">
-                  <span className="text-orange-600 hover:text-orange-700 underline decoration-2 cursor-pointer">
-                    Cadastre-se
-                  </span>
-                </Link>
-              </p>
-            </div>
-
-            <div className="mt-4 text-center">
-              <Link href="/">
-                <span className="text-sm text-gray-500 hover:text-orange-500 cursor-pointer">
-                  ← Voltar para o início
-                </span>
-              </Link>
-            </div>
-          </div>
+        <div className="mt-6 pt-6 border-t border-gray-200 text-center">
+          <p className="text-sm text-gray-600">
+            Não tem uma conta?{' '}
+            <Link href="/cadastro">
+              <a className="text-orange-600 hover:text-orange-700 font-semibold hover:underline cursor-pointer">
+                Cadastre-se aqui
+              </a>
+            </Link>
+          </p>
         </div>
-      </main>
-
-      <Footer />
-    </div>
+      </div>
+    </AuthLayout>
   )
 }
 

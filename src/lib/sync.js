@@ -324,15 +324,43 @@ export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
       const documentosParaSalvar = documentos.map(doc => {
         // Extrair URL do documento (pode vir em vários formatos)
         const urlDocumento = doc.urlDocumento || doc.url || doc.linkDocumento || doc.link || doc.urlArquivo || null
+        const nomeArquivo = doc.nomeArquivo || doc.nomeDocumento || doc.nome || 'Documento sem nome'
+        
+        // Extrair extensão do arquivo
+        const extensao = nomeArquivo.includes('.') 
+          ? nomeArquivo.split('.').pop().toLowerCase() 
+          : null
+        
+        // Tentar determinar tipo MIME pela extensão
+        const tiposMime = {
+          'pdf': 'application/pdf',
+          'doc': 'application/msword',
+          'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'xls': 'application/vnd.ms-excel',
+          'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'jpg': 'image/jpeg',
+          'jpeg': 'image/jpeg',
+          'png': 'image/png',
+          'zip': 'application/zip',
+          'rar': 'application/x-rar-compressed',
+        }
+        const tipoMime = extensao ? tiposMime[extensao] || 'application/octet-stream' : null
         
         return {
           licitacao_id: licitacaoId,
           tipo_documento_id: doc.codigoTipoDocumento || doc.tipoDocumentoId || doc.codigoTipo || null,
           tipo_documento_nome: doc.nomeTipoDocumento || doc.tipoDocumentoNome || doc.tipoDocumento?.nome || null,
-          nome_arquivo: doc.nomeArquivo || doc.nomeDocumento || doc.nome || 'Documento sem nome',
+          nome_arquivo: nomeArquivo,
           url_documento: urlDocumento, // LINKS DOS DOCUMENTOS - PRIORIDADE MÁXIMA
+          url_original: urlDocumento, // Preservar URL original
           tamanho_bytes: doc.tamanhoArquivo || doc.tamanhoBytes || doc.tamanho || null,
           data_publicacao: doc.dataPublicacao || doc.dataPublicacaoDocumento || null,
+          extensao: extensao,
+          tipo_mime: tipoMime || doc.tipoMime || null,
+          dados_complementares: {
+            // Preservar todos os dados originais do documento
+            dadosOriginais: doc,
+          },
         }
       })
 
@@ -435,89 +463,6 @@ async function salvarLicitacaoBasica(licitacao, userId = null) {
 /**
  * Busca licitação completa do banco (com itens e documentos)
  */
-/**
- * Busca licitações do banco por data (para o boletim diário)
- * @param {string} dataPublicacao - Data no formato AAAAMMDD (ex: "20251201")
- */
-export async function buscarLicitacoesDoBanco(dataPublicacao) {
-  if (!supabase || !dataPublicacao) return null
-
-  try {
-    console.log('📦 [Buscar Banco] Buscando licitações para data:', dataPublicacao)
-    
-    // Formatar data para busca no banco
-    // O banco pode ter a data em formato DATE (YYYY-MM-DD) ou texto (AAAAMMDD)
-    // Vamos tentar ambos os formatos
-    
-    // Formato 1: AAAAMMDD -> YYYY-MM-DD
-    const dataFormatada1 = dataPublicacao.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')
-    // Formato 2: AAAAMMDD (texto)
-    const dataFormatada2 = dataPublicacao
-
-    // Tentar buscar com ambos os formatos
-    let licitacoes = []
-    
-    // Primeiro tentar formato DATE
-    const { data: licitacoes1, error: error1 } = await supabase
-      .from('licitacoes')
-      .select('*')
-      .eq('data_publicacao_pncp', dataFormatada1)
-      .order('valor_total_estimado', { ascending: false })
-
-    if (!error1 && licitacoes1 && licitacoes1.length > 0) {
-      licitacoes = licitacoes1
-    } else {
-      // Tentar formato texto
-      const { data: licitacoes2, error: error2 } = await supabase
-        .from('licitacoes')
-        .select('*')
-        .eq('data_publicacao_pncp', dataFormatada2)
-        .order('valor_total_estimado', { ascending: false })
-
-      if (!error2 && licitacoes2) {
-        licitacoes = licitacoes2
-      } else if (error2) {
-        console.error('❌ [Buscar Banco] Erro:', error2)
-        return null
-      }
-    }
-
-    console.log(`✅ [Buscar Banco] ${licitacoes.length} licitações encontradas no banco`)
-
-    // Converter para formato esperado pelo frontend
-    return licitacoes.map(lic => ({
-      numeroControlePNCP: lic.numero_controle_pncp,
-      numeroCompra: lic.numero_compra,
-      anoCompra: lic.ano_compra,
-      processo: lic.processo,
-      objetoCompra: lic.objeto_compra,
-      informacaoComplementar: lic.informacao_complementar,
-      codigoModalidadeContratacao: lic.modalidade_id,
-      modalidadeNome: lic.modalidade_nome,
-      valorTotalEstimado: lic.valor_total_estimado,
-      dataAberturaProposta: lic.data_abertura_proposta,
-      dataEncerramentoProposta: lic.data_encerramento_proposta,
-      dataPublicacaoPNCP: lic.data_publicacao_pncp,
-      orgaoEntidade: {
-        cnpj: lic.orgao_cnpj,
-        razaosocial: lic.orgao_razao_social,
-      },
-      municipio: {
-        codigoIBGE: lic.municipio_codigo_ibge,
-        nomeIBGE: lic.municipio_nome,
-        uf: lic.uf_sigla,
-      },
-      unidadeOrgao: {
-        municipioNome: lic.municipio_nome,
-        ufSigla: lic.uf_sigla,
-      },
-    }))
-  } catch (error) {
-    console.error('❌ [Buscar Banco] Erro:', error)
-    return null
-  }
-}
-
 export async function buscarLicitacaoDoBanco(numeroControlePNCP) {
   if (!supabase || !numeroControlePNCP) return null
 
@@ -552,6 +497,529 @@ export async function buscarLicitacaoDoBanco(numeroControlePNCP) {
   } catch (error) {
     console.error('❌ [Buscar Banco] Erro:', error)
     return null
+  }
+}
+
+/**
+ * Gera hash MD5 dos filtros para comparação rápida
+ */
+function gerarHashFiltros(filtros) {
+  const crypto = window.crypto || window.msCrypto
+  if (crypto && crypto.subtle) {
+    // Usar Web Crypto API se disponível (mais seguro)
+    const str = JSON.stringify(filtros)
+    // Para simplificar, vamos usar uma função hash simples
+    let hash = 0
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i)
+      hash = ((hash << 5) - hash) + char
+      hash = hash & hash // Convert to 32bit integer
+    }
+    return Math.abs(hash).toString(16)
+  }
+  // Fallback: usar hash simples baseado em string
+  const str = JSON.stringify(filtros)
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash
+  }
+  return Math.abs(hash).toString(16)
+}
+
+/**
+ * Gera link direto do PNCP para uma contratação
+ */
+function gerarLinkPNCP(numeroControlePNCP) {
+  if (!numeroControlePNCP) return null
+  return `https://pncp.gov.br/app/contratacao/${encodeURIComponent(numeroControlePNCP)}`
+}
+
+/**
+ * Salva um lote de licitações no banco e retorna os IDs salvos
+ * Agora inclui TODOS os campos disponíveis da API
+ */
+async function salvarLoteLicitacoes(licitacoes) {
+  if (!supabase || !licitacoes || licitacoes.length === 0) {
+    return { ids: [], numeros: [] }
+  }
+
+  const idsSalvos = []
+  const numerosSalvos = []
+
+  try {
+    // Processar em lotes menores para evitar timeout
+    const tamanhoLote = 50
+    for (let i = 0; i < licitacoes.length; i += tamanhoLote) {
+      const lote = licitacoes.slice(i, i + tamanhoLote)
+      
+      for (const licitacao of lote) {
+        try {
+          // Verificar se já existe
+          const { data: existente } = await supabase
+            .from('licitacoes')
+            .select('id')
+            .eq('numero_controle_pncp', licitacao.numeroControlePNCP)
+            .maybeSingle()
+
+          // Preparar dados_complementares com TODOS os campos extras
+          const dadosComplementares = {
+            // Campos que não estão na tabela principal
+            tipoInstrumentoConvocatorioId: licitacao.tipoInstrumentoConvocatorioId,
+            tipoInstrumentoConvocatorioNome: licitacao.tipoInstrumentoConvocatorioNome,
+            sequencialCompra: licitacao.sequencialCompra,
+            srp: licitacao.srp,
+            amparoLegal: licitacao.amparoLegal ? {
+              codigo: licitacao.amparoLegal.codigo,
+              nome: licitacao.amparoLegal.nome,
+              descricao: licitacao.amparoLegal.descricao,
+            } : null,
+            justificativaPresencial: licitacao.justificativaPresencial,
+            usuarioNome: licitacao.usuarioNome,
+            orgaoSubRogado: licitacao.orgaoSubRogado ? {
+              cnpj: licitacao.orgaoSubRogado.cnpj,
+              razaosocial: licitacao.orgaoSubRogado.razaosocial,
+              poderId: licitacao.orgaoSubRogado.poderId,
+              esferaId: licitacao.orgaoSubRogado.esferaId,
+            } : null,
+            unidadeSubRogada: licitacao.unidadeSubRogada ? {
+              codigoUnidade: licitacao.unidadeSubRogada.codigoUnidade,
+              nomeUnidade: licitacao.unidadeSubRogada.nomeUnidade,
+              codigoIbge: licitacao.unidadeSubRogada.codigoIbge,
+              municipioNome: licitacao.unidadeSubRogada.municipioNome,
+              ufSigla: licitacao.unidadeSubRogada.ufSigla,
+              ufNome: licitacao.unidadeSubRogada.ufNome,
+            } : null,
+            // Preservar dados originais completos da API
+            dadosOriginais: licitacao,
+          }
+
+          const dadosLicitacao = {
+            numero_controle_pncp: licitacao.numeroControlePNCP,
+            numero_compra: licitacao.numeroCompra,
+            ano_compra: licitacao.anoCompra,
+            processo: licitacao.processo,
+            objeto_compra: licitacao.objetoCompra,
+            informacao_complementar: licitacao.informacaoComplementar,
+            modalidade_id: licitacao.codigoModalidadeContratacao || licitacao.modalidadeId,
+            modalidade_nome: licitacao.modalidadeNome,
+            modo_disputa_id: licitacao.codigoModoDisputa || licitacao.modoDisputaId,
+            modo_disputa_nome: licitacao.modoDisputaNome,
+            situacao_id: licitacao.codigoSituacaoCompra || licitacao.situacaoCompraId,
+            situacao_nome: licitacao.situacaoCompraNome,
+            valor_total_estimado: licitacao.valorTotalEstimado,
+            valor_total_homologado: licitacao.valorTotalHomologado,
+            data_abertura_proposta: licitacao.dataAberturaProposta || licitacao.dataAberturaPropostaData,
+            data_encerramento_proposta: licitacao.dataEncerramentoProposta || licitacao.dataEncerramentoPropostaData,
+            data_publicacao_pncp: licitacao.dataPublicacaoPNCP || licitacao.dataPublicacao,
+            link_sistema_origem: licitacao.linkSistemaOrigem,
+            // NOVOS CAMPOS
+            tipo_instrumento_convocatorio_id: licitacao.tipoInstrumentoConvocatorioId,
+            tipo_instrumento_convocatorio_nome: licitacao.tipoInstrumentoConvocatorioNome,
+            sequencial_compra: licitacao.sequencialCompra,
+            srp: licitacao.srp || false,
+            amparo_legal_codigo: licitacao.amparoLegal?.codigo,
+            amparo_legal_nome: licitacao.amparoLegal?.nome,
+            amparo_legal_descricao: licitacao.amparoLegal?.descricao,
+            justificativa_presencial: licitacao.justificativaPresencial,
+            usuario_nome: licitacao.usuarioNome,
+            // Órgão subrogado
+            orgao_subrogado_cnpj: licitacao.orgaoSubRogado?.cnpj,
+            orgao_subrogado_razao_social: licitacao.orgaoSubRogado?.razaosocial,
+            orgao_subrogado_poder_id: licitacao.orgaoSubRogado?.poderId,
+            orgao_subrogado_poder_nome: licitacao.orgaoSubRogado?.poderNome,
+            orgao_subrogado_esfera_id: licitacao.orgaoSubRogado?.esferaId,
+            orgao_subrogado_esfera_nome: licitacao.orgaoSubRogado?.esferaNome,
+            // Unidade subrogada
+            unidade_subrogada_codigo: licitacao.unidadeSubRogada?.codigoUnidade,
+            unidade_subrogada_nome: licitacao.unidadeSubRogada?.nomeUnidade,
+            unidade_subrogada_municipio_codigo_ibge: licitacao.unidadeSubRogada?.codigoIbge,
+            unidade_subrogada_municipio_nome: licitacao.unidadeSubRogada?.municipioNome,
+            unidade_subrogada_uf_sigla: licitacao.unidadeSubRogada?.ufSigla,
+            unidade_subrogada_uf_nome: licitacao.unidadeSubRogada?.ufNome,
+            // Órgão principal
+            orgao_cnpj: licitacao.orgaoEntidade?.cnpj,
+            orgao_razao_social: licitacao.orgaoEntidade?.razaosocial,
+            orgao_poder_id: licitacao.orgaoEntidade?.poderId,
+            orgao_poder_nome: licitacao.orgaoEntidade?.poderNome,
+            orgao_esfera_id: licitacao.orgaoEntidade?.esferaId,
+            orgao_esfera_nome: licitacao.orgaoEntidade?.esferaNome,
+            // Unidade principal
+            unidade_codigo: licitacao.unidadeOrgao?.codigoUnidade,
+            unidade_nome: licitacao.unidadeOrgao?.nomeUnidade,
+            municipio_codigo_ibge: licitacao.municipio?.codigoIBGE || licitacao.unidadeOrgao?.codigoIbge,
+            municipio_nome: licitacao.municipio?.nomeIBGE || licitacao.unidadeOrgao?.municipioNome,
+            uf_sigla: licitacao.municipio?.uf || licitacao.unidadeOrgao?.ufSigla,
+            uf_nome: licitacao.unidadeOrgao?.ufNome,
+            // Link PNCP
+            link_pncp: gerarLinkPNCP(licitacao.numeroControlePNCP),
+            // Dados complementares (JSONB com tudo)
+            dados_complementares: dadosComplementares,
+            sincronizado_em: new Date().toISOString(),
+            data_atualizacao: new Date().toISOString(),
+          }
+
+          let licitacaoId
+
+          if (existente) {
+            // Atualizar existente
+            const { data: atualizada } = await supabase
+              .from('licitacoes')
+              .update(dadosLicitacao)
+              .eq('id', existente.id)
+              .select('id')
+              .single()
+            
+            licitacaoId = atualizada?.id || existente.id
+          } else {
+            // Inserir nova
+            const { data: nova } = await supabase
+              .from('licitacoes')
+              .insert(dadosLicitacao)
+              .select('id')
+              .single()
+            
+            licitacaoId = nova?.id
+          }
+
+          if (licitacaoId) {
+            idsSalvos.push(licitacaoId)
+            numerosSalvos.push(licitacao.numeroControlePNCP)
+          }
+        } catch (err) {
+          console.warn(`⚠️ [Salvar Lote] Erro ao salvar licitação ${licitacao.numeroControlePNCP}:`, err.message)
+          // Continuar com as próximas mesmo se uma falhar
+        }
+      }
+    }
+
+    return { ids: idsSalvos, numeros: numerosSalvos }
+  } catch (error) {
+    console.error('❌ [Salvar Lote] Erro ao salvar lote:', error)
+    return { ids: idsSalvos, numeros: numerosSalvos }
+  }
+}
+
+/**
+ * Busca e salva licitações em lotes de 150, registrando a busca do usuário
+ * Mostra progresso em tempo real e atualiza a tabela conforme os lotes são salvos
+ * @param {Object} filtros - Filtros da busca (dataInicial, dataFinal, modalidade, etc)
+ * @param {string} userId - ID do usuário
+ * @param {Function} onProgress - Callback de progresso (loteAtual, totalLotes, totalEncontrado, licitacoesSalvas)
+ * @returns {Promise<Object>} Resultado da busca com licitações e IDs salvos
+ */
+export async function buscarESalvarLicitacoesEmLotes(filtros, userId, onProgress = null) {
+  if (!supabase || !userId) {
+    throw new Error('Supabase ou userId não configurado')
+  }
+
+  const inicioBusca = Date.now()
+  let todasLicitacoes = []
+  let todasIdsSalvas = []
+  let todasNumerosSalvos = []
+  let buscaId = null
+
+  try {
+    // 1. Verificar se já existe busca similar em cache
+    const filtrosHash = gerarHashFiltros(filtros)
+    console.log('🔍 [Buscar e Salvar] Verificando cache...', { filtrosHash, userId })
+    
+    const { data: buscaExistente, error: errorCache } = await supabase
+      .from('buscas_usuario')
+      .select('*')
+      .eq('usuario_id', userId)
+      .eq('filtros_hash', filtrosHash)
+      .eq('cache_valido', true)
+      .gt('expira_em', new Date().toISOString())
+      .order('data_busca', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (errorCache) {
+      console.warn('⚠️ [Buscar e Salvar] Erro ao verificar cache:', errorCache)
+    }
+
+    // Se cache válido encontrado, retornar do banco
+    if (buscaExistente && buscaExistente.licitacoes_ids && buscaExistente.licitacoes_ids.length > 0) {
+      console.log('✅ [Buscar e Salvar] Cache encontrado! Retornando do banco...')
+      console.log('📊 [Buscar e Salvar] Cache:', {
+        buscaId: buscaExistente.id,
+        totalEncontrado: buscaExistente.total_encontrado,
+        dataBusca: buscaExistente.data_busca,
+        expiraEm: buscaExistente.expira_em,
+      })
+      
+      const { data: licitacoesDoBanco, error: errorLicitacoes } = await supabase
+        .from('licitacoes')
+        .select('*')
+        .in('id', buscaExistente.licitacoes_ids)
+        .order('data_publicacao_pncp', { ascending: false })
+
+      if (errorLicitacoes) {
+        console.error('❌ [Buscar e Salvar] Erro ao buscar licitações do cache:', errorLicitacoes)
+      } else {
+        console.log(`✅ [Buscar e Salvar] ${licitacoesDoBanco?.length || 0} licitações carregadas do cache`)
+        
+        // Notificar progresso com dados do cache
+        if (onProgress) {
+          onProgress({
+            loteAtual: 1,
+            totalLotes: 1,
+            totalEncontrado: licitacoesDoBanco?.length || 0,
+            licitacoesSalvas: licitacoesDoBanco || [],
+            todasLicitacoes: licitacoesDoBanco || [],
+            salvando: false,
+            finalizado: true,
+            origem: 'cache',
+          })
+        }
+
+        return {
+          licitacoes: licitacoesDoBanco || [],
+          totalEncontrado: buscaExistente.total_encontrado || 0,
+          idsSalvos: buscaExistente.licitacoes_ids || [],
+          numerosSalvos: buscaExistente.licitacoes_numeros || [],
+          origem: 'cache',
+          buscaId: buscaExistente.id,
+        }
+      }
+    }
+    
+    console.log('📡 [Buscar e Salvar] Cache não encontrado ou inválido. Buscando da API...')
+
+    // 2. Buscar da API em lotes de 150
+    console.log('📡 [Buscar e Salvar] Buscando da API em lotes de 150...')
+    
+    const { buscarContratacoesPorData } = await import('./pncp')
+    
+    const TAMANHO_LOTE = 50 // Lotes de 50 licitações (padrão da API, máximo confiável)
+    let paginaAtual = 1
+    let continuar = true
+    let loteNumero = 0
+
+    // Buscar em lotes de 50 para garantir compatibilidade com a API
+    while (continuar) {
+      loteNumero++
+      console.log(`📦 [Buscar e Salvar] Processando lote ${loteNumero} (página ${paginaAtual})...`)
+
+      try {
+        const resultadoLote = await buscarContratacoesPorData({
+          ...filtros,
+          pagina: paginaAtual,
+          tamanhoPagina: TAMANHO_LOTE,
+        })
+
+        if (!resultadoLote?.data || resultadoLote.data.length === 0) {
+          console.log(`✅ [Buscar e Salvar] Nenhuma licitação encontrada no lote ${loteNumero}. Finalizando.`)
+          continuar = false
+          break
+        }
+
+        const licitacoesLote = resultadoLote.data
+        console.log(`✅ [Buscar e Salvar] Lote ${loteNumero}: ${licitacoesLote.length} licitações encontradas`)
+
+      // Salvar lote imediatamente
+      console.log(`💾 [Buscar e Salvar] Salvando lote ${loteNumero} no banco...`)
+      const { ids, numeros } = await salvarLoteLicitacoes(licitacoesLote)
+      todasIdsSalvas.push(...ids)
+      todasNumerosSalvos.push(...numeros)
+      todasLicitacoes.push(...licitacoesLote)
+      
+      console.log(`✅ [Buscar e Salvar] Lote ${loteNumero} salvo: ${ids.length} licitações`)
+
+        // Buscar licitações salvas do banco para retornar dados completos
+        let licitacoesSalvas = []
+        if (ids.length > 0) {
+          const { data: licitacoesDoBanco } = await supabase
+            .from('licitacoes')
+            .select('*')
+            .in('id', ids)
+            .order('data_publicacao_pncp', { ascending: false })
+          
+          licitacoesSalvas = licitacoesDoBanco || []
+        }
+
+        // Chamar callback de progresso com as licitações salvas para atualizar a tabela
+        if (onProgress) {
+          onProgress({
+            loteAtual: loteNumero,
+            totalLotes: resultadoLote.totalPaginas || '?',
+            totalEncontrado: todasLicitacoes.length,
+            licitacoesSalvas: licitacoesSalvas, // Licitações deste lote para atualizar a tabela
+            todasLicitacoes: todasLicitacoes, // Todas as licitações acumuladas
+            salvando: true,
+            finalizado: false,
+          })
+        }
+
+        // Verificar se há mais páginas
+        const totalPaginas = resultadoLote.totalPaginas || 1
+        if (paginaAtual >= totalPaginas || licitacoesLote.length < TAMANHO_LOTE) {
+          continuar = false
+          console.log(`✅ [Buscar e Salvar] Todas as páginas processadas. Total: ${todasLicitacoes.length} licitações`)
+        } else {
+          paginaAtual++
+          // Pequeno delay entre lotes para não sobrecarregar a API
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+      } catch (error) {
+        console.error(`❌ [Buscar e Salvar] Erro ao buscar lote ${loteNumero}:`, error)
+        
+        // Se for erro 400, pode ser problema com parâmetros ou data inválida
+        if (error.message?.includes('400') || error.message?.includes('Bad Request')) {
+          console.warn('⚠️ [Buscar e Salvar] Erro 400 - Verifique se a data é válida e se há licitações para esta data')
+          
+          // Verificar se a data é futura
+          const dataInicial = filtros.dataInicial
+          if (dataInicial) {
+            const ano = parseInt(dataInicial.substring(0, 4))
+            const mes = parseInt(dataInicial.substring(4, 6))
+            const dia = parseInt(dataInicial.substring(6, 8))
+            const dataBusca = new Date(ano, mes - 1, dia)
+            const hoje = new Date()
+            
+            if (dataBusca > hoje) {
+              console.warn(`⚠️ [Buscar e Salvar] Data ${dataInicial} é futura. Não há licitações para datas futuras.`)
+            }
+          }
+        }
+        
+        // Se for primeiro lote e der erro, parar
+        if (loteNumero === 1) {
+          continuar = false
+          throw error
+        }
+        
+        // Se não for primeiro lote, continuar tentando (pode ser problema temporário)
+        paginaAtual++
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    }
+
+    // Remover duplicatas finais
+    const unicas = Array.from(
+      new Map(todasLicitacoes.map(item => [item.numeroControlePNCP, item])).values()
+    )
+
+    const idsUnicos = Array.from(new Set(todasIdsSalvas))
+    const numerosUnicos = Array.from(new Set(todasNumerosSalvos))
+
+    // Buscar todas as licitações salvas do banco para retornar dados completos
+    let licitacoesCompletas = []
+    if (idsUnicos.length > 0) {
+      const { data: todasDoBanco } = await supabase
+        .from('licitacoes')
+        .select('*')
+        .in('id', idsUnicos)
+        .order('data_publicacao_pncp', { ascending: false })
+      
+      licitacoesCompletas = todasDoBanco || []
+    }
+
+    // Chamar callback final
+    if (onProgress) {
+      onProgress({
+        loteAtual: loteNumero,
+        totalLotes: loteNumero,
+        totalEncontrado: unicas.length,
+        licitacoesSalvas: licitacoesCompletas,
+        todasLicitacoes: unicas,
+        salvando: false,
+        finalizado: true,
+        origem: 'api',
+      })
+    }
+    
+    console.log(`✅ [Buscar e Salvar] Busca concluída: ${unicas.length} licitações únicas encontradas`)
+
+    // 3. Salvar busca do usuário em buscas_usuario
+    const tempoBusca = Date.now() - inicioBusca
+    const expiraEm = new Date()
+    expiraEm.setDate(expiraEm.getDate() + 7) // Cache válido por 7 dias
+
+    const dadosBusca = {
+      usuario_id: userId,
+      filtros: filtros,
+      filtros_hash: filtrosHash,
+      total_encontrado: unicas.length,
+      licitacoes_ids: idsUnicos,
+      licitacoes_numeros: numerosUnicos,
+      tempo_busca_ms: tempoBusca,
+      origem_busca: 'api',
+      cache_valido: true,
+      expira_em: expiraEm.toISOString(),
+      sucesso: true,
+    }
+
+    const { data: buscaSalva, error: errorBusca } = await supabase
+      .from('buscas_usuario')
+      .insert(dadosBusca)
+      .select()
+      .single()
+
+    if (errorBusca) {
+      console.error('❌ [Buscar e Salvar] Erro ao salvar busca:', errorBusca)
+    } else {
+      buscaId = buscaSalva?.id
+      console.log('✅ [Buscar e Salvar] Busca salva:', buscaId)
+    }
+
+    // 4. Log da ação do usuário
+    try {
+      await supabase
+        .from('logs_usuario')
+        .insert({
+          usuario_id: userId,
+          acao: 'buscar_boletim',
+          entidade: 'busca',
+          entidade_id: buscaId,
+          dados_acao: {
+            filtros,
+            total_encontrado: unicas.length,
+            tempo_ms: tempoBusca,
+          },
+        })
+    } catch (err) {
+      console.warn('⚠️ [Buscar e Salvar] Erro ao salvar log:', err)
+    }
+
+    return {
+      licitacoes: licitacoesCompletas.length > 0 ? licitacoesCompletas : unicas,
+      totalEncontrado: unicas.length,
+      idsSalvos: idsUnicos,
+      numerosSalvos: numerosUnicos,
+      origem: 'api',
+      buscaId,
+      tempoBusca,
+    }
+  } catch (error) {
+    console.error('❌ [Buscar e Salvar] Erro:', error)
+    
+    // Salvar busca com erro
+    if (userId && supabase) {
+      try {
+        await supabase
+          .from('buscas_usuario')
+          .insert({
+            usuario_id: userId,
+            filtros: filtros,
+            filtros_hash: gerarHashFiltros(filtros),
+            total_encontrado: todasLicitacoes.length,
+            licitacoes_ids: todasIdsSalvas,
+            licitacoes_numeros: todasNumerosSalvos,
+            tempo_busca_ms: Date.now() - inicioBusca,
+            origem_busca: 'api',
+            cache_valido: false,
+            sucesso: false,
+            erro_mensagem: error.message,
+          })
+      } catch (err) {
+        console.error('❌ [Buscar e Salvar] Erro ao salvar busca com erro:', err)
+      }
+    }
+
+    throw error
   }
 }
 

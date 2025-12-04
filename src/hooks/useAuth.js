@@ -1,27 +1,30 @@
-import { useState, useEffect } from 'react'
-import { signUp as authSignUp, signIn as authSignIn, signOut as authSignOut, getSession, saveSession, isSessionValid } from '@/lib/auth'
+import { useEffect } from 'react'
+import { useUserStore } from '@/store/userStore'
+import { signUp as authSignUp, signIn as authSignIn, getSession, saveSession, isSessionValid } from '@/lib/auth'
 
 export function useAuth() {
-  const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [profile, setProfile] = useState(null)
+  const { user, isAuthenticated, isLoading, setUser, clearUser, setLoading, logout } = useUserStore()
 
   useEffect(() => {
-    // Verificar sessão salva
+    // Verificar sessão salva apenas uma vez no mount
     const session = getSession()
     
+    console.log('🔍 useAuth - Verificando sessão:', session)
+    
     if (session && session.user && isSessionValid()) {
+      console.log('✅ Sessão válida encontrada')
       setUser(session.user)
-      setProfile(session.user) // No nosso sistema, user e profile são a mesma coisa
     } else {
-      // Sessão expirada ou inválida
-      authSignOut()
+      console.log('❌ Sessão inválida ou não encontrada')
+      // Sessão expirada ou inválida - limpar
+      clearUser()
     }
     
     setLoading(false)
-  }, [])
+  }, [setUser, clearUser, setLoading]) // Dependências corretas
 
   async function signUp(email, password, profileData) {
+    setLoading(true)
     try {
       const { data, error } = await authSignUp(email, password, profileData)
       
@@ -32,47 +35,57 @@ export function useAuth() {
         const { password_hash, ...userData } = data
         saveSession(userData)
         setUser(userData)
-        setProfile(userData)
       }
 
       return { data, error }
     } catch (error) {
+      setLoading(false)
       throw error
+    } finally {
+      setLoading(false)
     }
   }
 
   async function signIn(email, password) {
+    setLoading(true)
     try {
+      console.log('🔐 Tentando fazer login...')
       const { data, error } = await authSignIn(email, password)
       
       if (error) throw error
 
       if (data && data.user) {
+        console.log('✅ Login bem-sucedido, salvando sessão')
         saveSession(data.user)
         setUser(data.user)
-        setProfile(data.user)
+        console.log('✅ Usuário salvo no store:', data.user)
       }
 
       return { data, error }
     } catch (error) {
+      console.error('❌ Erro no login:', error)
+      setLoading(false)
       throw error
+    } finally {
+      setLoading(false)
     }
   }
 
   async function signOut() {
     try {
-      await authSignOut()
-      setUser(null)
-      setProfile(null)
+      // Usar a função logout do store que já faz tudo
+      logout()
     } catch (error) {
+      console.error('Erro ao fazer logout:', error)
       throw error
     }
   }
 
   return {
     user,
-    profile,
-    loading,
+    profile: user, // Manter compatibilidade
+    loading: isLoading,
+    isAuthenticated,
     signUp,
     signIn,
     signOut,

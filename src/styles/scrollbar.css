@@ -1,0 +1,42 @@
+/* Scrollbar customizada - fina e quase invisível */
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
+}
+
+/* Chrome, Edge, Safari */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Scrollbar ainda mais fina para sidebar de filtros */
+.filtros-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.filtros-sidebar::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 2px;
+}
+
+.filtros-sidebar::-webkit-scrollbar-thumb:hover {
+  background: #d1d5db;
+}
+
+

@@ -11,10 +11,9 @@ import { CadastroPage } from '@/pages/cadastro'
 import { DashboardPage } from '@/pages/dashboard'
 import { BoletimPage } from '@/pages/boletim'
 import { BoletimDiaPage } from '@/pages/boletim-dia'
+import { FavoritosPage } from '@/pages/favoritos'
 import { EditalPage } from '@/pages/edital'
-import { FiltroPage } from '@/pages/filtro'
-import { AlertasPage } from '@/pages/alertas'
-import { PreferidosPage } from '@/pages/preferidos'
+import { PerfilPage } from '@/pages/perfil'
 
 function App() {
   return (
@@ -25,12 +24,11 @@ function App() {
         <Route path="/cadastro" component={CadastroPage} />
         
         <Route path="/dashboard" component={DashboardPage} />
+        <Route path="/perfil" component={PerfilPage} />
         <Route path="/boletim" component={BoletimPage} />
-        <Route path="/boletim/:date" component={BoletimDiaPage} />
+        <Route path="/licitacoes" component={BoletimDiaPage} />
+        <Route path="/favoritos" component={FavoritosPage} />
         <Route path="/edital/:numeroControle" component={EditalPage} />
-        <Route path="/filtro" component={FiltroPage} />
-        <Route path="/alertas" component={AlertasPage} />
-        <Route path="/preferidos" component={PreferidosPage} />
         
         <Route>
           <Redirect to="/" />

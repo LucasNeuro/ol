@@ -2,8 +2,7 @@ import { useState } from 'react'
 import { useLocation } from 'wouter'
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, getDay, startOfWeek } from 'date-fns'
 import { ptBR } from 'date-fns/locale/pt-BR'
-import { Header } from '@/components/layout/Header'
-import { Footer } from '@/components/layout/Footer'
+import { AppLayout } from '@/components/layout/AppLayout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Button } from '@/components/ui/button'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
@@ -31,27 +30,25 @@ function BoletimContent() {
   }
 
   const handleDayClick = (day) => {
+    // Redirecionar para licitações com filtro de data
     const dateStr = formatarDataParaPNCP(day)
-    setLocation(`/boletim/${dateStr}`)
+    setLocation(`/licitacoes?data=${dateStr}`)
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <Header />
-      
-      <main className="flex-1 py-12 px-6">
-        <div className="container mx-auto max-w-7xl">
-          <div className="mb-8">
-            <h1 className="text-3xl md:text-4xl font-semibold text-gray-900 mb-2">
-              Boletim Diário
-            </h1>
-            <p className="text-gray-600">
-              Selecione uma data para visualizar as licitações publicadas
-            </p>
-          </div>
+    <AppLayout>
+      <div className="p-6 max-w-7xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-3xl md:text-4xl font-semibold text-gray-900 mb-2">
+            Boletim Diário
+          </h1>
+          <p className="text-gray-600">
+            Selecione uma data para visualizar as licitações publicadas
+          </p>
+        </div>
 
-          <div className="bg-white rounded-xl shadow-sm border-2 border-orange-100 p-6">
-            <div className="flex items-center justify-between mb-6">
+        <div className="bg-white rounded-xl shadow-sm border-2 border-orange-100 p-6">
+          <div className="flex items-center justify-between mb-6">
               <Button variant="outline" onClick={previousMonth}>
                 <ChevronLeft className="w-4 h-4 mr-2" />
                 Mês Anterior
@@ -65,9 +62,9 @@ function BoletimContent() {
                 Próximo Mês
                 <ChevronRight className="w-4 h-4 ml-2" />
               </Button>
-            </div>
+          </div>
 
-            <div className="grid grid-cols-7 gap-2">
+          <div className="grid grid-cols-7 gap-2">
               {/* Cabeçalho dos dias da semana */}
               {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((day) => (
                 <div key={day} className="text-center font-semibold text-gray-700 py-2">
@@ -100,13 +97,10 @@ function BoletimContent() {
                   </button>
                 )
               })}
-            </div>
           </div>
         </div>
-      </main>
-
-      <Footer />
-    </div>
+      </div>
+    </AppLayout>
   )
 }
 

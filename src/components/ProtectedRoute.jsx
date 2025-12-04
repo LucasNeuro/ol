@@ -6,13 +6,17 @@ export function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
   const [, setLocation] = useLocation()
 
+  console.log('🔒 ProtectedRoute - User:', user, 'Loading:', loading)
+
   useEffect(() => {
     if (!loading && !user) {
+      console.log('⚠️ Usuário não autenticado, redirecionando para login')
       setLocation('/login')
     }
   }, [user, loading, setLocation])
 
   if (loading) {
+    console.log('⏳ Carregando autenticação...')
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
@@ -24,9 +28,11 @@ export function ProtectedRoute({ children }) {
   }
 
   if (!user) {
+    console.log('❌ Sem usuário, não renderizando')
     return null
   }
 
+  console.log('✅ Usuário autenticado, renderizando conteúdo')
   return <>{children}</>
 }
 

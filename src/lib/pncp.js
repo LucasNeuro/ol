@@ -28,11 +28,14 @@ export async function buscarContratacoesPorData(params) {
   // Se for 0 ou não especificado, não podemos enviar 0
   // Solução: fazer buscas múltiplas para todas as modalidades (1-13)
   
+  // Validar tamanho da página (máximo 500 segundo manual, mas usar 50 como padrão seguro)
+  const tamanhoPaginaValido = Math.min(Math.max(1, tamanhoPagina || 50), 500)
+  
   const queryParams = new URLSearchParams({
     dataInicial: dataInicial || '',
     dataFinal: dataFinal || '',
     pagina: pagina.toString(),
-    tamanhoPagina: tamanhoPagina.toString(),
+    tamanhoPagina: tamanhoPaginaValido.toString(),
   })
 
   // Verificar se modalidade é válida (1-13)
@@ -90,6 +93,30 @@ export async function buscarContratacoesPorData(params) {
             },
             mode: 'cors',
           })
+          
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => '')
+            console.error(`❌ [PNCP] Erro ${response.status} ao buscar modalidade ${mod}, página ${paginaAtual}:`, errorText.substring(0, 200))
+            
+            // Se for 400, pode ser problema com parâmetros ou data
+            if (response.status === 400) {
+              console.warn(`⚠️ [PNCP] Erro 400 - Verifique se a data ${dataInicial} é válida e se há licitações para esta data`)
+              // Continuar com próxima modalidade
+              continuar = false
+              break
+            }
+            
+            // Se for 429 (rate limit), aguardar mais
+            if (response.status === 429) {
+              console.warn(`⏸️ [PNCP] Rate limit atingido. Aguardando...`)
+              await new Promise(resolve => setTimeout(resolve, 2000))
+              continue
+            }
+            
+            // Para outros erros, parar esta modalidade
+            continuar = false
+            break
+          }
           
           if (response.ok) {
             const text = await response.text()
@@ -208,7 +235,7 @@ export async function buscarContratacoesPorData(params) {
     paramsPagina.set('pagina', paginaAtual.toString())
     
     const url = `${PNCP_BASE_URL}/v1/contratacoes/publicacao?${paramsPagina}`
-    console.log(`🔍 Buscando modalidade ${modalidade}, página ${paginaAtual}...`)
+    console.log(`🔍 [PNCP] Buscando modalidade ${modalidade}, página ${paginaAtual}...`)
     
     const response = await fetch(url, {
       method: 'GET',
@@ -220,13 +247,27 @@ export async function buscarContratacoesPorData(params) {
     
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'Erro desconhecido')
-      console.error('❌ Erro na busca:', response.status, errorText.substring(0, 200))
+      console.error(`❌ [PNCP] Erro ${response.status} na busca:`, errorText.substring(0, 200))
+      
+      // Se for 400, pode ser problema com parâmetros ou data
+      if (response.status === 400) {
+        console.warn(`⚠️ [PNCP] Erro 400 - Verifique se a data ${dataInicial} é válida e se há licitações para esta data`)
+        console.warn(`⚠️ [PNCP] Parâmetros usados:`, {
+          dataInicial,
+          dataFinal,
+          modalidade: modalidade,
+          pagina: paginaAtual,
+          tamanhoPagina: tamanhoPaginaValido
+        })
+        continuar = false
+        break
+      }
       
       // Se for 429, sugerir aguardar
       if (response.status === 429) {
-        console.warn('⏸️ Rate limit atingido. Parando paginação.')
-        continuar = false
-        break
+        console.warn('⏸️ [PNCP] Rate limit atingido. Aguardando...')
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        continue
       }
       
       continuar = false
@@ -388,10 +429,22 @@ export async function buscarTodasPaginas(funcaoBusca, params, maxPaginas = 100) 
 }
 
 /**
- * Busca uma URL e retorna os dados parseados
+ * Busca dados completos de uma contratação específica (endpoint 2)
+ * Manual 6.3.5 - Consultar uma Contratação
  */
-async function buscarUrlDetalhes(url, descricao) {
+export async function buscarContratacaoCompleta(numeroControlePNCP) {
+  if (!numeroControlePNCP) {
+    throw new Error('Número de controle PNCP é obrigatório')
+  }
+
+  console.log('🔍 [Contratação Completa] Buscando:', numeroControlePNCP)
+
   try {
+    const numeroEncoded = encodeURIComponent(numeroControlePNCP)
+    const url = `${PNCP_BASE_URL}/v1/contratacoes/${numeroEncoded}`
+    
+    console.log('📡 [Contratação Completa] URL:', url)
+
     const response = await fetch(url, {
       method: 'GET',
       headers: {
@@ -401,37 +454,34 @@ async function buscarUrlDetalhes(url, descricao) {
     })
 
     if (!response.ok) {
-      console.warn(`⚠️ [Detalhes] Erro ao buscar ${descricao}: HTTP ${response.status}`)
+      if (response.status === 404) {
+        console.warn('⚠️ [Contratação Completa] Contratação não encontrada')
+        return null
+      }
+      const errorText = await response.text().catch(() => '')
+      console.error(`❌ [Contratação Completa] Erro ${response.status}:`, errorText.substring(0, 200))
       return null
     }
 
     const text = await response.text()
     if (!text || !text.trim()) {
+      console.warn('⚠️ [Contratação Completa] Resposta vazia')
       return null
     }
 
     const dados = JSON.parse(text)
+    console.log('✅ [Contratação Completa] Dados obtidos')
     
-    // A API pode retornar de várias formas
-    if (Array.isArray(dados)) {
-      return dados
-    } else if (dados.data && Array.isArray(dados.data)) {
-      return dados.data
-    } else if (typeof dados === 'object') {
-      return dados // Retornar objeto completo se não for array
-    }
-    
-    return null
+    return dados
   } catch (error) {
-    console.warn(`⚠️ [Detalhes] Erro ao buscar ${descricao}:`, error.message)
+    console.error('❌ [Contratação Completa] Erro:', error)
     return null
   }
 }
 
 /**
  * Busca detalhes completos de uma contratação por número de controle PNCP
- * Inclui: contratação, itens, documentos, resultados, histórico e imagens
- * Conforme documentação do PNCP (Manual de Integração)
+ * Inclui itens, documentos e anexos
  */
 export async function buscarDetalhesContratacao(numeroControlePNCP) {
   if (!numeroControlePNCP) {
@@ -534,7 +584,25 @@ export async function buscarDetalhesContratacao(numeroControlePNCP) {
               documentos = dadosDocs.resultado
             }
             
+            // Garantir que temos os links dos documentos
+            documentos = documentos.map(doc => ({
+              ...doc,
+              // Extrair URL do documento (pode vir em vários formatos)
+              urlDocumento: doc.urlDocumento || doc.url || doc.linkDocumento || doc.link || doc.urlArquivo || null,
+              url_original: doc.urlDocumento || doc.url || doc.linkDocumento || doc.link || doc.urlArquivo || null,
+              nomeArquivo: doc.nomeArquivo || doc.nomeDocumento || doc.nome || 'Documento sem nome',
+              tipoDocumento: doc.tipoDocumento || doc.codigoTipoDocumento || null,
+            }))
+            
             console.log(`📄 [Detalhes] ${documentos.length} documentos encontrados`)
+            // Log dos links encontrados
+            documentos.forEach((doc, idx) => {
+              if (doc.urlDocumento) {
+                console.log(`   ✅ ${idx + 1}. ${doc.nomeArquivo}: ${doc.urlDocumento.substring(0, 80)}...`)
+              } else {
+                console.warn(`   ⚠️ ${idx + 1}. ${doc.nomeArquivo}: SEM LINK`)
+              }
+            })
           }
         } catch (error) {
           console.warn('⚠️ [Detalhes] Erro ao parsear documentos:', error)
@@ -550,98 +618,19 @@ export async function buscarDetalhesContratacao(numeroControlePNCP) {
       console.warn('⚠️ [Detalhes] Erro ao buscar documentos:', responseDocs.reason || 'Erro desconhecido')
     }
 
-    const numeroEncoded = encodeURIComponent(numeroControlePNCP)
-    
-    // 1. Buscar dados básicos da contratação
-    const urlContratacao = `${PNCP_BASE_URL}/v1/contratacoes/${numeroEncoded}`
-    
-    // 2. Buscar itens da contratação
-    const urlItens = `${PNCP_BASE_URL}/v1/contratacoes/${numeroEncoded}/itens`
-    
-    // 3. Buscar documentos da contratação
-    const urlDocs = `${PNCP_BASE_URL}/v1/contratacoes/${numeroEncoded}/documentos`
-    
-    // 4. Buscar histórico da contratação
-    const urlHistorico = `${PNCP_BASE_URL}/v1/contratacoes/${numeroEncoded}/historico`
-
-    // Buscar dados básicos em paralelo
-    const [contratacao, itens, documentos, historico] = await Promise.allSettled([
-      buscarUrlDetalhes(urlContratacao, 'contratação'),
-      buscarUrlDetalhes(urlItens, 'itens'),
-      buscarUrlDetalhes(urlDocs, 'documentos'),
-      buscarUrlDetalhes(urlHistorico, 'histórico'),
-    ])
-
-    const dadosContratacao = contratacao.status === 'fulfilled' ? contratacao.value : null
-    const dadosItens = itens.status === 'fulfilled' ? itens.value : []
-    const dadosDocumentos = documentos.status === 'fulfilled' ? documentos.value : []
-    const dadosHistorico = historico.status === 'fulfilled' ? historico.value : []
-
-    // 5. Para cada item, buscar resultados e imagens
-    const itensCompletos = []
-    
-    if (Array.isArray(dadosItens) && dadosItens.length > 0) {
-      console.log(`📦 [Detalhes] Buscando detalhes de ${dadosItens.length} itens...`)
-      
-      for (const item of dadosItens) {
-        const itemId = item.numeroItem || item.id || item.numeroItemContratacao
-        
-        if (!itemId) {
-          itensCompletos.push(item)
-          continue
-        }
-
-        // Buscar resultados do item
-        const urlResultados = `${PNCP_BASE_URL}/v1/contratacoes/${numeroEncoded}/itens/${itemId}/resultados`
-        
-        // Buscar imagens do item
-        const urlImagens = `${PNCP_BASE_URL}/v1/contratacoes/${numeroEncoded}/itens/${itemId}/imagens`
-
-        const [resultados, imagens] = await Promise.allSettled([
-          buscarUrlDetalhes(urlResultados, `resultados do item ${itemId}`),
-          buscarUrlDetalhes(urlImagens, `imagens do item ${itemId}`),
-        ])
-
-        const dadosResultados = resultados.status === 'fulfilled' ? resultados.value : []
-        const dadosImagens = imagens.status === 'fulfilled' ? imagens.value : []
-
-        // Adicionar resultados e imagens ao item
-        itensCompletos.push({
-          ...item,
-          resultados: Array.isArray(dadosResultados) ? dadosResultados : [],
-          imagens: Array.isArray(dadosImagens) ? dadosImagens : [],
-        })
-
-        // Delay para evitar rate limiting
-        await new Promise(resolve => setTimeout(resolve, 200))
-      }
-    } else {
-      itensCompletos.push(...(Array.isArray(dadosItens) ? dadosItens : []))
-    }
-
     const resultado = {
-      contratacao: dadosContratacao,
-      itens: itensCompletos,
-      documentos: Array.isArray(dadosDocumentos) ? dadosDocumentos : [],
-      historico: Array.isArray(dadosHistorico) ? dadosHistorico : [],
+      itens: itens,
+      documentos: documentos
     }
 
-    console.log('✅ [Detalhes] Dados obtidos:', {
-      contratacao: !!dadosContratacao,
-      itens: itensCompletos.length,
-      documentos: Array.isArray(dadosDocumentos) ? dadosDocumentos.length : 0,
-      historico: Array.isArray(dadosHistorico) ? dadosHistorico.length : 0,
-    })
-
+    console.log('✅ [Detalhes] Retornando:', { itens: itens.length, documentos: documentos.length })
     return resultado
   } catch (error) {
     console.error('❌ [Detalhes] Erro ao buscar detalhes completos:', error)
     // Não lançar erro, retornar vazio para não quebrar a aplicação
     return {
-      contratacao: null,
       itens: [],
-      documentos: [],
-      historico: [],
+      documentos: []
     }
   }
 }
