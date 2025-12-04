@@ -34,13 +34,6 @@ import { supabase } from '@/lib/supabase'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
-import {
   Accordion,
   AccordionContent,
   AccordionItem,
@@ -53,8 +46,7 @@ function LicitacoesContent() {
   const { user } = useUserStore()
   const queryClient = useQueryClient()
   const [location] = useLocation()
-  const [licitacaoSelecionada, setLicitacaoSelecionada] = useState(null)
-  const [sideoverAberto, setSideoverAberto] = useState(false)
+  const [cardsExpandidos, setCardsExpandidos] = useState(new Set())
   const [favoritos, setFavoritos] = useState(new Set())
   const [filtrosSidebarAberta, setFiltrosSidebarAberta] = useState(true)
 
@@ -68,6 +60,7 @@ function LicitacoesContent() {
     dataPublicacaoFim: '',
     valorMin: '',
     valorMax: '',
+    statusEdital: '', // Em Andamento, Encerrando, Encerrado
     
     // Úteis
     orgao: '',
@@ -127,7 +120,7 @@ function LicitacoesContent() {
     queryKey: ['licitacoes', filtros, dataFiltro],
     queryFn: async () => {
       let query = supabase
-        .from('licitacoes')
+            .from('licitacoes')
         .select('*')
         .order('data_publicacao_pncp', { ascending: false })
 
@@ -199,7 +192,18 @@ function LicitacoesContent() {
       const { data, error } = await query
 
       if (error) throw error
-      return data || []
+      
+      let resultados = data || []
+      
+      // Filtro de Status do Edital (aplicado no client-side)
+      if (filtros.statusEdital) {
+        resultados = resultados.filter(licitacao => {
+          const status = getStatusEdital(licitacao)
+          return status === filtros.statusEdital
+        })
+      }
+      
+      return resultados
     }
   })
 
@@ -236,13 +240,41 @@ function LicitacoesContent() {
     return diasRestantes > 0 && diasRestantes <= 7
   }
 
+  // Determinar status do edital
+  const getStatusEdital = (licitacao) => {
+    const dataAbertura = licitacao.dados_completos?.dataAberturaProposta
+    const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta
+    
+    if (!dataEncerramento) return null
+    
+    const hoje = new Date()
+    const encerramento = new Date(dataEncerramento)
+    const diasRestantes = Math.ceil((encerramento - hoje) / (1000 * 60 * 60 * 24))
+    
+    // Encerrado
+    if (diasRestantes < 0) return 'encerrado'
+    
+    // Encerrando (3 dias ou menos)
+    if (diasRestantes <= 3 && diasRestantes > 0) return 'encerrando'
+    
+    // Em andamento
+    if (dataAbertura) {
+      const abertura = new Date(dataAbertura)
+      if (hoje >= abertura && hoje <= encerramento) {
+        return 'andamento'
+      }
+    }
+    
+    return null
+  }
+
   // Toggle favorito
   const toggleFavorito = useMutation({
     mutationFn: async (licitacao) => {
       if (!user?.id) {
         alert('Faça login para favoritar licitações')
-          return
-      }
+      return
+    }
 
       const isFavorito = favoritos.has(licitacao.id)
 
@@ -264,11 +296,11 @@ function LicitacoesContent() {
         // Verificar se já existe (evitar 409)
         console.log('🔍 Verificando se já existe...')
         const { data: existente } = await supabase
-          .from('licitacoes_favoritas')
-          .select('id')
-          .eq('usuario_id', user.id)
+        .from('licitacoes_favoritas')
+        .select('id')
+        .eq('usuario_id', user.id)
           .eq('licitacao_id', licitacao.id)
-          .maybeSingle()
+        .maybeSingle()
 
         if (existente) {
           console.log('⚠️ Já existe nos favoritos')
@@ -314,9 +346,17 @@ function LicitacoesContent() {
     toggleFavorito.mutate(licitacao)
   }
 
-  const abrirDetalhes = (licitacao) => {
-    setLicitacaoSelecionada(licitacao)
-    setSideoverAberto(true)
+  const toggleCardExpandido = (e, licitacaoId) => {
+    e.stopPropagation()
+    setCardsExpandidos(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(licitacaoId)) {
+        newSet.delete(licitacaoId)
+      } else {
+        newSet.add(licitacaoId)
+      }
+      return newSet
+    })
   }
 
   const limparFiltros = () => {
@@ -324,6 +364,7 @@ function LicitacoesContent() {
       buscaObjeto: '',
       uf: '',
       modalidade: '',
+      statusEdital: '',
       dataPublicacaoInicio: '',
       dataPublicacaoFim: '',
       valorMin: '',
@@ -352,6 +393,7 @@ function LicitacoesContent() {
     if (filtros.buscaObjeto) count++
     if (filtros.uf) count++
     if (filtros.modalidade) count++
+    if (filtros.statusEdital) count++
     if (filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim) count++
     if (filtros.valorMin || filtros.valorMax) count++
     if (filtros.orgao) count++
@@ -406,15 +448,15 @@ function LicitacoesContent() {
                 {contarFiltrosAtivos() > 0 && (
                   <Badge className="bg-orange-500">{contarFiltrosAtivos()}</Badge>
                 )}
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
+                </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                 onClick={() => setFiltrosSidebarAberta(false)}
               >
                 <X className="w-5 h-5" />
-              </Button>
-            </div>
+                  </Button>
+              </div>
                 
             {/* Botões Ação */}
             <div className="flex gap-2 mb-6">
@@ -467,9 +509,9 @@ function LicitacoesContent() {
                     <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
                       <Calendar className="w-4 h-4 text-gray-500" />
                       Data Publicação
-                    </Label>
+                  </Label>
                   <div className="flex gap-2 mb-2">
-                    <Input
+                  <Input
                       type="date"
                       value={filtros.dataPublicacaoInicio}
                       onChange={(e) => setFiltros({ ...filtros, dataPublicacaoInicio: e.target.value })}
@@ -488,7 +530,7 @@ function LicitacoesContent() {
                     <Button variant="ghost" size="sm" onClick={atalhoUltimaSemana} className="text-xs h-7 px-2 flex-1">7 dias</Button>
                   </div>
                 </div>
-
+                
                 {/* UF */}
                 <div>
                   <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
@@ -528,22 +570,56 @@ function LicitacoesContent() {
                       <SelectItem value="SP">SP - São Paulo</SelectItem>
                       <SelectItem value="SE">SE - Sergipe</SelectItem>
                       <SelectItem value="TO">TO - Tocantins</SelectItem>
-                    </SelectContent>
+                      </SelectContent>
                   </Select>
-              </div>
-                
+                </div>
+
                 {/* Modalidade */}
                 <div>
                   <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
                     <FileText className="w-4 h-4 text-gray-500" />
                     Modalidade
                   </Label>
-                  <Input
-                    placeholder="Ex: Pregão"
-                    value={filtros.modalidade}
-                    onChange={(e) => setFiltros({ ...filtros, modalidade: e.target.value })}
-                    className="h-9 text-xs"
-                  />
+                  <Select value={filtros.modalidade || "TODAS"} onValueChange={(value) => setFiltros({ ...filtros, modalidade: value === "TODAS" ? "" : value })}>
+                    <SelectTrigger className="h-9 text-xs">
+                      <SelectValue placeholder="Selecione a modalidade" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-60">
+                      <SelectItem value="TODAS">Todas as Modalidades</SelectItem>
+                      <SelectItem value="Pregão Eletrônico">Pregão Eletrônico</SelectItem>
+                      <SelectItem value="Pregão Presencial">Pregão Presencial</SelectItem>
+                      <SelectItem value="Concorrência Eletrônica">Concorrência Eletrônica</SelectItem>
+                      <SelectItem value="Concorrência">Concorrência</SelectItem>
+                      <SelectItem value="Dispensa Eletrônica">Dispensa Eletrônica</SelectItem>
+                      <SelectItem value="Dispensa de Licitação">Dispensa de Licitação</SelectItem>
+                      <SelectItem value="Inexigibilidade">Inexigibilidade</SelectItem>
+                      <SelectItem value="Leilão">Leilão</SelectItem>
+                      <SelectItem value="Leilão - Eletrônico">Leilão - Eletrônico</SelectItem>
+                      <SelectItem value="Tomada de Preços">Tomada de Preços</SelectItem>
+                      <SelectItem value="Convite">Convite</SelectItem>
+                      <SelectItem value="Concurso">Concurso</SelectItem>
+                      <SelectItem value="Diálogo Competitivo">Diálogo Competitivo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Status do Edital */}
+                <div>
+                  <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-gray-500" />
+                    Status do Edital
+                  </Label>
+                  <Select value={filtros.statusEdital || "TODOS"} onValueChange={(value) => setFiltros({ ...filtros, statusEdital: value === "TODOS" ? "" : value })}>
+                    <SelectTrigger className="h-9 text-xs">
+                      <SelectValue placeholder="Selecione o status" />
+                    </SelectTrigger>
+                      <SelectContent>
+                      <SelectItem value="TODOS">Todos os Status</SelectItem>
+                      <SelectItem value="andamento">Em Andamento</SelectItem>
+                      <SelectItem value="encerrando">Encerrando (≤ 3 dias)</SelectItem>
+                      <SelectItem value="encerrado">Encerrado</SelectItem>
+                      </SelectContent>
+                  </Select>
                 </div>
 
                 {/* Valor */}
@@ -553,7 +629,7 @@ function LicitacoesContent() {
                     Valor Estimado
                   </Label>
                   <div className="flex gap-2">
-                    <Input
+                  <Input
                       type="number"
                       placeholder="Mínimo"
                       value={filtros.valorMin}
@@ -566,9 +642,9 @@ function LicitacoesContent() {
                       value={filtros.valorMax}
                       onChange={(e) => setFiltros({ ...filtros, valorMax: e.target.value })}
                       className="h-9 text-xs"
-                    />
-                  </div>
+                  />
                 </div>
+              </div>
               </AccordionContent>
             </AccordionItem>
 
@@ -578,7 +654,7 @@ function LicitacoesContent() {
                 <div className="flex items-center gap-2">
                   <Filter className="w-4 h-4 text-blue-500" />
                   Filtros Úteis
-                </div>
+            </div>
               </AccordionTrigger>
               <AccordionContent className="space-y-4 pt-3">
                 
@@ -594,7 +670,7 @@ function LicitacoesContent() {
                     onChange={(e) => setFiltros({ ...filtros, orgao: e.target.value })}
                     className="h-9 text-xs"
                   />
-                </div>
+          </div>
 
                 {/* N° Edital */}
                 <div>
@@ -608,11 +684,11 @@ function LicitacoesContent() {
                     onChange={(e) => setFiltros({ ...filtros, numeroEdital: e.target.value })}
                     className="h-9 text-xs"
                   />
-                </div>
+            </div>
 
                 {/* Checkboxes */}
                 <div className="space-y-3 pt-2">
-                  <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2">
                     <Checkbox
                       id="comDocumentos"
                       checked={filtros.comDocumentos}
@@ -622,7 +698,7 @@ function LicitacoesContent() {
                       <Download className="w-4 h-4 text-gray-500" />
                       Com Documentos
                     </Label>
-                  </div>
+                              </div>
 
                   <div className="flex items-center gap-2">
                     <Checkbox
@@ -634,9 +710,9 @@ function LicitacoesContent() {
                       <FileText className="w-4 h-4 text-gray-500" />
                       Com Itens
                     </Label>
-                  </div>
+                              </div>
 
-                  <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2">
                     <Checkbox
                       id="comValor"
                       checked={filtros.comValor}
@@ -646,7 +722,7 @@ function LicitacoesContent() {
                       <DollarSign className="w-4 h-4 text-gray-500" />
                       Com Valor Estimado
                     </Label>
-                  </div>
+                              </div>
                 </div>
               </AccordionContent>
             </AccordionItem>
@@ -654,10 +730,10 @@ function LicitacoesContent() {
             {/* AVANÇADOS (desabilitados por enquanto) */}
             <AccordionItem value="avancados" disabled>
               <AccordionTrigger className="text-sm font-semibold text-gray-400">
-                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-gray-400" />
                   Filtros Avançados
-                </div>
+                                </div>
               </AccordionTrigger>
               <AccordionContent className="space-y-3 pt-2">
                 <p className="text-xs text-gray-500 italic">
@@ -709,6 +785,16 @@ function LicitacoesContent() {
                     <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, modalidade: '' })} />
                   </Badge>
                 )}
+                {filtros.statusEdital && (
+                  <Badge variant="secondary" className="gap-1">
+                    Status: {
+                      filtros.statusEdital === 'andamento' ? 'Em Andamento' :
+                      filtros.statusEdital === 'encerrando' ? 'Encerrando' :
+                      'Encerrado'
+                    }
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, statusEdital: '' })} />
+                  </Badge>
+                )}
                 {(filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim) && (
                   <Badge variant="secondary" className="gap-1">
                     Data: {filtros.dataPublicacaoInicio || '...'} - {filtros.dataPublicacaoFim || '...'}
@@ -735,10 +821,10 @@ function LicitacoesContent() {
                       window.history.pushState({}, '', '/licitacoes')
                     }} />
                   </Badge>
-                )}
-              </div>
+                              )}
+                            </div>
             )}
-          </div>
+                        </div>
 
           {/* Loading */}
           {isLoading && (
@@ -800,22 +886,83 @@ function LicitacoesContent() {
                       />
                     </button>
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        abrirDetalhes(licitacao)
-                      }}
+                      onClick={(e) => toggleCardExpandido(e, licitacao.id)}
                       className="hover:scale-110 transition-transform"
-                      title="Ver detalhes"
+                      title={cardsExpandidos.has(licitacao.id) ? "Ocultar detalhes" : "Ver detalhes"}
                     >
-                      <Eye className="w-5 h-5 text-blue-500 hover:text-blue-600" />
+                      <Eye className={`w-5 h-5 transition-colors ${
+                        cardsExpandidos.has(licitacao.id)
+                          ? 'text-blue-600 fill-blue-100'
+                          : 'text-blue-500 hover:text-blue-600'
+                      }`} />
                     </button>
                               </div>
-                  {isUrgente(licitacao) && (
-                    <Badge variant="destructive" className="bg-red-500 animate-pulse">
-                      URGENTE
-                    </Badge>
-                  )}
-                              </div>
+                  
+                  {/* Badges de Status e Datas */}
+                  <div className="flex flex-wrap items-center gap-2 justify-end">
+                    {/* Badge URGENTE */}
+                    {isUrgente(licitacao) && (
+                      <Badge variant="destructive" className="bg-red-500 animate-pulse">
+                        URGENTE
+                      </Badge>
+                    )}
+                    
+                    {/* Badges de Data de Abertura e Encerramento */}
+                    {licitacao.dados_completos?.dataAberturaProposta && (
+                      <Badge className="bg-green-100 text-green-700 border-green-300 text-xs">
+                        Abertura: {formatarData(licitacao.dados_completos.dataAberturaProposta)}
+                      </Badge>
+                    )}
+                    {licitacao.dados_completos?.dataEncerramentoProposta && (
+                      <Badge className="bg-green-100 text-green-700 border-green-300 text-xs">
+                        Encerramento: {formatarData(licitacao.dados_completos.dataEncerramentoProposta)}
+                      </Badge>
+                    )}
+                    
+                    {/* Badge de Status (Em Andamento / Encerrando / Encerrado) */}
+                    {(() => {
+                      const dataAbertura = licitacao.dados_completos?.dataAberturaProposta
+                      const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta
+                      
+                      if (dataEncerramento) {
+                        const hoje = new Date()
+                        const encerramento = new Date(dataEncerramento)
+                        const diasRestantes = Math.ceil((encerramento - hoje) / (1000 * 60 * 60 * 24))
+                        
+                        // Encerrado
+                        if (diasRestantes < 0) {
+                          return (
+                            <Badge className="bg-red-500 text-white text-xs">
+                              Encerrado
+                            </Badge>
+                          )
+                        }
+                        
+                        // Encerrando em breve (menos de 3 dias)
+                        if (diasRestantes <= 3 && diasRestantes > 0) {
+                          return (
+                            <Badge className="bg-yellow-500 text-white text-xs animate-pulse">
+                              Encerrando em {diasRestantes}d
+                            </Badge>
+                          )
+                        }
+                        
+                        // Em andamento
+                        if (dataAbertura) {
+                          const abertura = new Date(dataAbertura)
+                          if (hoje >= abertura && hoje <= encerramento) {
+                            return (
+                              <Badge className="bg-blue-500 text-white text-xs">
+                                Em Andamento
+                              </Badge>
+                            )
+                          }
+                        }
+                      }
+                      return null
+                    })()}
+                      </div>
+                        </div>
 
                 {/* Objeto */}
                 <div className="mb-4">
@@ -823,7 +970,7 @@ function LicitacoesContent() {
                   <p className="text-gray-900 leading-relaxed">
                     {licitacao.objeto_compra || 'Objeto não informado'}
                   </p>
-                                </div>
+                        </div>
 
                 <hr className="my-4" />
 
@@ -905,6 +1052,213 @@ function LicitacoesContent() {
                     Atualizada em: {formatarData(licitacao.data_atualizacao)}
                         </div>
                       </div>
+
+                {/* Seção Expansível com Detalhes */}
+                {cardsExpandidos.has(licitacao.id) && (
+                  <div className="mt-6 pt-6 border-t space-y-6 animate-in slide-in-from-top-2">
+                    {/* Informações Gerais */}
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="font-semibold text-gray-900 mb-3">Informações Gerais</h4>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <span className="text-sm font-medium text-gray-500">Órgão:</span>
+                          <p className="text-gray-900">{licitacao.orgao_razao_social || 'Não informado'}</p>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-500">Modalidade:</span>
+                          <p className="text-gray-900">{licitacao.modalidade_nome || 'Não informada'}</p>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-500">UF:</span>
+                          <p className="text-gray-900">{licitacao.uf_sigla || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-500">Data Publicação:</span>
+                          <p className="text-gray-900">{formatarData(licitacao.data_publicacao_pncp)}</p>
+                        </div>
+                        <div className="col-span-2">
+                          <span className="text-sm font-medium text-gray-500">Valor Estimado:</span>
+                          <p className="text-green-600 font-bold text-lg">
+                            {formatarValor(licitacao.valor_total_estimado)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Anexos/Documentos */}
+                    {licitacao.anexos && licitacao.anexos.length > 0 && (
+                      <div>
+                        <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                          <Download className="w-5 h-5 text-blue-500" />
+                          Documentos ({licitacao.anexos.length})
+                        </h4>
+                        <div className="grid grid-cols-2 gap-2">
+                          {licitacao.anexos.map((anexo, index) => (
+                            <button
+                              key={index}
+                              onClick={() => anexo.url && window.open(anexo.url, '_blank')}
+                              className="flex items-center gap-2 p-3 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-colors text-left"
+                            >
+                              <Download className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-gray-900 truncate">
+                                  {anexo.nome || anexo.nomeArquivo || `Documento ${index + 1}`}
+                                </p>
+                                {anexo.tipo && (
+                                  <p className="text-xs text-gray-500">{anexo.tipo}</p>
+                                )}
+                      </div>
+                              <ExternalLink className="w-3 h-3 text-blue-600 flex-shrink-0" />
+                            </button>
+                ))}
+              </div>
+                      </div>
+                    )}
+
+                    {/* Itens */}
+                    {licitacao.itens && licitacao.itens.length > 0 && (
+                      <div>
+                        <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                          <FileText className="w-5 h-5 text-green-500" />
+                          Itens da Licitação ({licitacao.itens.length})
+                        </h4>
+                        <div className="space-y-4">
+                          {licitacao.itens.map((item, index) => (
+                            <div key={index} className="bg-white border border-gray-200 rounded-lg p-4 hover:border-green-300 transition-colors">
+                              {/* Header do Item */}
+                              <div className="mb-3">
+                                {/* Badges no topo */}
+                                <div className="flex flex-wrap items-center gap-2 mb-3">
+                                  <Badge className="bg-green-600 text-white font-bold">
+                                    Item #{item.numeroItem || item.numero || index + 1}
+                                  </Badge>
+                                  {item.materialOuServicoNome && (
+                                    <Badge variant={item.materialOuServicoNome === 'Serviço' ? 'default' : 'secondary'}>
+                                      {item.materialOuServicoNome}
+                                    </Badge>
+                                  )}
+                                  {item.situacaoCompraItemNome && (
+                                    <Badge variant="outline">
+                                      {item.situacaoCompraItemNome}
+                                    </Badge>
+                                  )}
+                                </div>
+                                {/* Descrição */}
+                                <p className="text-sm font-medium text-gray-900 leading-relaxed">
+                                  {item.descricao || item.descricaoDetalhada || item.descricao_item || 'Sem descrição'}
+                    </p>
+                  </div>
+
+                              {/* Informações Detalhadas */}
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs bg-gray-50 p-3 rounded">
+                                {/* Quantidade e Unidade */}
+                                {item.quantidade && (
+                                  <div>
+                                    <span className="text-gray-500 block">Quantidade:</span>
+                                    <span className="font-semibold text-gray-900">
+                                      {item.quantidade} {item.unidadeMedida || item.unidade || ''}
+                                    </span>
+                </div>
+              )}
+                                
+                                {/* Valor Unitário */}
+                                {(item.valorUnitarioEstimado || item.valorUnitario) && (
+                                  <div>
+                                    <span className="text-gray-500 block">Valor Unitário:</span>
+                                    <span className="font-semibold text-green-600">
+                                      {formatarValor(item.valorUnitarioEstimado || item.valorUnitario)}
+                                    </span>
+                                  </div>
+                                )}
+                                
+                                {/* Valor Total */}
+                                {item.valorTotal && (
+                                  <div>
+                                    <span className="text-gray-500 block">Valor Total:</span>
+                                    <span className="font-semibold text-green-700 text-sm">
+                                      {formatarValor(item.valorTotal)}
+                                    </span>
+        </div>
+                                )}
+
+                                {/* Critério de Julgamento */}
+                                {item.criterioJulgamentoNome && (
+                                  <div>
+                                    <span className="text-gray-500 block">Critério:</span>
+                                    <span className="font-medium text-gray-900">{item.criterioJulgamentoNome}</span>
+                                  </div>
+                                )}
+
+                                {/* Categoria */}
+                                {item.itemCategoriaNome && (
+                                  <div>
+                                    <span className="text-gray-500 block">Categoria:</span>
+                                    <span className="font-medium text-gray-900">{item.itemCategoriaNome}</span>
+    </div>
+                                )}
+
+                                {/* Tipo de Benefício */}
+                                {item.tipoBeneficioNome && (
+                                  <div>
+                                    <span className="text-gray-500 block">Benefício:</span>
+                                    <span className="font-medium text-gray-900">{item.tipoBeneficioNome}</span>
+                                  </div>
+                                )}
+
+                                {/* NCM/NBS */}
+                                {item.ncmNbsDescricao && (
+                                  <div className="col-span-2">
+                                    <span className="text-gray-500 block">NCM/NBS:</span>
+                                    <span className="font-medium text-gray-900">
+                                      {item.ncmNbsCodigo ? `${item.ncmNbsCodigo} - ` : ''}{item.ncmNbsDescricao}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Informação Complementar */}
+                              {item.informacaoComplementar && (
+                                <div className="mt-3 p-3 bg-blue-50 rounded border border-blue-200">
+                                  <span className="text-xs font-medium text-blue-700 block mb-1">Informação Complementar:</span>
+                                  <p className="text-xs text-blue-900">{item.informacaoComplementar}</p>
+                                </div>
+                              )}
+
+                              {/* Indicadores de Benefícios/Margens */}
+                              <div className="flex flex-wrap gap-2 mt-3">
+                                {item.incentivoProdutivoBasico && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Incentivo Produtivo Básico
+                                  </Badge>
+                                )}
+                                {item.aplicabilidadeMargemPreferenciaNormal && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Margem Preferência Normal {item.percentualMargemPreferenciaNormal ? `(${item.percentualMargemPreferenciaNormal}%)` : ''}
+                                  </Badge>
+                                )}
+                                {item.aplicabilidadeMargemPreferenciaAdicional && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Margem Preferência Adicional {item.percentualMargemPreferenciaAdicional ? `(${item.percentualMargemPreferenciaAdicional}%)` : ''}
+                                  </Badge>
+                                )}
+                                {item.exigenciaConteudoNacional && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Exigência Conteúdo Nacional
+                                  </Badge>
+                                )}
+                                {item.orcamentoSigiloso && (
+                                  <Badge variant="destructive" className="text-xs">
+                                    Orçamento Sigiloso
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                     </CardContent>
                   </Card>
                 ))}
@@ -927,149 +1281,6 @@ function LicitacoesContent() {
         </div>
       </div>
 
-      {/* Sideover com Detalhes */}
-      <Sheet open={sideoverAberto} onOpenChange={setSideoverAberto}>
-        <SheetContent side="right" className="w-full sm:max-w-4xl overflow-y-auto">
-          {licitacaoSelecionada && (
-            <>
-              <SheetHeader>
-                <SheetTitle className="text-2xl">Detalhes da Licitação</SheetTitle>
-                <SheetDescription className="text-base">
-                  {licitacaoSelecionada.numero_controle_pncp}
-                </SheetDescription>
-              </SheetHeader>
-
-              <div className="mt-6 space-y-6">
-                {/* Objeto */}
-                <div>
-                  <h4 className="font-semibold text-gray-900 mb-2">Objeto</h4>
-                  <p className="text-gray-700 leading-relaxed">
-                    {licitacaoSelecionada.objeto_compra}
-                  </p>
-                </div>
-
-                {/* Informações Básicas em Grid */}
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <h4 className="font-semibold text-gray-900 mb-3">Informações Gerais</h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <span className="text-sm font-medium text-gray-500">Órgão:</span>
-                      <p className="text-gray-900">{licitacaoSelecionada.orgao_razao_social || 'Não informado'}</p>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-500">Modalidade:</span>
-                      <p className="text-gray-900">{licitacaoSelecionada.modalidade_nome || 'Não informada'}</p>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-500">UF:</span>
-                      <p className="text-gray-900">{licitacaoSelecionada.uf_sigla || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-500">Data Publicação:</span>
-                      <p className="text-gray-900">{formatarData(licitacaoSelecionada.data_publicacao_pncp)}</p>
-                    </div>
-                    <div className="col-span-2">
-                      <span className="text-sm font-medium text-gray-500">Valor Estimado:</span>
-                      <p className="text-green-600 font-bold text-lg">
-                        {formatarValor(licitacaoSelecionada.valor_total_estimado)}
-                    </p>
-                  </div>
-                </div>
-                </div>
-
-                {/* Anexos/Documentos */}
-                {licitacaoSelecionada.anexos && licitacaoSelecionada.anexos.length > 0 && (
-                  <div>
-                    <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                      <Download className="w-5 h-5 text-blue-500" />
-                      Documentos ({licitacaoSelecionada.anexos.length})
-                    </h4>
-                    <div className="grid grid-cols-2 gap-2">
-                      {licitacaoSelecionada.anexos.map((anexo, index) => (
-                        <button
-                          key={index}
-                          onClick={() => anexo.url && window.open(anexo.url, '_blank')}
-                          className="flex items-center gap-2 p-3 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-colors text-left"
-                        >
-                          <Download className="w-4 h-4 text-blue-600 flex-shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">
-                              {anexo.nome || anexo.nomeArquivo || `Documento ${index + 1}`}
-                            </p>
-                            {anexo.tipo && (
-                              <p className="text-xs text-gray-500">{anexo.tipo}</p>
-                            )}
-                          </div>
-                          <ExternalLink className="w-3 h-3 text-blue-600 flex-shrink-0" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Itens */}
-                {licitacaoSelecionada.itens && licitacaoSelecionada.itens.length > 0 && (
-                  <div>
-                    <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-green-500" />
-                      Itens da Licitação ({licitacaoSelecionada.itens.length})
-                    </h4>
-                    <div className="space-y-3">
-                      {licitacaoSelecionada.itens.map((item, index) => (
-                        <div key={index} className="bg-white border border-gray-200 rounded-lg p-4 hover:border-green-300 transition-colors">
-                          <div className="flex items-start gap-3">
-                            <div className="flex-shrink-0 w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-                              <span className="text-sm font-semibold text-green-700">
-                                {item.numero || index + 1}
-                              </span>
-                            </div>
-                            <div className="flex-1">
-                              <p className="text-sm font-medium text-gray-900 mb-2">
-                                {item.descricao || item.descricaoDetalhada || item.descricao_item || 'Sem descrição'}
-                              </p>
-                              <div className="grid grid-cols-2 gap-2 text-xs">
-                                {item.quantidade && (
-                                  <div>
-                                    <span className="text-gray-500">Quantidade:</span>
-                                    <span className="ml-1 font-medium text-gray-900">{item.quantidade}</span>
-                                  </div>
-                                )}
-                                {item.unidade && (
-                                  <div>
-                                    <span className="text-gray-500">Unidade:</span>
-                                    <span className="ml-1 font-medium text-gray-900">{item.unidade}</span>
-                                  </div>
-                                )}
-                                {item.valorUnitario && (
-                                  <div>
-                                    <span className="text-gray-500">Valor Unit.:</span>
-                                    <span className="ml-1 font-medium text-green-600">
-                                      {formatarValor(item.valorUnitario)}
-                                    </span>
-                                  </div>
-                                )}
-                                {item.valorTotal && (
-                                  <div>
-                                    <span className="text-gray-500">Valor Total:</span>
-                                    <span className="ml-1 font-medium text-green-600">
-                                      {formatarValor(item.valorTotal)}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-              </div>
-            </>
-          )}
-        </SheetContent>
-      </Sheet>
     </AppLayout>
   )
 }
