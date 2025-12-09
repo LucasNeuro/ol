@@ -9,6 +9,7 @@ import { PasswordInput } from '@/components/ui/password-input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AuthLayout } from '@/components/layout/AuthLayout'
+import { PublicRoute } from '@/components/PublicRoute'
 import { useAuth } from '@/hooks/useAuth'
 import { validarCNPJ, formatarCNPJ } from '@/lib/utils'
 import { Search, Building2, Loader2, CheckCircle } from 'lucide-react'
@@ -248,7 +249,8 @@ export function CadastroPage() {
   }
 
   return (
-    <AuthLayout title="Criar Conta" subtitle="Comece gratuitamente hoje mesmo">
+    <PublicRoute>
+      <AuthLayout title="Criar Conta" subtitle="Comece gratuitamente hoje mesmo">
       <form onSubmit={handleSubmit(onSubmit)} className="bg-white shadow-2xl rounded-2xl p-8 md:p-10 border border-gray-100 space-y-6">
         {/* Seção: Dados da Empresa - PRIMEIRO */}
         <div className="mb-6">
@@ -550,7 +552,8 @@ export function CadastroPage() {
           </p>
         </div>
       </form>
-    </AuthLayout>
+      </AuthLayout>
+    </PublicRoute>
   )
 }
 

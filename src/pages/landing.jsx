@@ -2,11 +2,13 @@ import { Link } from 'wouter'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { PublicLayout } from '@/components/layout/PublicLayout'
+import { PublicRoute } from '@/components/PublicRoute'
 import { Search, Bell, Star, TrendingUp, Clock, Shield, Zap, FileText, Filter, CheckCircle, ArrowRight, Building2, MapPin } from 'lucide-react'
 
 export function LandingPage() {
   return (
-    <PublicLayout>
+    <PublicRoute>
+      <PublicLayout>
       <div className="bg-gradient-to-b from-white to-gray-50">
         {/* Hero Section - Moderno e Impactante */}
         <section className="py-20 md:py-28 bg-gradient-to-br from-orange-50 via-white to-orange-50">
@@ -411,7 +413,8 @@ export function LandingPage() {
           </div>
         </section>
       </div>
-    </PublicLayout>
+      </PublicLayout>
+    </PublicRoute>
   )
 }
 

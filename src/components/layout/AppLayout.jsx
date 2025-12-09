@@ -14,7 +14,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Calendar,
-  Filter
+  Filter,
+  Target
 } from 'lucide-react'
 
 export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
@@ -69,9 +70,10 @@ export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
             </button>
 
             <Link href="/dashboard">
-              <a className="cursor-pointer">
+              <a className="cursor-pointer flex items-center gap-2">
+                <Target className="w-6 h-6 text-orange-500" />
                 <h1 className="text-xl font-bold text-gray-900">
-                  Sistema Licitação
+                  Focus
                 </h1>
               </a>
             </Link>
@@ -125,24 +127,6 @@ export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
 
       {/* Layout Principal */}
       <div className="flex flex-1 relative">
-        {/* Botão para colapsar/expandir (FLUTUANTE) */}
-        <button
-          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          className="hidden lg:flex fixed top-20 w-8 h-8 bg-orange-500 hover:bg-orange-600 rounded-full items-center justify-center transition-all shadow-xl hover:shadow-2xl"
-          style={{ 
-            left: sidebarCollapsed ? '68px' : '244px',
-            zIndex: 9999,
-            transition: 'left 0.3s ease-in-out'
-          }}
-          title={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
-        >
-          {sidebarCollapsed ? (
-            <ChevronRight className="w-5 h-5 text-white" />
-          ) : (
-            <ChevronLeft className="w-5 h-5 text-white" />
-          )}
-        </button>
-
         {/* Sidebar */}
         <aside 
           className={`
@@ -160,6 +144,20 @@ export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
         >
 
           <nav className="p-3 space-y-1">
+            {/* Botão Hambúrguer Laranja - Toggle Sidebar de Navegação */}
+            <button
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className={`
+                flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3'} 
+                px-3 py-3 rounded-lg w-full mb-2
+                transition-all duration-200
+                bg-orange-500 text-white font-semibold shadow-md hover:bg-orange-600
+              `}
+              title={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
+            >
+              <Menu className={`w-5 h-5 ${sidebarCollapsed ? '' : 'flex-shrink-0'}`} />
+              {!sidebarCollapsed && <span>Menu</span>}
+            </button>
             {menuItems.map((item) => (
               <Link key={item.path} href={item.path}>
                 <a

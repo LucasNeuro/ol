@@ -11,11 +11,13 @@ import { formatarData, formatarMoeda } from '@/lib/utils'
 import { Star } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
+import { useNotifications } from '@/hooks/useNotifications'
 
 function EditalContent() {
   const [, params] = useRoute('/edital/:numeroControle')
   const [, setLocation] = useLocation()
   const { user } = useAuth()
+  const { warning, showError, success } = useNotifications()
   const numeroControle = params?.numeroControle || ''
 
   // Buscar a licitação específica
@@ -71,7 +73,7 @@ function EditalContent() {
 
   const handleToggleFavorito = async (licitacao) => {
     if (!user || !supabase) {
-      alert('Você precisa estar logado para adicionar favoritos.')
+      warning('Você precisa estar logado para adicionar favoritos.')
       return
     }
 
@@ -86,7 +88,7 @@ function EditalContent() {
           .maybeSingle()
         
         if (!licitacaoExistente) {
-          alert('Licitação não encontrada no banco.')
+          showError('Licitação não encontrada no banco.')
           return
         }
         licitacaoId = licitacaoExistente.id
@@ -104,7 +106,7 @@ function EditalContent() {
           .from('licitacoes_favoritas')
           .delete()
           .eq('id', existing.id)
-        alert('Removido dos favoritos')
+        success('Removido dos favoritos')
       } else {
         await supabase
           .from('licitacoes_favoritas')
@@ -112,11 +114,11 @@ function EditalContent() {
             usuario_id: user.id,
             licitacao_id: licitacaoId,
           })
-        alert('Adicionado aos favoritos')
+        success('Adicionado aos favoritos')
       }
     } catch (error) {
       console.error('Erro ao atualizar favorito:', error)
-      alert('Erro ao atualizar favorito. Tente novamente.')
+      showError('Erro ao atualizar favorito. Tente novamente.')
     }
   }
 

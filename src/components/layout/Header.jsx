@@ -2,7 +2,7 @@ import { Link, useLocation } from 'wouter'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/hooks/useAuth'
 import { useState } from 'react'
-import { User, LogOut, ChevronDown } from 'lucide-react'
+import { User, LogOut, ChevronDown, Target } from 'lucide-react'
 
 export function Header() {
   const [location] = useLocation()
@@ -35,9 +35,10 @@ export function Header() {
       <div className="container mx-auto px-6 md:px-8 lg:px-12">
         <div className="flex h-16 items-center justify-between">
           <Link href="/">
-            <a className="cursor-pointer">
+            <a className="cursor-pointer flex items-center gap-2">
+              <Target className="w-6 h-6 text-orange-500" />
               <h1 className="text-xl font-bold text-gray-900">
-                Sistema Licitação
+                <strong>Focus</strong>
               </h1>
             </a>
           </Link>

@@ -13,6 +13,8 @@ import { buscarContratacoesPorData, buscarDetalhesContratacao } from '@/lib/pncp
 import { formatarData, formatarMoeda } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
+import { useNotifications } from '@/hooks/useNotifications'
+import { VisualizadorDocumento } from '@/components/VisualizadorDocumento'
 import { salvarLicitacaoCompleta as salvarLicitacaoCompletaSync, buscarLicitacaoDoBanco as buscarLicitacaoDoBancoSync } from '@/lib/sync'
 
 // Função para salvar licitação completa no banco (usa a função centralizada)
@@ -81,6 +83,7 @@ async function buscarLicitacaoDoBanco(numeroControlePNCP) {
 
 export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
   const { user } = useAuth()
+  const { warning, showError } = useNotifications()
   const [isFavorito, setIsFavorito] = useState(false)
 
   // Buscar a licitação específica - PRIMEIRO DO BANCO, depois da API
@@ -251,7 +254,7 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
 
   const handleToggleFavorito = async () => {
     if (!user || !supabase || !licitacao) {
-      alert('Você precisa estar logado para adicionar favoritos.')
+      warning('Você precisa estar logado para adicionar favoritos.')
       return
     }
 
@@ -265,7 +268,7 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
       
       if (!licitacaoExistente) {
         console.warn('⚠️ [Favorito] Licitação não encontrada no banco:', licitacao.numeroControlePNCP)
-        alert('Licitação não encontrada no banco. Tente abrir os detalhes novamente.')
+        showError('Licitação não encontrada no banco. Tente abrir os detalhes novamente.')
         return
       }
       
@@ -295,7 +298,7 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
       }
     } catch (error) {
       console.error('Erro ao atualizar favorito:', error)
-      alert('Erro ao atualizar favorito. Tente novamente.')
+      showError('Erro ao atualizar favorito. Tente novamente.')
     }
   }
 
@@ -528,12 +531,13 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
                       const nome = doc.nomeArquivo || doc.nomeDocumento || doc.nome || `Documento ${index + 1}`
                       
                       return url ? (
-                        <a
+                        <button
                           key={index}
-                          href={url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200 hover:bg-orange-50 hover:border-orange-300 transition-colors group"
+                          onClick={() => {
+                            setDocumentoVisualizacao({ url, nome })
+                            setVisualizadorAberto(true)
+                          }}
+                          className="w-full flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200 hover:bg-orange-50 hover:border-orange-300 transition-colors group text-left"
                         >
                           <FileText className="w-5 h-5 text-orange-600 flex-shrink-0" />
                           <div className="flex-1 min-w-0">
@@ -552,7 +556,7 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
                             )}
                             <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-orange-600" />
                           </div>
-                        </a>
+                        </button>
                       ) : (
                         <div
                           key={index}
@@ -616,6 +620,14 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
           </>
         )}
       </SheetContent>
+
+      {/* Visualizador de Documento */}
+      <VisualizadorDocumento
+        open={visualizadorAberto}
+        onOpenChange={setVisualizadorAberto}
+        urlDocumento={documentoVisualizacao?.url}
+        nomeArquivo={documentoVisualizacao?.nome}
+      />
     </Sheet>
   )
 }

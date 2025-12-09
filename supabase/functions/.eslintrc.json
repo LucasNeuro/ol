@@ -1,0 +1,10 @@
+{
+  "rules": {},
+  "env": {
+    "deno": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2020
+  }
+}
+
