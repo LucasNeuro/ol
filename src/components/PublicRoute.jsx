@@ -12,10 +12,15 @@ export function PublicRoute({ children }) {
   const [, setLocation] = useLocation()
 
   useEffect(() => {
-    // Se usuário estiver autenticado, redirecionar para dashboard
+    // Se usuário estiver autenticado, redirecionar para licitações (ou admin se for admin)
     if (!loading && user) {
-      console.log('✅ Usuário autenticado, redirecionando para dashboard')
-      setLocation('/dashboard')
+      if (user.is_adm) {
+        console.log('✅ Admin autenticado, redirecionando para admin')
+        setLocation('/admin/usuarios')
+      } else {
+        console.log('✅ Usuário autenticado, redirecionando para licitações')
+        setLocation('/licitacoes')
+      }
     }
   }, [user, loading, setLocation])
 
@@ -39,4 +44,7 @@ export function PublicRoute({ children }) {
   // Usuário não autenticado - mostrar conteúdo público
   return <>{children}</>
 }
+
+
+
 

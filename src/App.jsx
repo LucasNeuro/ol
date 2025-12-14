@@ -3,6 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from '@/lib/queryClient'
 import { ToastProvider } from '@/components/ui/toast'
 import { ConfirmDialogProvider } from '@/components/ui/confirm-dialog'
+import { FiltroProvider } from '@/contexts/FiltroContext'
 
 // Páginas públicas
 import { LandingPage } from '@/pages/landing'
@@ -17,13 +18,15 @@ import { FavoritosPage } from '@/pages/favoritos'
 import { EditalPage } from '@/pages/edital'
 import { PerfilPage } from '@/pages/perfil'
 import { AlertasPage } from '@/pages/alertas'
+import { AdminUsuariosPage } from '@/pages/admin/usuarios'
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <ConfirmDialogProvider>
-          <Switch>
+      <FiltroProvider>
+        <ToastProvider>
+          <ConfirmDialogProvider>
+            <Switch>
             <Route path="/" component={LandingPage} />
             <Route path="/login" component={LoginPage} />
             <Route path="/cadastro" component={CadastroPage} />
@@ -36,13 +39,17 @@ function App() {
             <Route path="/alertas" component={AlertasPage} />
             <Route path="/edital/:numeroControle" component={EditalPage} />
             
-            {/* Rotas não encontradas - redirecionar para dashboard se autenticado, senão para login */}
+            {/* Rotas Administrativas */}
+            <Route path="/admin/usuarios" component={AdminUsuariosPage} />
+            
+            {/* Rotas não encontradas - redirecionar para licitações se autenticado, senão para login */}
             <Route>
-              <Redirect to="/dashboard" />
+              <Redirect to="/licitacoes" />
             </Route>
-          </Switch>
-        </ConfirmDialogProvider>
-      </ToastProvider>
+            </Switch>
+          </ConfirmDialogProvider>
+        </ToastProvider>
+      </FiltroProvider>
     </QueryClientProvider>
   )
 }

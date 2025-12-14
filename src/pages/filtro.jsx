@@ -61,6 +61,7 @@ function FiltroContent() {
         // Só enviar modalidade se for válida (1-13)
         codigoModalidadeContratacao: filtros.codigoModalidadeContratacao && 
                                       filtros.codigoModalidadeContratacao !== '' && 
+                                      filtros.codigoModalidadeContratacao !== 'TODAS' &&
                                       parseInt(filtros.codigoModalidadeContratacao) >= 1 &&
                                       parseInt(filtros.codigoModalidadeContratacao) <= 13
           ? parseInt(filtros.codigoModalidadeContratacao)
@@ -69,7 +70,7 @@ function FiltroContent() {
         tamanhoPagina: 50,
       }
 
-      if (filtros.uf) params.uf = filtros.uf
+      if (filtros.uf && filtros.uf !== 'TODOS') params.uf = filtros.uf
       if (filtros.codigoMunicipioIbge) params.codigoMunicipioIbge = filtros.codigoMunicipioIbge
       if (filtros.cnpj) params.cnpj = filtros.cnpj.replace(/\D/g, '')
       if (filtros.numeroControlePNCP) params.numeroControlePNCP = filtros.numeroControlePNCP.trim()
@@ -156,7 +157,7 @@ function FiltroContent() {
                           <SelectValue placeholder="Todas as modalidades" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">Todas as modalidades</SelectItem>
+                          <SelectItem value="TODAS">Todas as modalidades</SelectItem>
                           {MODALIDADES.map((mod) => (
                             <SelectItem key={mod.id} value={mod.id.toString()}>
                               {mod.nome}
@@ -176,7 +177,7 @@ function FiltroContent() {
                           <SelectValue placeholder="Todos os estados" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">Todos os estados</SelectItem>
+                          <SelectItem value="TODOS">Todos os estados</SelectItem>
                           {UFS.map((uf) => (
                             <SelectItem key={uf} value={uf}>
                               {uf}

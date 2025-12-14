@@ -1,4 +1,5 @@
-import { Link } from 'wouter'
+import { Link, useLocation } from 'wouter'
+import { useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -11,10 +12,22 @@ import { useUserStore } from '@/store/userStore'
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, getDay } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { 
+  extrairPalavrasChaveDosSetores, 
+  correspondeAtividades
+} from '@/lib/filtroSemantico'
 
 function DashboardContent() {
   // Usar useUserStore para garantir consistência com outras páginas (mesmo padrão de favoritos.jsx)
   const { user } = useUserStore()
+  const [, setLocation] = useLocation()
+  
+  // Redirecionar usuários não-admin para licitações (dashboard é apenas para admins)
+  useEffect(() => {
+    if (user && !user?.is_adm) {
+      setLocation('/licitacoes')
+    }
+  }, [user, setLocation])
   
   // Debug: verificar user
   console.log('🔍 Dashboard - User:', user)
@@ -24,18 +37,172 @@ function DashboardContent() {
   const inicioSemana = startOfWeek(new Date(), { locale: ptBR })
   const fimSemana = endOfWeek(new Date(), { locale: ptBR })
 
-  // Total de Licitações
-  const { data: totalLicitacoes = 0, isLoading: loadingLicitacoes } = useQuery({
-    queryKey: ['dashboard', 'total-licitacoes'],
+  // Buscar perfil do usuário
+  const { data: perfilUsuario } = useQuery({
+    queryKey: ['perfil-usuario', user?.id],
     queryFn: async () => {
-      const { count, error } = await supabase
+      if (!user?.id) return null
+      
+      let { data, error } = await supabase
+        .from('profiles')
+        .select('setores_atividades, estados_interesse, sinonimos_personalizados')
+        .eq('id', user.id)
+        .maybeSingle()
+      
+      if (error && error.code === '42703') {
+        const { data: dataSemSinonimos, error: errorSemSinonimos } = await supabase
+          .from('profiles')
+          .select('setores_atividades, estados_interesse')
+          .eq('id', user.id)
+          .maybeSingle()
+        
+        if (errorSemSinonimos) return null
+        return { ...dataSemSinonimos, sinonimos_personalizados: {} }
+      }
+      
+      if (error) return null
+      return { ...data, sinonimos_personalizados: data?.sinonimos_personalizados || {} }
+    },
+    enabled: !!user?.id,
+    staleTime: 1000 * 60 * 60,
+  })
+
+  // Buscar licitações usando a mesma lógica da página de licitações
+  // Buscar mais licitações quando tem perfil configurado (igual à página de licitações)
+  const temPerfilConfigurado = perfilUsuario && (
+    (perfilUsuario.estados_interesse && perfilUsuario.estados_interesse.length > 0) ||
+    (perfilUsuario.setores_atividades && perfilUsuario.setores_atividades.length > 0)
+  )
+
+  const { data: todasLicitacoes = [], isLoading: loadingTodasLicitacoes } = useQuery({
+    queryKey: ['dashboard', 'todas-licitacoes', temPerfilConfigurado],
+    queryFn: async () => {
+      let query = supabase
         .from('licitacoes')
-        .select('*', { count: 'exact', head: true })
+        .select(`
+          id,
+          numero_controle_pncp,
+          objeto_compra,
+          data_publicacao_pncp,
+          data_atualizacao,
+          uf_sigla,
+          modalidade_nome,
+          orgao_razao_social,
+          valor_total_estimado,
+          dados_completos,
+          anexos,
+          itens
+        `)
+        .order('data_publicacao_pncp', { ascending: false })
+
+      // Buscar mais licitações para garantir que encontramos todas as relevantes
+      // A página de licitações busca 2000, mas vamos buscar mais no dashboard para ter certeza
+      if (temPerfilConfigurado) {
+        query = query.limit(5000) // Mais licitações para garantir que encontramos todas as relevantes
+      } else {
+        query = query.limit(10000) // Mais licitações quando não tem perfil (para mostrar todas)
+      }
+
+      const { data, error } = await query
 
       if (error) throw error
-      return count || 0
+      return data || []
     },
+    enabled: !!user?.id,
+    staleTime: 1000 * 60 * 2, // Cache por 2 minutos (igual à página de licitações)
   })
+
+  // Aplicar filtro semântico em um useMemo (mais rápido, não trava)
+  const licitacoesFiltradas = useMemo(() => {
+    if (!todasLicitacoes || todasLicitacoes.length === 0) return []
+    if (!perfilUsuario || !perfilUsuario.setores_atividades || perfilUsuario.setores_atividades.length === 0) {
+      return todasLicitacoes
+    }
+
+    const estadosInteresse = perfilUsuario.estados_interesse || []
+    const setoresAtividades = perfilUsuario.setores_atividades || []
+
+    let resultado = todasLicitacoes
+
+    // Filtrar por estados (síncrono, rápido)
+    if (estadosInteresse.length > 0) {
+      const temNacional = estadosInteresse.some(e => 
+        typeof e === 'string' ? e === 'Nacional' : e === 'Nacional'
+      )
+      
+      if (!temNacional) {
+        resultado = resultado.filter(licitacao => {
+          const uf = licitacao.uf_sigla?.toUpperCase()
+          return estadosInteresse.some(estado => {
+            const estadoUpper = typeof estado === 'string' ? estado.toUpperCase() : estado
+            return estadoUpper === uf
+          })
+        })
+      }
+    }
+
+    // Usar a mesma função correspondeAtividades da página de licitações (sem IA para não travar)
+    // Isso garante que o dashboard mostre os mesmos números que a página de licitações
+    if (setoresAtividades.length > 0) {
+      const sinonimosPersonalizados = perfilUsuario.sinonimos_personalizados || {}
+      const palavrasChave = extrairPalavrasChaveDosSetores(setoresAtividades, sinonimosPersonalizados)
+      
+      console.log('🔍 [Dashboard] Filtro semântico:', {
+        antesFiltro: resultado.length,
+        palavrasPrincipais: palavrasChave.principais?.length || 0,
+        palavrasSecundarias: palavrasChave.secundarias?.length || 0,
+        palavrasTodas: palavrasChave.todas?.length || 0
+      })
+      
+      if (palavrasChave.todas && palavrasChave.todas.length > 0) {
+        // Usar a mesma função de correspondência (sem IA) para garantir consistência
+        const antesFiltroSemantico = resultado.length
+        resultado = resultado.filter(licitacao => {
+          return correspondeAtividades(
+            licitacao,
+            palavrasChave,
+            sinonimosPersonalizados,
+            {}, // sem sinonimosBanco
+            setoresAtividades
+          )
+        })
+        
+        console.log('✅ [Dashboard] Após filtro semântico:', {
+          antes: antesFiltroSemantico,
+          depois: resultado.length,
+          removidas: antesFiltroSemantico - resultado.length
+        })
+      } else {
+        console.warn('⚠️ [Dashboard] Sem palavras-chave válidas, não aplicando filtro semântico')
+      }
+    }
+
+    return resultado
+  }, [todasLicitacoes, perfilUsuario])
+
+  const loadingLicitacoes = loadingTodasLicitacoes
+
+  // Total de Licitações (filtradas) - usar o mesmo cálculo da página de licitações
+  // O dashboard mostra o total SEM filtros permanentes (que são específicos da página de licitações)
+  const totalLicitacoes = licitacoesFiltradas.length
+  
+  // Log para debug
+  useEffect(() => {
+    if (todasLicitacoes.length > 0) {
+      console.log('📊 [Dashboard] Debug:', {
+        todasLicitacoes: todasLicitacoes.length,
+        licitacoesFiltradas: totalLicitacoes,
+        temPerfil: !!perfilUsuario,
+        temSetores: perfilUsuario?.setores_atividades?.length > 0,
+        temEstados: perfilUsuario?.estados_interesse?.length > 0,
+        setores: perfilUsuario?.setores_atividades?.map(s => s.setor).join(', ') || 'nenhum',
+        estados: perfilUsuario?.estados_interesse?.join(', ') || 'nenhum'
+      })
+    }
+  }, [todasLicitacoes.length, totalLicitacoes, perfilUsuario])
+  
+  // Log para debug
+  console.log('📊 [Dashboard] Total de licitações filtradas:', totalLicitacoes)
 
   // Total de Favoritos do usuário
   const { data: totalFavoritos = 0, isLoading: loadingFavoritos } = useQuery({
@@ -82,20 +249,18 @@ function DashboardContent() {
     enabled: !!user?.id,
   })
 
-  // Licitações desta semana
-  const { data: licitacoesSemana = 0, isLoading: loadingSemana } = useQuery({
-    queryKey: ['dashboard', 'licitacoes-semana'],
-    queryFn: async () => {
-      const { count, error } = await supabase
-        .from('licitacoes')
-        .select('*', { count: 'exact', head: true })
-        .gte('data_publicacao_pncp', format(inicioSemana, 'yyyy-MM-dd'))
-        .lte('data_publicacao_pncp', format(fimSemana, 'yyyy-MM-dd'))
-
-      if (error) throw error
-      return count || 0
-    },
-  })
+  // Licitações desta semana (filtradas)
+  const licitacoesSemana = useMemo(() => {
+    if (!licitacoesFiltradas || licitacoesFiltradas.length === 0) return 0
+    
+    const inicioSemanaStr = format(inicioSemana, 'yyyy-MM-dd')
+    const fimSemanaStr = format(fimSemana, 'yyyy-MM-dd')
+    
+    return licitacoesFiltradas.filter(lic => {
+      const dataPub = lic.data_publicacao_pncp
+      return dataPub && dataPub >= inicioSemanaStr && dataPub <= fimSemanaStr
+    }).length
+  }, [licitacoesFiltradas, inicioSemana, fimSemana])
 
   // Atividade Recente
   const { data: atividadeRecente = [], isLoading: loadingAtividade } = useQuery({
@@ -157,109 +322,84 @@ function DashboardContent() {
   // Dados para gráficos
   const coresGraficos = ['#f97316', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
 
-  // Gráfico Donut: Distribuição por Modalidade
-  const { data: dadosModalidade = [], isLoading: loadingModalidade } = useQuery({
-    queryKey: ['dashboard', 'modalidade'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('licitacoes')
-        .select('modalidade_nome')
-        .not('modalidade_nome', 'is', null)
+  // Gráfico Donut: Distribuição por Modalidade (filtradas)
+  const dadosModalidade = useMemo(() => {
+    if (!licitacoesFiltradas || licitacoesFiltradas.length === 0) return []
 
-      if (error) throw error
+    const agrupado = licitacoesFiltradas.reduce((acc, item) => {
+      const modalidade = item.modalidade_nome || 'Não informado'
+      acc[modalidade] = (acc[modalidade] || 0) + 1
+      return acc
+    }, {})
 
-      // Agrupar por modalidade
-      const agrupado = (data || []).reduce((acc, item) => {
-        const modalidade = item.modalidade_nome || 'Não informado'
-        acc[modalidade] = (acc[modalidade] || 0) + 1
-        return acc
-      }, {})
+    return Object.entries(agrupado)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 6)
+  }, [licitacoesFiltradas])
 
-      // Converter para array e ordenar
-      return Object.entries(agrupado)
-        .map(([name, value]) => ({ name, value }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 6)
-    },
-  })
+  // Gráfico Donut: Distribuição por UF (Top 5) - filtradas
+  const dadosUF = useMemo(() => {
+    if (!licitacoesFiltradas || licitacoesFiltradas.length === 0) return []
 
-  // Gráfico Donut: Distribuição por UF (Top 5)
-  const { data: dadosUF = [], isLoading: loadingUF } = useQuery({
-    queryKey: ['dashboard', 'uf'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('licitacoes')
-        .select('uf_sigla')
-        .not('uf_sigla', 'is', null)
+    const agrupado = licitacoesFiltradas.reduce((acc, item) => {
+      const uf = item.uf_sigla || 'Não informado'
+      acc[uf] = (acc[uf] || 0) + 1
+      return acc
+    }, {})
 
-      if (error) throw error
+    return Object.entries(agrupado)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5)
+  }, [licitacoesFiltradas])
 
-      // Agrupar por UF
-      const agrupado = (data || []).reduce((acc, item) => {
-        const uf = item.uf_sigla || 'Não informado'
-        acc[uf] = (acc[uf] || 0) + 1
-        return acc
-      }, {})
+  // Gráfico Barras: Licitações por dia da semana atual (filtradas)
+  const dadosSemana = useMemo(() => {
+    const dias = eachDayOfInterval({ start: inicioSemana, end: fimSemana })
+    const diasFormatados = dias.map(dia => ({
+      dia: format(dia, 'EEE', { locale: ptBR }),
+      data: format(dia, 'yyyy-MM-dd'),
+      valor: 0,
+    }))
 
-      // Converter para array e ordenar
-      return Object.entries(agrupado)
-        .map(([name, value]) => ({ name, value }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 5)
-    },
-  })
+    if (!licitacoesFiltradas || licitacoesFiltradas.length === 0) {
+      return diasFormatados
+    }
 
-  // Gráfico Barras: Licitações por dia da semana atual
-  const { data: dadosSemana = [], isLoading: loadingDadosSemana } = useQuery({
-    queryKey: ['dashboard', 'semana-dias'],
-    queryFn: async () => {
-      const dias = eachDayOfInterval({ start: inicioSemana, end: fimSemana })
-      const diasFormatados = dias.map(dia => ({
-        dia: format(dia, 'EEE', { locale: ptBR }),
-        data: format(dia, 'yyyy-MM-dd'),
-        valor: 0,
-      }))
+    // Filtrar licitações da semana
+    const inicioSemanaStr = format(inicioSemana, 'yyyy-MM-dd')
+    const fimSemanaStr = format(fimSemana, 'yyyy-MM-dd')
+    
+    const licitacoesDaSemana = licitacoesFiltradas.filter(lic => {
+      const dataPub = lic.data_publicacao_pncp
+      return dataPub && dataPub >= inicioSemanaStr && dataPub <= fimSemanaStr
+    })
 
-      // Buscar licitações da semana
-      const { data, error } = await supabase
-        .from('licitacoes')
-        .select('data_publicacao_pncp')
-        .gte('data_publicacao_pncp', format(inicioSemana, 'yyyy-MM-dd'))
-        .lte('data_publicacao_pncp', format(fimSemana, 'yyyy-MM-dd'))
+    // Contar por dia
+    const contagemPorDia = licitacoesDaSemana.reduce((acc, item) => {
+      const dataPub = item.data_publicacao_pncp
+      if (dataPub) {
+        acc[dataPub] = (acc[dataPub] || 0) + 1
+      }
+      return acc
+    }, {})
 
-      if (error) throw error
+    // Preencher dados
+    return diasFormatados.map(item => ({
+      ...item,
+      valor: contagemPorDia[item.data] || 0,
+    }))
+  }, [licitacoesFiltradas, inicioSemana, fimSemana])
 
-      // Contar por dia
-      const contagemPorDia = (data || []).reduce((acc, item) => {
-        const dataPub = item.data_publicacao_pncp
-        if (dataPub) {
-          acc[dataPub] = (acc[dataPub] || 0) + 1
-        }
-        return acc
-      }, {})
+  // Gráfico Barras: Valores estimados por modalidade (Top 5) - filtradas
+  const dadosValoresModalidade = useMemo(() => {
+    if (!licitacoesFiltradas || licitacoesFiltradas.length === 0) return []
 
-      // Preencher dados
-      return diasFormatados.map(item => ({
-        ...item,
-        valor: contagemPorDia[item.data] || 0,
-      }))
-    },
-  })
-
-  // Gráfico Barras: Valores estimados por modalidade (Top 5)
-  const { data: dadosValoresModalidade = [], isLoading: loadingValoresModalidade } = useQuery({
-    queryKey: ['dashboard', 'valores-modalidade'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('licitacoes')
-        .select('modalidade_nome, valor_total_estimado')
-        .not('modalidade_nome', 'is', null)
-        .not('valor_total_estimado', 'is', null)
-
-      if (error) throw error
-
-      // Agrupar e somar valores por modalidade
-      const agrupado = (data || []).reduce((acc, item) => {
+    // Agrupar e somar valores por modalidade
+    const agrupado = licitacoesFiltradas
+      .filter(item => item.modalidade_nome && item.valor_total_estimado)
+      .reduce((acc, item) => {
         const modalidade = item.modalidade_nome || 'Não informado'
         const valor = parseFloat(item.valor_total_estimado) || 0
         if (!acc[modalidade]) {
@@ -270,32 +410,31 @@ function DashboardContent() {
         return acc
       }, {})
 
-      // Converter para array, calcular média e ordenar
-      return Object.values(agrupado)
-        .map(item => ({
-          name: item.name,
-          valor: item.valor / 1000000, // Converter para milhões
-          count: item.count,
-        }))
-        .sort((a, b) => b.valor - a.valor)
-        .slice(0, 5)
-    },
-  })
+    // Converter para array, calcular média e ordenar
+    return Object.values(agrupado)
+      .map(item => ({
+        name: item.name,
+        valor: item.valor / 1000000, // Converter para milhões
+        count: item.count,
+      }))
+      .sort((a, b) => b.valor - a.valor)
+      .slice(0, 5)
+  }, [licitacoesFiltradas])
 
-  const isLoading = loadingLicitacoes || loadingFavoritos || loadingAlertas || loadingSemana
-  const isLoadingGraficos = loadingModalidade || loadingUF || loadingDadosSemana || loadingValoresModalidade
+  const isLoading = loadingLicitacoes || loadingFavoritos || loadingAlertas
+  const isLoadingGraficos = loadingLicitacoes
 
   return (
     <AppLayout>
-      <div className="py-8 px-6">
-        <div className="max-w-7xl mx-auto">
-          {/* Header do Dashboard */}
+      <div className="py-8 px-4 md:px-6 lg:px-8 xl:px-12">
+        <div className="w-full max-w-[95%] xl:max-w-[1400px] mx-auto">
+          {/* Header do Dashboard Admin */}
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              Bem-vindo ao Dashboard
+              Dashboard Administrativo
             </h1>
             <p className="text-gray-600">
-              Gerencie suas licitações e oportunidades
+              Visão geral de todas as licitações do sistema
             </p>
           </div>
 
@@ -305,12 +444,21 @@ function DashboardContent() {
               <CardContent className="pt-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-600">Total de Licitações</p>
+                    <p className="text-sm font-medium text-gray-600">
+                      {perfilUsuario?.setores_atividades?.length > 0 
+                        ? 'Licitações Relevantes' 
+                        : 'Total de Licitações'}
+                    </p>
                     {isLoading ? (
                       <Loader2 className="w-8 h-8 animate-spin text-gray-400 mt-2" />
                     ) : (
                       <p className="text-3xl font-bold text-gray-900 mt-2">
                         {totalLicitacoes.toLocaleString('pt-BR')}
+                      </p>
+                    )}
+                    {perfilUsuario?.setores_atividades?.length > 0 && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        Filtradas por seu perfil
                       </p>
                     )}
                   </div>
@@ -373,6 +521,11 @@ function DashboardContent() {
                         {licitacoesSemana.toLocaleString('pt-BR')}
                       </p>
                     )}
+                    {perfilUsuario?.setores_atividades?.length > 0 && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        Relevantes para sua empresa
+                      </p>
+                    )}
                   </div>
                   <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
                     <Calendar className="w-6 h-6 text-green-600" />
@@ -383,7 +536,7 @@ function DashboardContent() {
           </div>
 
           {/* Gráficos */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 mb-8">
             {/* Gráfico Donut: Distribuição por Modalidade */}
             <Card>
               <CardHeader>
@@ -435,7 +588,11 @@ function DashboardContent() {
                   <MapPin className="w-5 h-5 text-blue-600" />
                   Distribuição por Estado (Top 5)
                 </CardTitle>
-                <CardDescription>Licitações por estado brasileiro</CardDescription>
+                <CardDescription>
+                  {perfilUsuario?.setores_atividades?.length > 0 
+                    ? 'Estados das licitações relevantes para sua empresa'
+                    : 'Licitações por estado brasileiro'}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {isLoadingGraficos ? (

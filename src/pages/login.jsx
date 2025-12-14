@@ -32,7 +32,12 @@ export function LoginPage() {
 
   // Redirecionar se já estiver logado
   if (user) {
-    setLocation('/dashboard')
+    // Verificar se é admin e redirecionar para painel admin
+    if (user.is_adm) {
+      setLocation('/admin/usuarios')
+    } else {
+      setLocation('/licitacoes')
+    }
     return null
   }
 
@@ -40,8 +45,14 @@ export function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      await signIn(data.email, data.password)
-      setLocation('/dashboard')
+      const { data: loginData } = await signIn(data.email, data.password)
+      
+      // Verificar se é admin e redirecionar para painel admin
+      if (loginData?.user?.is_adm) {
+        setLocation('/admin/usuarios')
+      } else {
+        setLocation('/licitacoes')
+      }
     } catch (err) {
       setError(err.message || 'Erro ao fazer login. Verifique suas credenciais.')
     } finally {

@@ -14,6 +14,7 @@ import { formatarData, formatarMoeda } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { useNotifications } from '@/hooks/useNotifications'
+import { useUserStore } from '@/store/userStore'
 import { VisualizadorDocumento } from '@/components/VisualizadorDocumento'
 import { salvarLicitacaoCompleta as salvarLicitacaoCompletaSync, buscarLicitacaoDoBanco as buscarLicitacaoDoBancoSync } from '@/lib/sync'
 
@@ -259,6 +260,24 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
     }
 
     try {
+      // Verificar se o usuário existe na tabela profiles
+      const { data: usuarioExiste, error: erroUsuario } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (erroUsuario || !usuarioExiste) {
+        console.error('❌ Usuário não encontrado na tabela profiles:', erroUsuario)
+        showError('Sua sessão expirou. Por favor, faça login novamente.')
+        // Limpar sessão inválida
+        const { clearUser } = useUserStore.getState()
+        clearUser()
+        localStorage.removeItem('user')
+        localStorage.removeItem('session')
+        return
+      }
+
       // Buscar ID da licitação pelo número de controle
       const { data: licitacaoExistente } = await supabase
         .from('licitacoes')
@@ -288,12 +307,26 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
           .eq('id', existing.id)
         setIsFavorito(false)
       } else {
-        await supabase
+        const { error: insertError } = await supabase
           .from('licitacoes_favoritas')
           .insert({
             usuario_id: user.id,
             licitacao_id: licitacaoId,
           })
+        
+        if (insertError) {
+          // Tratamento específico para erro de foreign key
+          if (insertError.code === '23503') {
+            showError('Erro ao favoritar: sua sessão pode ter expirado. Por favor, faça login novamente.')
+            // Limpar sessão inválida
+            const { clearUser } = useUserStore.getState()
+            clearUser()
+            localStorage.removeItem('user')
+            localStorage.removeItem('session')
+            return
+          }
+          throw insertError
+        }
         setIsFavorito(true)
       }
     } catch (error) {

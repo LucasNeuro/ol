@@ -12,7 +12,7 @@ export function useFiltrosSalvos() {
   const { user } = useUserStore()
   const queryClient = useQueryClient()
 
-  // Buscar filtros salvos
+  // Buscar filtros salvos (apenas filtros normais, não permanentes)
   const { data: filtrosSalvos = [], isLoading } = useQuery({
     queryKey: ['filtros-salvos', user?.id],
     queryFn: async () => {
@@ -26,26 +26,90 @@ export function useFiltrosSalvos() {
         .order('atualizado_em', { ascending: false })
 
       if (error) throw error
-      return data || []
+
+      // Filtrar apenas filtros normais (não permanentes) no código
+      // Se o campo permanente existir, usar ele, senão verificar na estrutura
+      const filtrosNormais = (data || []).filter(filtro => {
+        // Se campo permanente existe, usar ele
+        if (filtro.permanente !== undefined) {
+          return !filtro.permanente
+        }
+        // Senão, verificar na estrutura de exclusão
+        return !filtro.filtros_exclusao?._permanente
+      })
+
+      return filtrosNormais
     },
     enabled: !!user?.id,
   })
 
   // Salvar filtro
   const salvarFiltro = useMutation({
-    mutationFn: async ({ nome, descricao, filtrosInclusao, filtrosExclusao, filtrosCnaes }) => {
+    mutationFn: async ({ nome, descricao, filtrosInclusao, filtrosExclusao, filtrosCnaes, permanente, aplicar_automaticamente, modo, criterios }) => {
       if (!user?.id) throw new Error('Usuário não autenticado')
+
+      // Preparar dados de inserção
+      const dadosInsercao = {
+        usuario_id: user.id,
+        nome,
+        descricao: descricao || '',
+        filtros_inclusao: filtrosInclusao || {},
+        filtros_exclusao: filtrosExclusao || {},
+        filtros_cnaes: filtrosCnaes || {},
+      }
+
+      // Para filtros permanentes com critérios, usar estrutura JSONB como fallback
+      if (permanente && criterios) {
+        // Armazenar na estrutura JSONB primeiro (sempre funciona)
+        dadosInsercao.filtros_exclusao = {
+          ...dadosInsercao.filtros_exclusao,
+          _permanente: true,
+          _tipo: 'permanente',
+          _modo: modo || 'incluir',
+          _aplicar_automaticamente: aplicar_automaticamente || false,
+          _criterios: criterios,
+          // Manter compatibilidade
+          palavras_objeto: criterios.palavras_objeto || [],
+          estados_excluir: criterios.estados || []
+        }
+
+        // Tentar adicionar campos novos (se existirem no banco)
+        try {
+          // Verificar se as colunas existem
+          const { error: testError } = await supabase
+            .from('filtros_salvos')
+            .select('permanente, aplicar_automaticamente, modo, criterios')
+            .limit(0)
+          
+          if (!testError) {
+            // Colunas existem, usar estrutura nova
+            dadosInsercao.permanente = true
+            dadosInsercao.tipo = 'permanente'
+            dadosInsercao.aplicar_automaticamente = aplicar_automaticamente || false
+            dadosInsercao.modo = modo || 'incluir'
+            dadosInsercao.criterios = criterios
+            // Limpar metadados do filtros_exclusao
+            dadosInsercao.filtros_exclusao = {
+              palavras_objeto: criterios.palavras_objeto || [],
+              estados_excluir: criterios.estados || []
+            }
+          }
+        } catch (e) {
+          // Campos não existem, usar estrutura JSONB (já configurada acima)
+          console.warn('Usando estrutura JSONB para campos novos:', e.message)
+        }
+      } else if (permanente) {
+        // Filtro permanente sem critérios estruturados (estrutura antiga)
+        dadosInsercao.filtros_exclusao = {
+          ...dadosInsercao.filtros_exclusao,
+          _permanente: true,
+          _aplicar_automaticamente: aplicar_automaticamente || false
+        }
+      }
 
       const { data, error } = await supabase
         .from('filtros_salvos')
-        .insert({
-          usuario_id: user.id,
-          nome,
-          descricao: descricao || '',
-          filtros_inclusao: filtrosInclusao || {},
-          filtros_exclusao: filtrosExclusao || {},
-          filtros_cnaes: filtrosCnaes || {},
-        })
+        .insert(dadosInsercao)
         .select()
         .single()
 
@@ -54,6 +118,8 @@ export function useFiltrosSalvos() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['filtros-salvos', user?.id])
+      queryClient.invalidateQueries(['filtros-permanentes', user?.id])
+      queryClient.invalidateQueries(['filtros-permanentes-ativos', user?.id])
     },
   })
 

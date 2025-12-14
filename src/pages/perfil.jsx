@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -6,17 +7,32 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { PasswordInput } from '@/components/ui/password-input'
+import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/hooks/useAuth'
+import { useNotifications } from '@/hooks/useNotifications'
 import { supabase } from '@/lib/supabase'
-import { Building2, MapPin, Phone, FileText, Edit2, Save, X, Key } from 'lucide-react'
+import { Building2, MapPin, Phone, FileText, Edit2, Save, X, Key, Settings, Plus, CheckCircle2 } from 'lucide-react'
+import { SelecionarSetores } from '@/components/SelecionarSetores'
+import { SelecionarEstados } from '@/components/SelecionarEstados'
+import { useUserStore } from '@/store/userStore'
 
 function PerfilContent() {
   const { user } = useAuth()
+  const { setUser } = useUserStore()
+  const queryClient = useQueryClient()
+  const { success: showSuccess, error: showError } = useNotifications()
   const [editMode, setEditMode] = useState(false)
   const [changePassword, setChangePassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  
+  // Estados para configuração de setores e estados
+  const [setoresSelecionados, setSetoresSelecionados] = useState([])
+  const [estadosSelecionados, setEstadosSelecionados] = useState([])
+  const [modalSetoresAberto, setModalSetoresAberto] = useState(false)
+  const [modalEstadosAberto, setModalEstadosAberto] = useState(false)
+  const [salvandoConfig, setSalvandoConfig] = useState(false)
   
   const [formData, setFormData] = useState({
     telefone: user?.telefone || '',
@@ -25,6 +41,38 @@ function PerfilContent() {
     senha_nova: '',
     confirmar_senha: '',
   })
+
+  // Buscar perfil atualizado do banco
+  const { data: perfilAtualizado } = useQuery({
+    queryKey: ['perfil-usuario', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('setores_atividades, estados_interesse')
+        .eq('id', user.id)
+        .maybeSingle()
+      
+      if (error) {
+        console.warn('⚠️ Erro ao buscar perfil:', error)
+        return null
+      }
+      
+      return data
+    },
+    enabled: !!user?.id,
+    staleTime: 1000 * 60 * 5, // Cache por 5 minutos
+  })
+
+  // Carregar setores e estados do perfil quando o componente montar ou quando o perfil for atualizado
+  useEffect(() => {
+    if (user) {
+      const setores = perfilAtualizado?.setores_atividades || user.setores_atividades || []
+      const estados = perfilAtualizado?.estados_interesse || user.estados_interesse || []
+      setSetoresSelecionados(setores)
+      setEstadosSelecionados(estados)
+    }
+  }, [user, perfilAtualizado])
 
   if (!user) return null
 
@@ -74,13 +122,20 @@ function PerfilContent() {
         setFormData({ ...formData, senha_atual: '', senha_nova: '', confirmar_senha: '' })
       }
 
+      // Atualizar o store do usuário
+      const { password_hash, ...userData } = data
+      setUser(userData)
+
+      // Invalidar queries para atualizar em tempo real
+      queryClient.invalidateQueries(['perfil-usuario', user.id])
+
+      showSuccess('Dados atualizados com sucesso!')
       setSuccess('Dados atualizados com sucesso!')
       setEditMode(false)
-      
-      // Recarregar dados do usuário
-      setTimeout(() => window.location.reload(), 1500)
     } catch (err) {
-      setError(err.message || 'Erro ao atualizar dados')
+      const errorMsg = err.message || 'Erro ao atualizar dados'
+      setError(errorMsg)
+      showError(errorMsg)
     } finally {
       setLoading(false)
     }
@@ -98,6 +153,54 @@ function PerfilContent() {
     })
     setError('')
     setSuccess('')
+  }
+
+  // Salvar configuração de setores e estados
+  const handleSalvarConfiguracao = async () => {
+    if (!user?.id) return
+
+    setSalvandoConfig(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const { data, error: updateError } = await supabase
+        .from('profiles')
+        .update({
+          setores_atividades: setoresSelecionados.length > 0 ? setoresSelecionados : null,
+          estados_interesse: estadosSelecionados.length > 0 ? estadosSelecionados : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id)
+        .select()
+        .single()
+
+      if (updateError) throw updateError
+
+      // Atualizar o store do usuário
+      const { password_hash, ...userData } = data
+      setUser(userData)
+
+      // Invalidar queries para atualizar em tempo real
+      queryClient.invalidateQueries(['perfil-usuario', user.id])
+      queryClient.invalidateQueries(['licitacoes']) // Recarregar licitações com novos filtros
+
+      // Mostrar notificação de sucesso
+      showSuccess('Configuração salva com sucesso! As licitações serão filtradas automaticamente.')
+      
+      setModalSetoresAberto(false)
+      setModalEstadosAberto(false)
+      
+      // Atualizar estado local imediatamente (sem recarregar página)
+      setSetoresSelecionados(setoresSelecionados)
+      setEstadosSelecionados(estadosSelecionados)
+    } catch (err) {
+      const errorMsg = err.message || 'Erro ao salvar configuração'
+      setError(errorMsg)
+      showError(errorMsg)
+    } finally {
+      setSalvandoConfig(false)
+    }
   }
 
   return (
@@ -358,6 +461,188 @@ function PerfilContent() {
               </CardContent>
             </Card>
 
+            {/* Card: Configuração do Serviço */}
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings className="w-5 h-5 text-orange-500" />
+                  Configuração do Serviço
+                </CardTitle>
+                <p className="text-sm text-gray-500 mt-2">
+                  Configure seus setores de atuação e estados de interesse para receber apenas licitações relevantes
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-6">
+                  {/* Setores/Atividades */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 mb-2 block">
+                      Atividades de Interesse
+                    </Label>
+                    <div className="flex items-start gap-3">
+                      <Button
+                        onClick={() => setModalSetoresAberto(true)}
+                        variant="outline"
+                        className="border-green-500 text-green-600 hover:bg-green-50"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        {setoresSelecionados.length > 0 ? 'Editar Atividades' : 'Selecionar Atividades'}
+                      </Button>
+                      {setoresSelecionados.length > 0 && (
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-500 mb-2">
+                            {setoresSelecionados.length} setor(es) selecionado(s)
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {setoresSelecionados.map((item, idx) => (
+                              <Badge 
+                                key={idx} 
+                                variant="secondary" 
+                                className="bg-orange-100 text-orange-800 flex items-center gap-2 pr-2"
+                              >
+                                <span>{item.setor} ({item.subsetores?.length || 0} atividades)</span>
+                                <button
+                                  onClick={async () => {
+                                    const novosSetores = setoresSelecionados.filter((_, i) => i !== idx)
+                                    setSetoresSelecionados(novosSetores)
+                                    
+                                    // Salvar automaticamente
+                                    if (user?.id) {
+                                      try {
+                                        const { error } = await supabase
+                                          .from('profiles')
+                                          .update({
+                                            setores_atividades: novosSetores.length > 0 ? novosSetores : null,
+                                            updated_at: new Date().toISOString(),
+                                          })
+                                          .eq('id', user.id)
+
+                                        if (error) throw error
+
+                                        queryClient.invalidateQueries(['perfil-usuario', user.id])
+                                        queryClient.invalidateQueries(['licitacoes'])
+                                        
+                                        const { data: perfilAtualizado } = await supabase
+                                          .from('profiles')
+                                          .select('*')
+                                          .eq('id', user.id)
+                                          .single()
+                                        
+                                        if (perfilAtualizado) {
+                                          const { password_hash, ...userData } = perfilAtualizado
+                                          setUser(userData)
+                                        }
+
+                                        showSuccess('Setor removido!')
+                                      } catch (err) {
+                                        showError('Erro ao remover setor')
+                                      }
+                                    }
+                                  }}
+                                  className="ml-1 hover:bg-orange-200 rounded-full p-0.5"
+                                  title="Remover setor"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Estados */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 mb-2 block">
+                      Estados de Interesse
+                    </Label>
+                    <div className="flex items-start gap-3">
+                      <Button
+                        onClick={() => setModalEstadosAberto(true)}
+                        variant="outline"
+                        className="border-green-500 text-green-600 hover:bg-green-50"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        {estadosSelecionados.length > 0 ? 'Editar Estados' : 'Selecionar Estados'}
+                      </Button>
+                      {estadosSelecionados.length > 0 && (
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-500 mb-2">
+                            {estadosSelecionados.length} estado(s) selecionado(s)
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {estadosSelecionados.map((estado, idx) => (
+                              <Badge 
+                                key={idx} 
+                                variant="secondary" 
+                                className="bg-blue-100 text-blue-800 flex items-center gap-2 pr-2"
+                              >
+                                <span>{estado}</span>
+                                <button
+                                  onClick={async () => {
+                                    const novosEstados = estadosSelecionados.filter((_, i) => i !== idx)
+                                    setEstadosSelecionados(novosEstados)
+                                    
+                                    // Salvar automaticamente
+                                    if (user?.id) {
+                                      try {
+                                        const { error } = await supabase
+                                          .from('profiles')
+                                          .update({
+                                            estados_interesse: novosEstados.length > 0 ? novosEstados : null,
+                                            updated_at: new Date().toISOString(),
+                                          })
+                                          .eq('id', user.id)
+
+                                        if (error) throw error
+
+                                        queryClient.invalidateQueries(['perfil-usuario', user.id])
+                                        queryClient.invalidateQueries(['licitacoes'])
+                                        
+                                        const { data: perfilAtualizado } = await supabase
+                                          .from('profiles')
+                                          .select('*')
+                                          .eq('id', user.id)
+                                          .single()
+                                        
+                                        if (perfilAtualizado) {
+                                          const { password_hash, ...userData } = perfilAtualizado
+                                          setUser(userData)
+                                        }
+
+                                        showSuccess('Estado removido!')
+                                      } catch (err) {
+                                        showError('Erro ao remover estado')
+                                      }
+                                    }
+                                  }}
+                                  className="ml-1 hover:bg-blue-200 rounded-full p-0.5"
+                                  title="Remover estado"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Informação sobre salvamento automático */}
+                  {(setoresSelecionados.length > 0 || estadosSelecionados.length > 0) && (
+                    <div className="pt-4 border-t">
+                      <p className="text-xs text-gray-500 flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        As alterações são salvas automaticamente. As licitações serão filtradas em tempo real.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
             {/* Card: Trocar Senha (quando em modo de edição) */}
             {editMode && (
               <Card className="lg:col-span-2">
@@ -415,6 +700,97 @@ function PerfilContent() {
           </div>
         </div>
       </div>
+
+      {/* Modais para seleção */}
+      <SelecionarSetores
+        open={modalSetoresAberto}
+        onOpenChange={setModalSetoresAberto}
+        setoresSelecionados={setoresSelecionados}
+        onConfirm={async (setores) => {
+          setSetoresSelecionados(setores)
+          setModalSetoresAberto(false)
+          
+          // Salvar automaticamente
+          if (user?.id) {
+            try {
+              const { error: updateError } = await supabase
+                .from('profiles')
+                .update({
+                  setores_atividades: setores.length > 0 ? setores : null,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', user.id)
+
+              if (updateError) throw updateError
+
+              // Invalidar queries para atualizar em tempo real
+              queryClient.invalidateQueries(['perfil-usuario', user.id])
+              queryClient.invalidateQueries(['licitacoes'])
+              
+              // Atualizar store do usuário
+              const { data: perfilAtualizado } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', user.id)
+                .single()
+              
+              if (perfilAtualizado) {
+                const { password_hash, ...userData } = perfilAtualizado
+                setUser(userData)
+              }
+
+              showSuccess('Setores atualizados! As licitações serão filtradas automaticamente.')
+            } catch (err) {
+              showError('Erro ao salvar setores: ' + (err.message || 'Erro desconhecido'))
+            }
+          }
+        }}
+      />
+
+      <SelecionarEstados
+        open={modalEstadosAberto}
+        onOpenChange={setModalEstadosAberto}
+        estadosSelecionados={estadosSelecionados}
+        onConfirm={async (estados) => {
+          setEstadosSelecionados(estados)
+          setModalEstadosAberto(false)
+          
+          // Salvar automaticamente
+          if (user?.id) {
+            try {
+              const { error: updateError } = await supabase
+                .from('profiles')
+                .update({
+                  estados_interesse: estados.length > 0 ? estados : null,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', user.id)
+
+              if (updateError) throw updateError
+
+              // Invalidar queries para atualizar em tempo real
+              queryClient.invalidateQueries(['perfil-usuario', user.id])
+              queryClient.invalidateQueries(['licitacoes'])
+              
+              // Atualizar store do usuário
+              const { data: perfilAtualizado } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', user.id)
+                .single()
+              
+              if (perfilAtualizado) {
+                const { password_hash, ...userData } = perfilAtualizado
+                setUser(userData)
+              }
+
+              showSuccess('Estados atualizados! As licitações serão filtradas automaticamente.')
+            } catch (err) {
+              showError('Erro ao salvar estados: ' + (err.message || 'Erro desconhecido'))
+            }
+          }
+        }}
+      />
     </AppLayout>
   )
 }

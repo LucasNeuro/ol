@@ -31,7 +31,11 @@ import {
   AlertCircle,
   MessageSquare,
   Loader2,
-  Brain
+  Brain,
+  CheckCircle2,
+  Plus,
+  Edit,
+  Trash2
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { format } from 'date-fns'
@@ -44,12 +48,26 @@ import {
 } from "@/components/ui/accordion"
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Switch } from '@/components/ui/switch'
 import { ChatDocumento } from '@/components/ChatDocumento'
 import { VisualizadorDocumento } from '@/components/VisualizadorDocumento'
-import { useFiltrosSalvos } from '@/hooks/useFiltrosSalvos'
 import { useNotifications } from '@/hooks/useNotifications'
-import { Save, FolderOpen, Trash2, Plus } from 'lucide-react'
 import { obterNomeAtividadeCnae, obterListaCompletaCnaes, resumirNomeAtividade } from '@/lib/cnae'
+import { useFiltrosPermanentes } from '@/hooks/useFiltrosPermanentes'
+import { FiltrosPermanentes } from '@/components/FiltrosPermanentes'
+import { 
+  extrairPalavrasChaveDosSetores, 
+  correspondeAtividadesHibrido,
+  obterObjetoCompleto,
+  registrarMetricaIA
+} from '@/lib/filtroSemantico'
+import { useFiltroContext } from '@/contexts/FiltroContext'
+
+// Função auxiliar para normalizar código CNAE (remover hífens e barras)
+function normalizarCodigoCnae(codigo) {
+  if (!codigo) return null
+  return String(codigo).replace(/[-\/\s]/g, '')
+}
 
 function LicitacoesContent() {
   const { user } = useUserStore()
@@ -64,14 +82,76 @@ function LicitacoesContent() {
   const [documentoVisualizacao, setDocumentoVisualizacao] = useState(null)
   const [limitePagina, setLimitePagina] = useState(50)
   const [resumosIA, setResumosIA] = useState({}) // { licitacaoId: { loading, resumo, erro } }
-  const [mostrarDialogSalvarFiltro, setMostrarDialogSalvarFiltro] = useState(false)
-  const [nomeFiltroSalvo, setNomeFiltroSalvo] = useState('')
+  // Estados para processamento do filtro (compartilhado via contexto)
+  const { 
+    processandoFiltro, 
+    setProcessandoFiltro, 
+    mensagemProgresso, 
+    setMensagemProgresso,
+    setProgressoPercentual
+  } = useFiltroContext()
   
-  // Hook para gerenciar filtros salvos
-  const { filtrosSalvos, salvarFiltro, deletarFiltro, carregarFiltro } = useFiltrosSalvos()
+  // Cache key baseado em licitações + perfil
+  const getCacheKey = () => {
+    if (!perfilUsuario || !licitacoes || licitacoes.length === 0) return null
+    const perfilHash = JSON.stringify({
+      estados: perfilUsuario.estados_interesse,
+      setores: perfilUsuario.setores_atividades,
+      totalLicitacoes: licitacoes.length
+    })
+    return `filtro_semantico_${user?.id}_${perfilHash}`
+  }
+  // Hook para filtros permanentes
+  const { aplicarFiltrosPermanentes, filtrosAtivos: filtrosPermanentesAtivos, filtrosPermanentes } = useFiltrosPermanentes()
   
   // Hook para notificações customizadas
   const { success, error: showError, warning, confirm } = useNotifications()
+
+  // Buscar perfil do usuário com setores, estados e sinônimos personalizados
+  const { data: perfilUsuario } = useQuery({
+    queryKey: ['perfil-usuario', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null
+      
+      // Tentar buscar com sinônimos personalizados primeiro
+      let { data, error } = await supabase
+        .from('profiles')
+        .select('setores_atividades, estados_interesse, sinonimos_personalizados')
+        .eq('id', user.id)
+        .maybeSingle()
+      
+      // Se erro for coluna não existe (42703), tentar sem sinônimos personalizados
+      if (error && error.code === '42703') {
+        console.log('ℹ️ Coluna sinonimos_personalizados não existe, buscando sem ela...')
+        const { data: dataSemSinonimos, error: errorSemSinonimos } = await supabase
+          .from('profiles')
+          .select('setores_atividades, estados_interesse')
+          .eq('id', user.id)
+          .maybeSingle()
+        
+        if (errorSemSinonimos) {
+          console.warn('⚠️ Erro ao buscar perfil:', errorSemSinonimos)
+          return null
+        }
+        
+        // Adicionar sinonimos_personalizados como objeto vazio
+        return { ...dataSemSinonimos, sinonimos_personalizados: {} }
+      }
+      
+      if (error) {
+        console.warn('⚠️ Erro ao buscar perfil:', error)
+        return null
+      }
+      
+      // Garantir que sinonimos_personalizados existe (mesmo que vazio)
+      return { ...data, sinonimos_personalizados: data?.sinonimos_personalizados || {} }
+    },
+    enabled: !!user?.id,
+    staleTime: 1000 * 60 * 60, // Cache por 1 hora
+  })
+
+  // API Key do Mistral (opcional - pode estar em variável de ambiente)
+  const mistralApiKey = import.meta.env.VITE_MISTRAL_API_KEY || null
 
   // Estados dos Filtros
   const [filtros, setFiltros] = useState({
@@ -99,13 +179,10 @@ function LicitacoesContent() {
     amparoLegal: '',
     
     // Exclusões (o que NÃO quer ver)
+    filtrosExclusaoAtivo: false, // Toggle para ativar/desativar filtros de exclusão
     excluirUfs: [], // Array de UFs para excluir
-    excluirModalidades: [], // Array de modalidades para excluir
-    excluirOrgaos: [], // Array de órgãos para excluir
-    excluirSetores: [], // Array de setores/ramos para excluir (baseado em dados_completos)
+    excluirPalavrasObjeto: [], // Array de palavras para excluir do objeto (ex: "construção", "saúde")
     
-    // Atividades Econômicas (CNAEs)
-    atividadesCnaes: [], // Array de CNAEs selecionados
     
   })
 
@@ -127,10 +204,10 @@ function LicitacoesContent() {
         dataPublicacaoInicio: dataFormatada,
         dataPublicacaoFim: dataFormatada
       }))
-      console.log(`📅 Filtrando licitações do dia: ${dataFormatada}`)
+      console.log(`Filtrando licitações do dia: ${dataFormatada}`)
         } else {
       setDataFiltro('')
-      console.log('📋 Mostrando todas as licitações')
+      console.log('Mostrando todas as licitações')
     }
   }, [location])
 
@@ -152,8 +229,13 @@ function LicitacoesContent() {
 
   // Determinar status do edital (definido antes do useMemo)
   const getStatusEdital = useCallback((licitacao) => {
-    const dataAbertura = licitacao.dados_completos?.dataAberturaProposta
-    const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta
+    // Tentar buscar de diferentes lugares na estrutura JSONB
+    const dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
+                        licitacao.dados_completos?.data_abertura_proposta ||
+                        licitacao.dados_completos?.dataAberturaPropostaData
+    const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
+                             licitacao.dados_completos?.data_encerramento_proposta ||
+                             licitacao.dados_completos?.dataEncerramentoPropostaData
     
     if (!dataEncerramento) return null
     
@@ -197,7 +279,7 @@ function LicitacoesContent() {
 
   // Buscar licitações do banco com TODOS os filtros (usar filtrosDebounced para campos de texto)
   const { data: licitacoes = [], isLoading, error } = useQuery({
-    queryKey: ['licitacoes', filtrosDebounced, dataFiltro, limitePagina],
+    queryKey: ['licitacoes', filtrosDebounced, dataFiltro, limitePagina, perfilUsuario?.estados_interesse, perfilUsuario?.setores_atividades],
     queryFn: async () => {
       let query = supabase
             .from('licitacoes')
@@ -277,24 +359,8 @@ function LicitacoesContent() {
         query = query.not('valor_total_estimado', 'is', null)
       }
 
-      // FILTROS DE EXCLUSÃO (o que NÃO quer ver)
-      // Nota: Supabase não suporta NOT IN diretamente, então filtramos após buscar
-      
-      // As exclusões serão aplicadas no useMemo após a query
-
-      // Excluir Modalidades
-      if (filtrosDebounced.excluirModalidades && filtrosDebounced.excluirModalidades.length > 0) {
-        filtrosDebounced.excluirModalidades.forEach(modalidade => {
-          query = query.not('modalidade_nome', 'ilike', `%${modalidade}%`)
-        })
-      }
-
-      // Excluir Órgãos
-      if (filtrosDebounced.excluirOrgaos && filtrosDebounced.excluirOrgaos.length > 0) {
-        filtrosDebounced.excluirOrgaos.forEach(orgao => {
-          query = query.not('orgao_razao_social', 'ilike', `%${orgao}%`)
-        })
-      }
+      // FILTROS DE EXCLUSÃO serão aplicados no useMemo após a query
+      // (não aplicamos aqui porque precisamos filtrar por palavras no objeto)
 
       // Filtro de data do calendário (prioritário)
       if (dataFiltro) {
@@ -319,11 +385,24 @@ function LicitacoesContent() {
         dataFiltro
       )
 
-      // Aplicar limite: 50 sem filtros, 500 com filtros (para performance)
-      if (!temFiltrosAtivos) {
+      // Verificar se há perfil configurado (estados ou setores)
+      // Se houver, precisamos buscar mais licitações para aplicar o filtro depois
+      const temPerfilConfigurado = perfilUsuario && (
+        (perfilUsuario.estados_interesse && perfilUsuario.estados_interesse.length > 0) ||
+        (perfilUsuario.setores_atividades && perfilUsuario.setores_atividades.length > 0)
+      )
+
+      // Aplicar limite: 
+      // - 50 sem filtros e sem perfil
+      // - 2000 com perfil configurado (para ter mais dados para filtrar)
+      // - 500 com filtros manuais
+      if (temPerfilConfigurado && !temFiltrosAtivos) {
+        // Com perfil, buscar mais para ter dados suficientes após filtrar
+        query = query.limit(2000)
+      } else if (!temFiltrosAtivos) {
         query = query.limit(limitePagina)
       } else {
-        // Com filtros, limitar a 500 para não sobrecarregar
+        // Com filtros manuais, limitar a 500 para não sobrecarregar
         query = query.limit(500)
       }
 
@@ -335,9 +414,197 @@ function LicitacoesContent() {
     }
   })
 
-  // Filtrar por status do edital e exclusões (memoizado)
-  const licitacoesFiltradas = useMemo(() => {
-    let resultado = licitacoes
+  // Estado para licitações filtradas (precisa ser assíncrono para IA)
+  const [licitacoesFiltradas, setLicitacoesFiltradas] = useState([])
+  
+  // Estado para desativar filtro semântico e mostrar todas as licitações
+  const [mostrarTodasLicitacoes, setMostrarTodasLicitacoes] = useState(false)
+  
+  // Filtrar por status do edital, perfil da empresa e exclusões (assíncrono para IA)
+  useEffect(() => {
+    const aplicarFiltros = async () => {
+      // Se não tem licitações, não processar
+      if (!licitacoes || licitacoes.length === 0) {
+        setLicitacoesFiltradas([])
+        setProcessandoFiltro(false)
+        setProgressoPercentual(0)
+        return
+      }
+      
+      // Verificar cache primeiro (mas não usar se estiver no modo "mostrar todas")
+      if (!mostrarTodasLicitacoes) {
+        const cacheKey = getCacheKey()
+        if (cacheKey) {
+          try {
+            const cached = localStorage.getItem(cacheKey)
+            if (cached) {
+              const { resultado, timestamp } = JSON.parse(cached)
+              // Cache válido por 5 minutos
+              if (Date.now() - timestamp < 5 * 60 * 1000) {
+                console.log('✅ [Cache] Usando resultado em cache')
+                setLicitacoesFiltradas(resultado)
+                setProcessandoFiltro(false)
+                setProgressoPercentual(0)
+                return
+              }
+            }
+          } catch (e) {
+            console.warn('⚠️ Erro ao ler cache:', e)
+          }
+        }
+      }
+      
+      // Iniciar processamento
+      setProcessandoFiltro(true)
+      setProgressoPercentual(10)
+      setMensagemProgresso('Iniciando filtro semântico...')
+      
+      let resultado = licitacoes
+      
+      setProgressoPercentual(20)
+      setMensagemProgresso('Carregando perfil da empresa...')
+
+    // Se o botão "Mostrar Todas" foi clicado, pular filtro semântico
+    if (mostrarTodasLicitacoes) {
+      console.log('📋 [Filtro] Modo "Mostrar Todas" ativo - pulando filtro semântico')
+      resultado = licitacoes
+      setProgressoPercentual(100)
+      setMensagemProgresso('Mostrando todas as licitações')
+    } else {
+    // FILTRO AUTOMÁTICO BASEADO NO PERFIL DA EMPRESA
+    if (perfilUsuario) {
+      const estadosInteresse = perfilUsuario.estados_interesse || []
+      const setoresAtividades = perfilUsuario.setores_atividades || []
+
+      // Filtrar por estados de interesse
+      if (estadosInteresse.length > 0) {
+        // Se tem "Nacional", não filtrar por estado
+        const temNacional = estadosInteresse.some(e => 
+          typeof e === 'string' ? e === 'Nacional' : e === 'Nacional'
+        )
+        
+        if (!temNacional) {
+          setProgressoPercentual(30)
+          setMensagemProgresso(`Filtrando por estados: ${estadosInteresse.join(', ')}...`)
+          
+          resultado = resultado.filter(licitacao => {
+            const uf = licitacao.uf_sigla?.toUpperCase()
+            return estadosInteresse.some(estado => {
+              const estadoUpper = typeof estado === 'string' ? estado.toUpperCase() : estado
+              return estadoUpper === uf
+            })
+          })
+          
+          setProgressoPercentual(40)
+          setMensagemProgresso(`${resultado.length} licitações encontradas nos estados selecionados`)
+        }
+      }
+
+      // FILTRO OBRIGATÓRIO E RESTRITIVO: Se tem setores cadastrados, DEVE filtrar rigorosamente
+      if (setoresAtividades.length > 0) {
+        // Obter sinônimos personalizados do perfil (se existirem) - apenas do profile
+        const sinonimosPersonalizados = perfilUsuario?.sinonimos_personalizados || {}
+        
+        // Extrair palavras-chave dos setores (SEM usar tabelas de sinônimos)
+        // Retorna { principais, secundarias, todas }
+        const palavrasChave = extrairPalavrasChaveDosSetores(setoresAtividades, sinonimosPersonalizados)
+        
+        // REGRA RESTRITIVA: Se tem setores, DEVE ter palavras-chave válidas
+        if (!palavrasChave.todas || palavrasChave.todas.length === 0) {
+          console.warn('⚠️ Setores cadastrados mas não foi possível extrair palavras-chave. NÃO MOSTRANDO licitações.')
+          setLicitacoesFiltradas([]) // MUITO RESTRITIVO: Não mostra nada se não conseguiu extrair palavras
+          return
+        }
+        
+        // FILTRO OBRIGATÓRIO: Filtrar TODAS as licitações que não correspondem
+        // Usando IA para validação precisa
+        console.log(`🔍 [Filtro] Aplicando filtro semântico com IA`)
+        console.log(`🔍 [Filtro] Palavras principais (${palavrasChave.principais.length}):`, palavrasChave.principais.slice(0, 10))
+        console.log(`🔍 [Filtro] Palavras secundárias (${palavrasChave.secundarias.length}):`, palavrasChave.secundarias.slice(0, 10))
+        console.log(`🔍 [Filtro] Setores cadastrados:`, setoresAtividades.map(s => s.setor).join(', '))
+        console.log(`🔍 [Filtro] IA configurada:`, mistralApiKey ? 'Sim' : 'Não (usando filtro semântico apenas)')
+        
+        const antesFiltro = resultado.length
+        
+        setProgressoPercentual(50)
+        setMensagemProgresso(`Processando ${antesFiltro} licitações...`)
+        
+        // Filtrar usando IA (se disponível) ou filtro semântico
+        // Processar em lotes para não sobrecarregar a API
+        const TAMANHO_LOTE = mistralApiKey ? 10 : 50 // Se tem IA, processar em lotes menores
+        const resultadosFiltrados = []
+        const totalLotes = Math.ceil(resultado.length / TAMANHO_LOTE)
+        
+        for (let i = 0; i < resultado.length; i += TAMANHO_LOTE) {
+          const lote = resultado.slice(i, i + TAMANHO_LOTE)
+          const loteAtual = Math.floor(i / TAMANHO_LOTE) + 1
+          
+          // Atualizar progresso baseado no lote atual (50% a 90%)
+          const progressoLote = 50 + Math.floor((loteAtual / totalLotes) * 40)
+          setProgressoPercentual(progressoLote)
+          
+          // Atualizar mensagem de progresso
+          setMensagemProgresso(
+            `Processando: ${loteAtual}/${totalLotes} lotes (${i + lote.length}/${antesFiltro} licitações)...`
+          )
+          
+          const resultadosLote = await Promise.all(
+            lote.map(async (licitacao) => {
+              // Usar filtro híbrido: semântico + IA
+              const corresponde = await correspondeAtividadesHibrido(
+                licitacao,
+                palavrasChave,
+                setoresAtividades, // Passar setores completos para IA
+                mistralApiKey,
+                {
+                  usarIAParaTodas: !!mistralApiKey, // Se tem API key, usar IA para todas
+                  usarIAParaDuvidosos: false // Já estamos usando para todas se tiver API key
+                }
+              )
+              
+              // Registrar métrica
+              registrarMetricaIA('filtro_semantico', { mostrou: corresponde })
+              
+              // Log detalhado para debug
+              if (!corresponde && licitacao.objeto_compra) {
+                console.log(`🚫 [Filtro] Licitação filtrada:`, {
+                  objeto: licitacao.objeto_compra.substring(0, 100),
+                  palavrasPrincipais: palavrasChave.principais.slice(0, 3)
+                })
+              }
+              
+              return corresponde ? licitacao : null
+            })
+          )
+          
+          resultadosFiltrados.push(...resultadosLote.filter(Boolean))
+        }
+        
+        resultado = resultadosFiltrados
+        
+        setProgressoPercentual(90)
+        setMensagemProgresso(`Filtro concluído! ${resultado.length} licitações encontradas.`)
+        
+        const depoisFiltro = resultado.length
+        const percentualRemovido = antesFiltro > 0 ? ((1 - depoisFiltro/antesFiltro) * 100).toFixed(1) : 0
+        console.log(`✅ [Filtro] Filtrado: ${antesFiltro} → ${depoisFiltro} licitações (${percentualRemovido}% removidas)`)
+      } else {
+        // Se NÃO tem setores cadastrados, NÃO MOSTRAR NADA (muito restritivo)
+        console.warn('⚠️ Empresa sem setores cadastrados. NÃO MOSTRANDO licitações até configurar setores.')
+        setProgressoPercentual(100)
+        setMensagemProgresso('⚠️ Configure setores e estados no seu perfil')
+        setTimeout(() => {
+          setProcessandoFiltro(false)
+          setProgressoPercentual(0)
+        }, 2000)
+        resultado = []
+      }
+    } else {
+      // Se não tem perfil, não processar filtro
+      setProcessandoFiltro(false)
+      setProgressoPercentual(0)
+    }
+    } // Fim do else do mostrarTodasLicitacoes
 
     // Filtrar por status do edital
     if (filtros.statusEdital) {
@@ -347,37 +614,70 @@ function LicitacoesContent() {
       })
     }
 
-    // Aplicar exclusões
-    if (filtros.excluirUfs && filtros.excluirUfs.length > 0) {
-      const ufsExcluidas = filtros.excluirUfs.map(uf => uf.toUpperCase())
-      resultado = resultado.filter(licitacao => 
-        !ufsExcluidas.includes(licitacao.uf_sigla?.toUpperCase())
-      )
+    // Filtros de exclusão removidos temporariamente - será repensado
+
+    // Aplicar filtros finais
+    if (processandoFiltro) {
+      setMensagemProgresso('Aplicando filtros finais...')
     }
 
-    if (filtros.excluirModalidades && filtros.excluirModalidades.length > 0) {
-      resultado = resultado.filter(licitacao => {
-        const modalidade = licitacao.modalidade_nome?.toLowerCase() || ''
-        return !filtros.excluirModalidades.some(excluir => 
-          modalidade.includes(excluir.toLowerCase())
-        )
-      })
+    // Salvar no cache
+    const cacheKeyFinal = getCacheKey()
+    if (cacheKeyFinal) {
+      try {
+        localStorage.setItem(cacheKeyFinal, JSON.stringify({
+          resultado,
+          timestamp: Date.now()
+        }))
+        console.log('✅ [Cache] Resultado salvo no cache')
+      } catch (e) {
+        console.warn('⚠️ Erro ao salvar cache:', e)
+      }
     }
 
-    if (filtros.excluirOrgaos && filtros.excluirOrgaos.length > 0) {
-      resultado = resultado.filter(licitacao => {
-        const orgao = licitacao.orgao_razao_social?.toLowerCase() || ''
-        return !filtros.excluirOrgaos.some(excluir => 
-          orgao.includes(excluir.toLowerCase())
-        )
-      })
+    setLicitacoesFiltradas(resultado)
+    
+    // Finalizar processamento
+    if (processandoFiltro) {
+      setProgressoPercentual(100)
+      setMensagemProgresso(`✅ ${resultado.length} licitação${resultado.length !== 1 ? 'ões' : ''} encontrada${resultado.length !== 1 ? 's' : ''}`)
+      
+      // Aguardar um momento para mostrar mensagem de sucesso, depois esconder
+      setTimeout(() => {
+        setProcessandoFiltro(false)
+        setMensagemProgresso('')
+        setProgressoPercentual(0)
+      }, 1500)
     }
+  }
+    
+    aplicarFiltros()
+  }, [licitacoes, filtros.statusEdital, perfilUsuario, mistralApiKey, mostrarTodasLicitacoes])
 
-        return resultado
-  }, [licitacoes, filtros.statusEdital, filtros.excluirUfs, filtros.excluirModalidades, filtros.excluirOrgaos, getStatusEdital])
+  // Aplicar filtros permanentes - SEMPRE APLICAR PRIMEIRO
+  const { licitacoesFiltradas: licitacoesAposPermanentes, totalExcluido, totalIncluido } = useMemo(() => {
+    return aplicarFiltrosPermanentes(licitacoesFiltradas)
+  }, [licitacoesFiltradas, filtrosPermanentesAtivos, aplicarFiltrosPermanentes])
 
-  // Licitações finais (sem filtro de distância)
-  const licitacoesFinais = licitacoesFiltradas
+  // Licitações finais (após filtros permanentes)
+  const licitacoesFinais = licitacoesAposPermanentes
+
+  // Log para debug do filtro automático baseado no perfil (após todas as declarações)
+  useEffect(() => {
+    if (perfilUsuario && licitacoes.length > 0) {
+      const estados = perfilUsuario.estados_interesse || []
+      const setores = perfilUsuario.setores_atividades || []
+      if (estados.length > 0 || setores.length > 0) {
+        console.log('🎯 Filtro automático baseado no perfil:', {
+          estados: estados.length,
+          setores: setores.length,
+          totalLicitacoes: licitacoes.length,
+          aposFiltroPerfil: licitacoesFiltradas.length,
+          aposFiltrosPermanentes: licitacoesFinais.length
+        })
+      }
+    }
+  }, [perfilUsuario, licitacoes.length, licitacoesFiltradas.length, licitacoesFinais.length])
 
   const formatarValor = (valor) => {
     if (!valor) return 'Não informado'
@@ -394,12 +694,18 @@ function LicitacoesContent() {
         
   // Verificar se licitação é urgente (menos de 7 dias para abertura)
   const isUrgente = (licitacao) => {
-    if (!licitacao.dados_completos?.dataAberturaProposta && !licitacao.dados_completos?.dataEncerramentoProposta) {
+    // Tentar buscar de diferentes lugares na estrutura JSONB
+    const dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
+                        licitacao.dados_completos?.data_abertura_proposta ||
+                        licitacao.dados_completos?.dataAberturaPropostaData
+    const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
+                             licitacao.dados_completos?.data_encerramento_proposta ||
+                             licitacao.dados_completos?.dataEncerramentoPropostaData
+    
+    if (!dataAbertura && !dataEncerramento) {
       return false
-        }
+    }
         
-    const dataAbertura = licitacao.dados_completos?.dataAberturaProposta
-    const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta
     const dataReferencia = dataAbertura || dataEncerramento
 
     if (!dataReferencia) return false
@@ -419,7 +725,25 @@ function LicitacoesContent() {
       if (!user?.id) {
         warning('Faça login para favoritar licitações')
         return
-    }
+      }
+
+      // Verificar se o usuário existe na tabela profiles
+      const { data: usuarioExiste, error: erroUsuario } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (erroUsuario || !usuarioExiste) {
+        console.error('❌ Usuário não encontrado na tabela profiles:', erroUsuario)
+        showError('Sua sessão expirou. Por favor, faça login novamente.')
+        // Limpar sessão inválida
+        const { clearUser } = useUserStore.getState()
+        clearUser()
+        localStorage.removeItem('user')
+        localStorage.removeItem('session')
+        throw new Error('Usuário não encontrado')
+      }
 
       const isFavorito = favoritos.has(licitacao.id)
 
@@ -433,27 +757,27 @@ function LicitacoesContent() {
           .eq('licitacao_id', licitacao.id)
         
         if (error) {
-          console.error('❌ Erro ao remover:', error)
+          console.error('Erro ao remover:', error)
           throw error
         }
-        console.log('✅ Removido dos favoritos')
+        console.log('Removido dos favoritos')
       } else {
         // Verificar se já existe (evitar 409)
-        console.log('🔍 Verificando se já existe...')
+        console.log('Verificando se já existe...')
         const { data: existente } = await supabase
-        .from('licitacoes_favoritas')
-        .select('id')
-        .eq('usuario_id', user.id)
+          .from('licitacoes_favoritas')
+          .select('id')
+          .eq('usuario_id', user.id)
           .eq('licitacao_id', licitacao.id)
-        .maybeSingle()
+          .maybeSingle()
 
         if (existente) {
-          console.log('⚠️ Já existe nos favoritos')
+          console.log('Já existe nos favoritos')
           return { licitacaoId: licitacao.id, isFavorito: false }
         }
 
         // Adicionar
-        console.log('⭐ Adicionando aos favoritos...')
+        console.log('Adicionando aos favoritos...')
         const { error } = await supabase
           .from('licitacoes_favoritas')
           .insert({
@@ -463,11 +787,20 @@ function LicitacoesContent() {
           })
 
         if (error) {
-          console.error('❌ Erro ao adicionar:', error)
+          console.error('Erro ao adicionar:', error)
+          // Tratamento específico para erro de foreign key
+          if (error.code === '23503') {
+            showError('Erro ao favoritar: sua sessão pode ter expirado. Por favor, faça login novamente.')
+            // Limpar sessão inválida
+            const { clearUser } = useUserStore.getState()
+            clearUser()
+            localStorage.removeItem('user')
+            localStorage.removeItem('session')
+          }
           throw error
         }
-        console.log('✅ Adicionado aos favoritos')
-    }
+        console.log('Adicionado aos favoritos')
+      }
 
       return { licitacaoId: licitacao.id, isFavorito }
     },
@@ -483,6 +816,13 @@ function LicitacoesContent() {
         return newSet
       })
       queryClient.invalidateQueries(['meus-favoritos'])
+      success(isFavorito ? 'Removido dos favoritos' : 'Adicionado aos favoritos')
+    },
+    onError: (error) => {
+      console.error('❌ Erro ao atualizar favorito:', error)
+      if (error.message !== 'Usuário não encontrado') {
+        showError('Erro ao atualizar favorito. Tente novamente.')
+      }
     }
   })
 
@@ -636,43 +976,79 @@ REGRAS CRÍTICAS:
     
     const cnaes = []
     
-    // CNAE Principal
+    // CNAE Principal (sempre primeiro)
     if (user.cnae_principal) {
-      cnaes.push({
-        codigo: user.cnae_principal,
-        tipo: 'principal'
-      })
+      const codigoNormalizado = normalizarCodigoCnae(user.cnae_principal)
+      if (codigoNormalizado) {
+        cnaes.push({
+          codigo: codigoNormalizado,
+          tipo: 'principal'
+        })
+      }
     }
     
-    // CNAEs Secundários
+    // CNAEs Secundários (TODOS os secundários cadastrados)
     try {
       if (user.cnaes_secundarios) {
-        const cnaesSecundarios = Array.isArray(user.cnaes_secundarios) 
-          ? user.cnaes_secundarios 
-          : JSON.parse(user.cnaes_secundarios)
+        let cnaesSecundarios = []
         
+        // Parsear se for string JSON
+        if (typeof user.cnaes_secundarios === 'string') {
+          try {
+            cnaesSecundarios = JSON.parse(user.cnaes_secundarios)
+          } catch (e) {
+            console.warn('Erro ao parsear CNAEs secundários como JSON:', e)
+          }
+        } else if (Array.isArray(user.cnaes_secundarios)) {
+          cnaesSecundarios = user.cnaes_secundarios
+        }
+        
+        // Adicionar TODOS os secundários (sem limite)
         cnaesSecundarios.forEach(cnae => {
-          if (cnae && !cnaes.find(c => c.codigo === cnae)) {
+          // Se cnae é string (código direto) ou objeto com código
+          const codigo = typeof cnae === 'string' ? cnae : (cnae?.codigo || cnae)
+          const codigoNormalizado = normalizarCodigoCnae(codigo)
+          
+          if (codigoNormalizado && !cnaes.find(c => c.codigo === codigoNormalizado)) {
             cnaes.push({
-              codigo: cnae,
+              codigo: codigoNormalizado,
               tipo: 'secundario'
             })
           }
         })
       }
     } catch (e) {
-      console.warn('Erro ao parsear CNAEs secundários:', e)
+      console.warn('Erro ao processar CNAEs secundários:', e)
     }
     
     return cnaes
   }, [user])
 
-  // Lista completa de CNAEs disponíveis (empresa + comuns)
-  const listaCompletaCnaes = useMemo(() => {
+  // Lista de CNAEs da empresa com nomes completos (TODOS os cadastrados)
+  const listaCnaesEmpresa = useMemo(() => {
     try {
-      return obterListaCompletaCnaes(cnaesEmpresa)
+      if (!cnaesEmpresa || cnaesEmpresa.length === 0) {
+        return []
+      }
+      
+      // Ordenar: principal primeiro, depois secundários
+      const ordenados = [...cnaesEmpresa].sort((a, b) => {
+        if (a.tipo === 'principal') return -1
+        if (b.tipo === 'principal') return 1
+        return 0
+      })
+      
+      // Buscar nome completo de cada CNAE (TODOS, sem limite)
+      return ordenados.map(cnae => {
+        const nomeCompleto = obterNomeAtividadeCnae(cnae.codigo)
+        return {
+          codigo: cnae.codigo,
+          nome: nomeCompleto || `CNAE ${cnae.codigo}`, // Fallback se não encontrar nome
+          tipo: cnae.tipo || 'secundario'
+        }
+      })
     } catch (error) {
-      console.error('Erro ao obter lista de CNAEs:', error)
+      console.error('Erro ao obter lista de CNAEs da empresa:', error)
       return []
     }
   }, [cnaesEmpresa])
@@ -698,127 +1074,17 @@ REGRAS CRÍTICAS:
       modoDisputa: '',
       amparoLegal: '',
       excluirUfs: [],
-      excluirModalidades: [],
-      excluirOrgaos: [],
-      excluirSetores: [],
-      atividadesCnaes: []
+      excluirPalavrasObjeto: [],
+      filtrosExclusaoAtivo: false
     })
     setDataFiltro('')
+    setMostrarTodasLicitacoes(false) // Desativar modo "mostrar todas"
     window.history.pushState({}, '', '/licitacoes')
   }
 
-  // Salvar filtro atual
-  const handleSalvarFiltro = async () => {
-    if (!nomeFiltroSalvo.trim()) {
-      warning('Por favor, digite um nome para o filtro')
-      return
-    }
-
-    try {
-      // Separar filtros de inclusão e exclusão
-      const filtrosInclusao = {
-        buscaObjeto: filtros.buscaObjeto,
-        uf: filtros.uf,
-        modalidade: filtros.modalidade,
-        dataPublicacaoInicio: filtros.dataPublicacaoInicio,
-        dataPublicacaoFim: filtros.dataPublicacaoFim,
-        valorMin: filtros.valorMin,
-        valorMax: filtros.valorMax,
-        statusEdital: filtros.statusEdital,
-        orgao: filtros.orgao,
-        numeroEdital: filtros.numeroEdital,
-        comDocumentos: filtros.comDocumentos,
-        comItens: filtros.comItens,
-        comValor: filtros.comValor,
-        situacao: filtros.situacao,
-        esfera: filtros.esfera,
-        modoDisputa: filtros.modoDisputa,
-        amparoLegal: filtros.amparoLegal,
-      }
-
-      const filtrosExclusao = {
-        excluirUfs: filtros.excluirUfs || [],
-        excluirModalidades: filtros.excluirModalidades || [],
-        excluirOrgaos: filtros.excluirOrgaos || [],
-        excluirSetores: filtros.excluirSetores || [],
-      }
-
-      const filtrosCnaes = {
-        atividadesCnaes: filtros.atividadesCnaes || [],
-      }
-
-      await salvarFiltro.mutateAsync({
-        nome: nomeFiltroSalvo,
-        descricao: '',
-        filtrosInclusao,
-        filtrosExclusao,
-        filtrosCnaes,
-      })
-
-      setMostrarDialogSalvarFiltro(false)
-      setNomeFiltroSalvo('')
-      success('Filtro salvo com sucesso!')
-    } catch (err) {
-      console.error('Erro ao salvar filtro:', err)
-      showError('Erro ao salvar filtro: ' + (err.message || 'Erro desconhecido'))
-    }
-  }
-
-  // Carregar filtro salvo
-  const handleCarregarFiltro = async (filtroId) => {
-    try {
-      const filtroSalvo = await carregarFiltro(filtroId)
-      
-      if (filtroSalvo) {
-        // Aplicar filtros de inclusão
-        const inclusao = filtroSalvo.filtros_inclusao || {}
-        const exclusao = filtroSalvo.filtros_exclusao || {}
-        
-        const cnaes = filtroSalvo.filtros_cnaes || {}
-        setFiltros({
-          ...filtros,
-          ...inclusao,
-          excluirUfs: exclusao.excluirUfs || [],
-          excluirModalidades: exclusao.excluirModalidades || [],
-          excluirOrgaos: exclusao.excluirOrgaos || [],
-          excluirSetores: exclusao.excluirSetores || [],
-          atividadesCnaes: cnaes.atividadesCnaes || [],
-        })
-
-        // Aplicar filtros
-        queryClient.invalidateQueries(['licitacoes'])
-        success(`Filtro "${filtroSalvo.nome}" carregado com sucesso!`)
-      }
-    } catch (error) {
-      console.error('Erro ao carregar filtro:', error)
-      showError('Erro ao carregar filtro: ' + error.message)
-    }
-  }
-
-  // Deletar filtro salvo
-  const handleDeletarFiltro = async (filtroId, e) => {
-    e.stopPropagation()
-    
-    const confirmed = await confirm('Tem certeza que deseja excluir este filtro?', {
-      title: 'Excluir filtro',
-      description: 'Esta ação não pode ser desfeita.',
-      variant: 'destructive',
-    })
-    
-    if (!confirmed) {
-      return
-    }
-
-    try {
-      await deletarFiltro.mutateAsync(filtroId)
-      success('Filtro excluído com sucesso!')
-    } catch (error) {
-      console.error('Erro ao deletar filtro:', error)
-      showError('Erro ao deletar filtro: ' + error.message)
-    }
-  }
-
   const aplicarFiltros = () => {
+    // Desativar modo "mostrar todas" quando aplicar filtros
+    setMostrarTodasLicitacoes(false)
     queryClient.invalidateQueries(['licitacoes'])
     console.log('🔍 Filtros aplicados:', filtros)
   }
@@ -894,22 +1160,58 @@ REGRAS CRÍTICAS:
               </div>
                 
             {/* Botões Ação */}
-            <div className="flex gap-2 mb-6">
-              <Button
-                variant="outline"
-                onClick={limparFiltros}
-                className="flex-1"
-              >
-                <X className="w-4 h-4 mr-2" />
-                Limpar
-              </Button>
-              <Button
-                onClick={aplicarFiltros}
-                className="flex-1 bg-orange-500 hover:bg-orange-600"
-              >
-                <Filter className="w-4 h-4 mr-2" />
-                Aplicar
-              </Button>
+            <div className="flex flex-col gap-2 mb-6">
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={limparFiltros}
+                  className="flex-1"
+                >
+                  <X className="w-4 h-4 mr-2" />
+                  Limpar
+                </Button>
+                <Button
+                  onClick={aplicarFiltros}
+                  className="flex-1 bg-orange-500 hover:bg-orange-600"
+                >
+                  <Filter className="w-4 h-4 mr-2" />
+                  Aplicar
+                </Button>
+              </div>
+              {/* Toggle Mostrar Todas */}
+              <div className="flex items-center justify-between p-3 rounded-lg border border-gray-200 bg-gray-50">
+                <div className="flex items-center gap-2">
+                  <Eye className="w-4 h-4 text-blue-400" />
+                  <Label htmlFor="mostrar-todas" className="text-sm font-medium text-gray-700 cursor-pointer">
+                    Mostrar Todas (Sem Filtro)
+                  </Label>
+                </div>
+                <Switch
+                  id="mostrar-todas"
+                  checked={mostrarTodasLicitacoes}
+                  onCheckedChange={(checked) => {
+                    setMostrarTodasLicitacoes(checked)
+                    if (checked) {
+                      // Limpar cache quando ativar
+                      const cacheKey = getCacheKey()
+                      if (cacheKey) {
+                        localStorage.removeItem(cacheKey)
+                      }
+                      queryClient.invalidateQueries(['licitacoes'])
+                      console.log('📋 [Filtro] Modo "Mostrar Todas" ATIVADO')
+                    } else {
+                      // Limpar cache quando desativar para reaplicar filtro
+                      const cacheKey = getCacheKey()
+                      if (cacheKey) {
+                        localStorage.removeItem(cacheKey)
+                      }
+                      queryClient.invalidateQueries(['licitacoes'])
+                      console.log('📋 [Filtro] Modo "Mostrar Todas" DESATIVADO - voltando ao filtro semântico')
+                    }
+                  }}
+                  className="data-[state=checked]:bg-blue-400"
+                />
+              </div>
             </div>
 
             {/* Busca Rápida */}
@@ -1136,342 +1438,45 @@ REGRAS CRÍTICAS:
                     </div>
                   </div>
 
-                {/* Atividades Econômicas (CNAEs) */}
-                <div>
-                  <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-gray-500" />
-                    Atividades Econômicas (CNAEs)
-                  </Label>
-                  <Select
-                    onValueChange={(value) => {
-                      if (value && !filtros.atividadesCnaes?.includes(value)) {
-                        setFiltros({
-                          ...filtros,
-                          atividadesCnaes: [...(filtros.atividadesCnaes || []), value]
-                        })
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="h-9 text-xs">
-                      <SelectValue placeholder="Selecione atividade econômica" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[300px]">
-                      {listaCompletaCnaes.length > 0 ? (
-                        listaCompletaCnaes.map((cnae) => {
-                          const nomeResumido = resumirNomeAtividade(cnae.nome, 55)
-                          const jaSelecionado = filtros.atividadesCnaes?.includes(cnae.codigo)
-                          return (
-                            <SelectItem 
-                              key={cnae.codigo} 
-                              value={cnae.codigo}
-                              disabled={jaSelecionado}
-                              className={cnae.tipo === 'principal' ? 'bg-blue-50 font-semibold' : cnae.tipo === 'secundario' ? 'bg-blue-25' : ''}
-                            >
-                              <div className="flex items-center gap-2">
-                                {cnae.tipo === 'principal' && <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />}
-                                {cnae.tipo === 'secundario' && <Star className="w-3 h-3 text-gray-400" />}
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-xs font-medium truncate">{nomeResumido}</div>
-                                  <div className="text-[10px] text-gray-500">{cnae.codigo}</div>
-                                </div>
-                              </div>
-                            </SelectItem>
-                          )
-                        })
-                      ) : (
-                        <SelectItem value="" disabled>Carregando CNAEs...</SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
-                  {filtros.atividadesCnaes && filtros.atividadesCnaes.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {filtros.atividadesCnaes.map(codigoCnae => {
-                        const cnaeInfo = listaCompletaCnaes.find(c => c.codigo === codigoCnae)
-                        const nomeCompleto = cnaeInfo?.nome || obterNomeAtividadeCnae(codigoCnae) || codigoCnae
-                        const nomeResumido = resumirNomeAtividade(nomeCompleto, 50)
-                        return (
-                          <Badge 
-                            key={codigoCnae} 
-                            variant="secondary" 
-                            className="text-xs max-w-[220px] px-2 py-1"
-                            title={nomeCompleto}
-                          >
-                            <span className="truncate">{nomeResumido}</span>
-                            <X 
-                              className="w-3 h-3 ml-1 cursor-pointer flex-shrink-0 hover:text-red-500" 
-                              onClick={() => setFiltros({
-                                ...filtros,
-                                atividadesCnaes: filtros.atividadesCnaes.filter(c => c !== codigoCnae)
-                              })}
-                            />
-                          </Badge>
-                        )
-                      })}
-              </div>
-                  )}
-                </div>
 
-                {/* Seção: Exclusões */}
-                <div className="space-y-3 pt-3 border-t">
-                  <Label className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                    <X className="w-4 h-4 text-red-500" />
-                    Excluir (não mostrar)
-                  </Label>
-                  
-                  {/* Excluir UFs */}
-                <div>
-                    <Label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Estados (UF)
-                  </Label>
-                  <Select
-                      onValueChange={(value) => {
-                        if (value && !filtros.excluirUfs?.includes(value)) {
-                          setFiltros({
-                            ...filtros,
-                            excluirUfs: [...(filtros.excluirUfs || []), value]
-                          })
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="h-9 text-xs">
-                        <SelectValue placeholder="Selecione UF para excluir" />
-                    </SelectTrigger>
-                      <SelectContent>
-                        {['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'].map(uf => (
-                          <SelectItem key={uf} value={uf} disabled={filtros.excluirUfs?.includes(uf)}>
-                            {uf}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                  </Select>
-                    {filtros.excluirUfs && filtros.excluirUfs.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {filtros.excluirUfs.map(uf => (
-                          <Badge key={uf} variant="destructive" className="text-xs">
-                            {uf}
-                            <X 
-                              className="w-3 h-3 ml-1 cursor-pointer" 
-                              onClick={() => setFiltros({
-                                ...filtros,
-                                excluirUfs: filtros.excluirUfs.filter(u => u !== uf)
-                              })}
-                            />
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                </div>
-
-                  {/* Excluir Modalidades */}
-                <div>
-                    <Label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Modalidades
-                  </Label>
-                  <Input
-                      placeholder="Digite modalidade para excluir"
-                      defaultValue=""
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && e.target.value.trim()) {
-                          const modalidade = e.target.value.trim()
-                          if (!filtros.excluirModalidades?.includes(modalidade)) {
-                            setFiltros({
-                              ...filtros,
-                              excluirModalidades: [...(filtros.excluirModalidades || []), modalidade]
-                            })
-                            e.target.value = ''
-                          }
-                        }
-                      }}
-                      className="h-9 text-xs"
-                    />
-                    {filtros.excluirModalidades && filtros.excluirModalidades.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {filtros.excluirModalidades.map(modalidade => (
-                          <Badge key={modalidade} variant="destructive" className="text-xs">
-                            {modalidade}
-                            <X 
-                              className="w-3 h-3 ml-1 cursor-pointer" 
-                              onClick={() => setFiltros({
-                                ...filtros,
-                                excluirModalidades: filtros.excluirModalidades.filter(m => m !== modalidade)
-                              })}
-                            />
-                          </Badge>
-                        ))}
-                </div>
-                  )}
-              </div>
-
-                {/* Excluir Órgãos */}
-                <div>
-                    <Label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Órgãos
-                    </Label>
-                    <Input
-                      placeholder="Digite órgão para excluir"
-                      defaultValue=""
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && e.target.value.trim()) {
-                          const orgao = e.target.value.trim()
-                          if (!filtros.excluirOrgaos?.includes(orgao)) {
-                            setFiltros({
-                              ...filtros,
-                              excluirOrgaos: [...(filtros.excluirOrgaos || []), orgao]
-                            })
-                            e.target.value = ''
-                          }
-                        }
-                      }}
-                      className="h-9 text-xs"
-                    />
-                    {filtros.excluirOrgaos && filtros.excluirOrgaos.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {filtros.excluirOrgaos.map(orgao => (
-                          <Badge key={orgao} variant="destructive" className="text-xs max-w-[200px] truncate">
-                            {orgao}
-                            <X 
-                              className="w-3 h-3 ml-1 cursor-pointer" 
-                              onClick={() => setFiltros({
-                                ...filtros,
-                                excluirOrgaos: filtros.excluirOrgaos.filter(o => o !== orgao)
-                              })}
-                            />
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-            </div>
-          </div>
-
-                {/* Botão Salvar Filtro */}
-                <div className="pt-3 border-t">
-                  {mostrarDialogSalvarFiltro ? (
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="Nome do filtro"
-                        value={nomeFiltroSalvo}
-                        onChange={(e) => setNomeFiltroSalvo(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleSalvarFiltro()
-                          } else if (e.key === 'Escape') {
-                            setMostrarDialogSalvarFiltro(false)
-                            setNomeFiltroSalvo('')
-                          }
-                        }}
-                        className="h-9 text-xs flex-1"
-                        autoFocus
-                      />
-                      <Button
-                        size="sm"
-                        onClick={handleSalvarFiltro}
-                        disabled={salvarFiltro.isPending}
-                        className="h-9 px-3"
-                      >
-                        {salvarFiltro.isPending ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Save className="w-4 h-4" />
-                        )}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setMostrarDialogSalvarFiltro(false)
-                          setNomeFiltroSalvo('')
-                        }}
-                        className="h-9 px-3"
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-            </div>
-          ) : (
-                    <Button
-                      size="sm"
-                      variant="default"
-                      onClick={() => setMostrarDialogSalvarFiltro(true)}
-                      className="h-9 w-full text-xs"
-                    >
-                      <Save className="w-4 h-4 mr-2" />
-                      Salvar Filtro Atual
-                    </Button>
-                  )}
-                </div>
               </AccordionContent>
             </AccordionItem>
 
-              {/* MEUS FILTROS - Apenas filtros salvos */}
-              <AccordionItem value="meus-filtros">
+              {/* SEÇÃO FILTROS PERMANENTES */}
+              <AccordionItem value="filtros-permanentes">
                 <AccordionTrigger className="text-sm font-semibold">
                   <div className="flex items-center gap-2">
-                    <FolderOpen className="w-4 h-4 text-blue-500" />
-                    Meus Filtros
+                    <Filter className="w-4 h-4 text-orange-500" />
+                    Filtros Permanentes
+                    {filtrosPermanentes && filtrosPermanentes.length > 0 && (
+                      <Badge className="bg-orange-500 text-white text-xs ml-2">
+                        {filtrosPermanentes.length}
+                      </Badge>
+                    )}
                   </div>
                 </AccordionTrigger>
                 <AccordionContent className="space-y-3 pt-3">
-                  {filtrosSalvos.length === 0 ? (
-                    <div className="text-center py-6">
-                      <FolderOpen className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                      <p className="text-xs text-gray-500 italic">
-                        Nenhum filtro salvo
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {filtrosSalvos.map((filtro) => (
-                        <Card
-                          key={filtro.id}
-                          className="cursor-pointer transition-all hover:shadow-sm border-gray-200 hover:border-blue-300 group"
-                          onClick={() => handleCarregarFiltro(filtro.id)}
-                        >
-                          <CardContent className="p-3">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <Filter className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
-                                  <h4 className="font-medium text-sm text-gray-900 truncate">
-                                    {filtro.nome}
-                                  </h4>
-                                </div>
-                                {filtro.descricao && (
-                                  <p className="text-xs text-gray-600 line-clamp-1 mb-1">
-                                    {filtro.descricao}
-                                  </p>
-                                )}
-                                <div className="flex flex-wrap gap-1 mt-1.5">
-                                  {filtro.filtros_inclusao?.uf && (
-                                    <span className="text-xs bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
-                                      {filtro.filtros_inclusao.uf}
-                                    </span>
-                                  )}
-                                  {filtro.filtros_inclusao?.modalidade && (
-                                    <span className="text-xs bg-green-50 text-green-700 px-1.5 py-0.5 rounded">
-                                      {filtro.filtros_inclusao.modalidade}
-                                    </span>
-                                  )}
-                                  {filtro.filtros_cnaes && Object.keys(filtro.filtros_cnaes).length > 0 && (
-                                    <span className="text-xs bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded">
-                                      CNAEs
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleDeletarFiltro(filtro.id, e)
-                                }}
-                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 text-red-500 flex-shrink-0"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
+                  <FiltrosPermanentes />
+                  
+                  {/* Contadores */}
+                  {filtrosPermanentesAtivos && filtrosPermanentesAtivos.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {totalIncluido > 0 && (
+                        <div className="p-2 bg-green-50 border border-green-200 rounded-md">
+                          <p className="text-xs text-green-700">
+                            <CheckCircle2 className="w-3 h-3 inline mr-1" />
+                            {totalIncluido} edital{totalIncluido > 1 ? 'is' : ''} incluído{totalIncluido > 1 ? 's' : ''}
+                          </p>
+                        </div>
+                      )}
+                      {totalExcluido > 0 && (
+                        <div className="p-2 bg-blue-50 border border-blue-200 rounded-md">
+                          <p className="text-xs text-blue-700">
+                            <AlertCircle className="w-3 h-3 inline mr-1" />
+                            {totalExcluido} edital{totalExcluido > 1 ? 'is' : ''} excluído{totalExcluido > 1 ? 's' : ''}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </AccordionContent>
@@ -1561,11 +1566,13 @@ REGRAS CRÍTICAS:
             )}
                         </div>
 
-          {/* Loading */}
+          {/* Loading - Mostrar apenas enquanto carrega do banco */}
           {isLoading && (
-            <div className="flex flex-col items-center justify-center py-12">
-              <Loader2 className="w-8 h-8 animate-spin text-orange-500 mb-4" />
-              <p className="text-gray-600">Carregando licitações...</p>
+            <div className="flex flex-col items-center justify-center py-16">
+              <Loader2 className="w-10 h-10 animate-spin text-orange-500 mb-4" />
+              <p className="text-gray-600 text-lg font-medium">
+                Carregando licitações do banco de dados...
+              </p>
             </div>
           )}
 
@@ -1584,11 +1591,16 @@ REGRAS CRÍTICAS:
             </Card>
           )}
 
-          {/* Resultados */}
+          {/* Resultados - Mostrar mesmo durante processamento final */}
           {!isLoading && !error && (
             <div className="mb-4">
               <p className="text-sm text-gray-600">
                 {licitacoesFinais.length} {licitacoesFinais.length === 1 ? 'licitação encontrada' : 'licitações encontradas'}
+                {perfilUsuario?.setores_atividades?.length > 0 && (
+                  <span className="text-xs text-gray-500 ml-2">
+                    (filtradas por setores e estados cadastrados)
+                  </span>
+                )}
               </p>
               {(filtros.buscaObjeto || filtros.uf || filtros.modalidade || filtros.statusEdital || 
                 filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim || filtros.valorMin || 
@@ -1601,9 +1613,12 @@ REGRAS CRÍTICAS:
             </div>
           )}
 
-          {/* Cards de Licitações */}
-              <div className="space-y-4">
-                {licitacoesFinais.map((licitacao) => (
+          {/* Cards de Licitações - Mostrar quando não estiver carregando do banco */}
+          {!isLoading && (
+            <div className="space-y-4">
+              {licitacoesFinais.length > 0 ? (
+                licitacoesFinais.map((licitacao) => {
+                  return (
             <Card 
               key={licitacao.id} 
               className="hover:shadow-lg transition-shadow border-l-4 border-l-orange-500"
@@ -1669,27 +1684,46 @@ REGRAS CRÍTICAS:
                   <div className="flex flex-wrap items-center gap-2 justify-end">
                     {/* Badge URGENTE */}
                     {isUrgente(licitacao) && (
-                      <Badge variant="destructive" className="bg-red-500 animate-pulse">
-                        URGENTE
+                      <Badge variant="destructive" className="bg-red-500 animate-pulse text-xs font-semibold">
+                        ⚠️ URGENTE
                       </Badge>
                     )}
                     
                     {/* Badges de Data de Abertura e Encerramento */}
-                    {licitacao.dados_completos?.dataAberturaProposta && (
-                      <Badge className="bg-green-100 text-green-700 border-green-300 text-xs">
-                        Abertura: {formatarData(licitacao.dados_completos.dataAberturaProposta)}
-                      </Badge>
-                    )}
-                    {licitacao.dados_completos?.dataEncerramentoProposta && (
-                      <Badge className="bg-green-100 text-green-700 border-green-300 text-xs">
-                        Encerramento: {formatarData(licitacao.dados_completos.dataEncerramentoProposta)}
-                      </Badge>
-                    )}
+                    {(() => {
+                      // Tentar buscar de diferentes lugares na estrutura JSONB
+                      const dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
+                                          licitacao.dados_completos?.data_abertura_proposta ||
+                                          licitacao.dados_completos?.dataAberturaPropostaData
+                      const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
+                                               licitacao.dados_completos?.data_encerramento_proposta ||
+                                               licitacao.dados_completos?.dataEncerramentoPropostaData
+                      
+                      return (
+                        <>
+                          {dataAbertura && (
+                            <Badge className="bg-green-100 text-green-700 border-green-300 text-xs font-medium">
+                              📅 Abertura: {formatarData(dataAbertura)}
+                            </Badge>
+                          )}
+                          {dataEncerramento && (
+                            <Badge className="bg-orange-100 text-orange-700 border-orange-300 text-xs font-medium">
+                              ⏰ Encerramento: {formatarData(dataEncerramento)}
+                            </Badge>
+                          )}
+                        </>
+                      )
+                    })()}
                     
                     {/* Badge de Status (Em Andamento / Encerrando / Encerrado) */}
                     {(() => {
-                      const dataAbertura = licitacao.dados_completos?.dataAberturaProposta
-                      const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta
+                      // Tentar buscar de diferentes lugares na estrutura JSONB
+                      const dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
+                                          licitacao.dados_completos?.data_abertura_proposta ||
+                                          licitacao.dados_completos?.dataAberturaPropostaData
+                      const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
+                                               licitacao.dados_completos?.data_encerramento_proposta ||
+                                               licitacao.dados_completos?.dataEncerramentoPropostaData
                       
                       if (dataEncerramento) {
                         const hoje = new Date()
@@ -1699,8 +1733,8 @@ REGRAS CRÍTICAS:
                         // Encerrado
                         if (diasRestantes < 0) {
                           return (
-                            <Badge className="bg-red-500 text-white text-xs">
-                              Encerrado
+                            <Badge className="bg-red-500 text-white text-xs font-semibold">
+                              ❌ Encerrado
                             </Badge>
                           )
                         }
@@ -1708,8 +1742,8 @@ REGRAS CRÍTICAS:
                         // Encerrando em breve (menos de 3 dias)
                         if (diasRestantes <= 3 && diasRestantes > 0) {
                           return (
-                            <Badge className="bg-yellow-500 text-white text-xs animate-pulse">
-                              Encerrando em {diasRestantes}d
+                            <Badge className="bg-yellow-500 text-white text-xs font-semibold animate-pulse">
+                              ⚠️ Encerrando em {diasRestantes}d
                             </Badge>
                           )
                         }
@@ -1719,8 +1753,8 @@ REGRAS CRÍTICAS:
                           const abertura = new Date(dataAbertura)
                           if (hoje >= abertura && hoje <= encerramento) {
                             return (
-                              <Badge className="bg-blue-500 text-white text-xs">
-                                Em Andamento
+                              <Badge className="bg-blue-500 text-white text-xs font-semibold">
+                                ✅ Em Andamento
                               </Badge>
                             )
                           }
@@ -2118,11 +2152,28 @@ REGRAS CRÍTICAS:
                 )}
                     </CardContent>
                   </Card>
-                ))}
-              </div>
+                  )
+                })
+              ) : (
+                !processandoFiltro && (
+                  <Card>
+                    <CardContent className="py-12 text-center">
+                      <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                        Nenhuma licitação encontrada
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        Tente ajustar os filtros ou verifique se há licitações disponíveis.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )
+              )}
+            </div>
+          )}
 
           {/* Botão Carregar Mais (apenas sem filtros) */}
-          {!isLoading && !error && licitacoesFinais.length >= limitePagina && 
+          {!isLoading && !error && !processandoFiltro && licitacoesFinais.length >= limitePagina && 
            !(filtros.buscaObjeto || filtros.uf || filtros.modalidade || filtros.statusEdital || 
              filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim || filtros.valorMin || 
              filtros.valorMax || filtros.orgao || filtros.numeroEdital || filtros.comDocumentos || 
@@ -2141,20 +2192,6 @@ REGRAS CRÍTICAS:
             </div>
           )}
               
-          {/* Empty State */}
-          {!isLoading && !error && licitacoesFinais.length === 0 && (
-            <Card>
-              <CardContent className="py-12 text-center">
-                <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  Nenhuma licitação encontrada
-                </h3>
-                <p className="text-gray-600">
-                  Tente ajustar os filtros para ver mais resultados
-                </p>
-              </CardContent>
-            </Card>
-          )}
         </div>
       </div>
 
@@ -2176,6 +2213,7 @@ REGRAS CRÍTICAS:
         urlDocumento={documentoVisualizacao?.url}
         nomeArquivo={documentoVisualizacao?.nome}
       />
+
 
     </AppLayout>
   )

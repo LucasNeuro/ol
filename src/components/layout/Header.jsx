@@ -46,13 +46,16 @@ export function Header() {
           <nav className="flex items-center gap-3">
             {isAuthenticated ? (
               <>
-                <Link href="/dashboard">
-                  <a>
-                    <Button variant="ghost" className="text-gray-600 hover:text-orange-500">
-                      Dashboard
-                    </Button>
-                  </a>
-                </Link>
+                {/* Dashboard apenas para admins */}
+                {user?.is_adm && (
+                  <Link href="/dashboard">
+                    <a>
+                      <Button variant="ghost" className="text-gray-600 hover:text-orange-500">
+                        Dashboard Admin
+                      </Button>
+                    </a>
+                  </Link>
+                )}
                 
                 {/* Avatar Dropdown */}
                 <div className="relative">

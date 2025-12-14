@@ -37,7 +37,21 @@ serve(async (req) => {
     }
 
 
+    // Preparar mensagens com system prompt em português - Assistente Conversacional Especializado
     const messages = [
+      {
+        role: "system",
+        content: `Você é o "Assistente Focus", especializado em licitações públicas brasileiras. Sempre responda em português (PT-BR), com tom cordial e natural.
+
+ESTILO:
+- Responda em 1 parágrafo curto (máx. 4 frases) e direto ao ponto.
+- Evite títulos, listas e markdown; use texto corrido.
+- Para saudações, cumprimente de forma calorosa e convide para perguntar.
+- Para dúvidas sobre o documento, use o Document QnA e mencione, de forma simples, de onde tirou a informação.
+- Para dúvidas gerais, explique com precisão e linguagem acessível.
+- Se não achar algo no documento, diga que não encontrou e ofereça ajuda para buscar.
+- Nunca responda em inglês.`
+      },
       ...historico.map((msg: any) => ({
         role: msg.role,
         content: msg.content
@@ -69,7 +83,7 @@ serve(async (req) => {
       body: JSON.stringify({
         model: 'mistral-small-latest',
         messages: messages,
-        temperature: 0.3, // Menor temperatura = mais preciso
+        temperature: 0.5, // Temperatura moderada = mais natural e fluido
         max_tokens: 1000
       })
     })

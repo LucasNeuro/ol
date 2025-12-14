@@ -12,7 +12,10 @@ import { AuthLayout } from '@/components/layout/AuthLayout'
 import { PublicRoute } from '@/components/PublicRoute'
 import { useAuth } from '@/hooks/useAuth'
 import { validarCNPJ, formatarCNPJ } from '@/lib/utils'
-import { Search, Building2, Loader2, CheckCircle } from 'lucide-react'
+import { Search, Building2, Loader2, CheckCircle, Plus } from 'lucide-react'
+import { SelecionarSetores } from '@/components/SelecionarSetores'
+import { SelecionarEstados } from '@/components/SelecionarEstados'
+import { Badge } from '@/components/ui/badge'
 
 const cadastroSchema = z.object({
   email: z.string().email('Email inválido'),
@@ -23,7 +26,27 @@ const cadastroSchema = z.object({
   }),
   razaoSocial: z.string().min(3, 'Razão social deve ter no mínimo 3 caracteres'),
   nomeFantasia: z.string().optional(),
-  cargo: z.enum(['Gerente', 'Dono', 'Independente'], {
+  cargo: z.enum([
+    'Proprietário(a) / Sócio(a)',
+    'Presidente / CEO',
+    'Administrador(a)',
+    'Diretor(a)',
+    'Engenheiro(a)',
+    'Gerente',
+    'Analista de licitação',
+    'Assistente administrativo',
+    'Advogado(a)',
+    'Contador(a)',
+    'Consultor(a)',
+    'Representante',
+    'Servidor público',
+    'Coordenador(a)',
+    'Supervisor(a)',
+    'Técnico(a)',
+    'Auxiliar',
+    'Estagiário(a)',
+    'Outro'
+  ], {
     required_error: 'Selecione um cargo',
   }),
   // Campos de endereço
@@ -35,30 +58,83 @@ const cadastroSchema = z.object({
   municipio: z.string().optional(),
   uf: z.string().optional(),
   telefone: z.string().optional(),
+  // Campos de qualificação
+  comoConheceu: z.string().optional(),
+  quantidadeFuncionarios: z.string().optional(),
+  licitacoesPorMes: z.string().optional(),
+  faturamentoAnual: z.string().optional(),
+  comoPretendeUsar: z.string().optional(),
+  // Campos de configuração do serviço
+  setoresAtividades: z.array(z.any()).optional(),
+  estadosInteresse: z.array(z.string()).optional(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: 'As senhas não coincidem',
   path: ['confirmPassword'],
 })
 
 /**
- * Buscar dados da empresa pela API OpenCNPJ
+ * Buscar dados da empresa pela API BrasilAPI (permite CORS)
+ * BrasilAPI é gratuita, permite CORS e não requer autenticação
  */
 async function buscarDadosCNPJ(cnpj) {
+  const cnpjLimpo = cnpj.replace(/\D/g, '')
+  
+  // Tentar primeiro com BrasilAPI (permite CORS)
   try {
-    const cnpjLimpo = cnpj.replace(/\D/g, '')
-    const response = await fetch(`https://api.opencnpj.org/${cnpjLimpo}`)
+    const response = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpjLimpo}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+      },
+      mode: 'cors',
+    })
     
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error('CNPJ não encontrado na base de dados')
+    if (response.ok) {
+      const dados = await response.json()
+      
+      // Mapear dados da BrasilAPI para o formato esperado
+      return {
+        razao_social: dados.razao_social || '',
+        nome_fantasia: dados.nome_fantasia || '',
+        situacao_cadastral: dados.descricao_situacao_cadastral || '',
+        data_situacao_cadastral: dados.data_situacao_cadastral || null,
+        matriz_filial: dados.descricao_tipo_logradouro === 'MATRIZ' ? 'Matriz' : dados.descricao_tipo_logradouro === 'FILIAL' ? 'Filial' : null,
+        data_inicio_atividade: dados.data_inicio_atividade || null,
+        cnae_principal: dados.cnae_fiscal_principal?.codigo || null,
+        natureza_juridica: dados.natureza_juridica || null,
+        porte_empresa: dados.porte || null,
+        capital_social: dados.capital_social ? parseFloat(dados.capital_social.toString().replace(',', '.')) : null,
+        opcao_simples: dados.opcao_pelo_simples ? 'Sim' : 'Não',
+        data_opcao_simples: dados.data_opcao_pelo_simples || null,
+        opcao_mei: dados.opcao_pelo_mei ? 'Sim' : 'Não',
+        data_opcao_mei: dados.data_opcao_pelo_mei || null,
+        cnaes_secundarios: dados.cnaes_fiscal_secundaria?.map(a => ({
+          codigo: a.codigo,
+          descricao: a.descricao
+        })) || [],
+        QSA: dados.qsa?.map(socio => ({
+          nome: socio.nome,
+          qualificacao: socio.qual
+        })) || [],
+        // Endereço
+        cep: dados.cep?.replace(/\D/g, '') || '',
+        logradouro: dados.logradouro || '',
+        numero: dados.numero || '',
+        complemento: dados.complemento || '',
+        bairro: dados.bairro || '',
+        municipio: dados.municipio || '',
+        uf: dados.uf || '',
+        telefone: dados.ddd_telefone_1 ? `(${dados.ddd_telefone_1}) ${dados.telefone_1}` : '',
+        email: dados.email || '',
       }
-      throw new Error('Erro ao buscar dados do CNPJ')
+    } else if (response.status === 404) {
+      throw new Error('CNPJ não encontrado na base de dados')
     }
-    
-    const dados = await response.json()
-    return dados
   } catch (error) {
-    throw error
+    console.warn('⚠️ Erro ao buscar na BrasilAPI:', error)
+    // Se falhar, não tentar outras APIs (elas também têm CORS)
+    // Apenas informar que o usuário pode preencher manualmente
+    throw new Error('Não foi possível buscar os dados do CNPJ automaticamente. Por favor, preencha os dados manualmente.')
   }
 }
 
@@ -95,6 +171,10 @@ export function CadastroPage() {
   const [buscandoCNPJ, setBuscandoCNPJ] = useState(false)
   const [dadosEmpresa, setDadosEmpresa] = useState(null)
   const [cnpjEncontrado, setCnpjEncontrado] = useState(false)
+  const [modalSetoresAberto, setModalSetoresAberto] = useState(false)
+  const [modalEstadosAberto, setModalEstadosAberto] = useState(false)
+  const [setoresSelecionados, setSetoresSelecionados] = useState([])
+  const [estadosSelecionados, setEstadosSelecionados] = useState([])
 
   const {
     register,
@@ -107,10 +187,15 @@ export function CadastroPage() {
   })
 
   const cargo = watch('cargo')
+  const comoConheceu = watch('comoConheceu')
+  const quantidadeFuncionarios = watch('quantidadeFuncionarios')
+  const licitacoesPorMes = watch('licitacoesPorMes')
+  const faturamentoAnual = watch('faturamentoAnual')
+  const comoPretendeUsar = watch('comoPretendeUsar')
 
   // Redirecionar se já estiver logado
   if (user) {
-    setLocation('/dashboard')
+    setLocation('/licitacoes')
     return null
   }
 
@@ -146,11 +231,23 @@ export function CadastroPage() {
         setValue('bairro', dados.bairro || '')
         setValue('municipio', dados.municipio || '')
         setValue('uf', dados.uf || '')
-        setValue('telefone', dados.telefones?.[0] ? `(${dados.telefones[0].ddd}) ${dados.telefones[0].numero}` : '')
+        // BrasilAPI retorna telefone formatado
+        if (dados.telefone) {
+          setValue('telefone', dados.telefone)
+        } else if (dados.telefones?.[0]) {
+          setValue('telefone', `(${dados.telefones[0].ddd}) ${dados.telefones[0].numero}`)
+        }
 
       } catch (err) {
-        console.error('❌ Erro ao buscar CNPJ:', err)
-        setError(err.message || 'Erro ao buscar dados do CNPJ.')
+        console.warn('⚠️ Erro ao buscar CNPJ:', err)
+        // Não bloquear o cadastro - apenas mostrar aviso suave
+        setError('')
+        // Se for erro de API indisponível, não mostrar erro crítico
+        if (err.message && err.message.includes('indisponível')) {
+          console.log('ℹ️ API temporariamente indisponível. O usuário pode preencher manualmente.')
+        } else if (err.message && err.message.includes('não encontrado')) {
+          console.log('ℹ️ CNPJ não encontrado automaticamente. O usuário pode preencher manualmente.')
+        }
         setCnpjEncontrado(false)
         setDadosEmpresa(null)
       } finally {
@@ -202,6 +299,11 @@ export function CadastroPage() {
       const { confirmPassword, ...profileData } = data
       
       // Preparar dados completos para salvar
+      // Validar cargo antes de enviar
+      if (!data.cargo) {
+        throw new Error('Por favor, selecione um cargo')
+      }
+
       const dadosCompletos = {
         cnpj: data.cnpj,
         razao_social: data.razaoSocial,
@@ -216,6 +318,15 @@ export function CadastroPage() {
         municipio: data.municipio || null,
         uf: data.uf || null,
         telefone: data.telefone || null,
+        // Campos de qualificação
+        como_conheceu: data.comoConheceu || null,
+        quantidade_funcionarios: data.quantidadeFuncionarios || null,
+        licitacoes_por_mes: data.licitacoesPorMes || null,
+        faturamento_anual: data.faturamentoAnual || null,
+        como_pretende_usar: data.comoPretendeUsar || null,
+        // Campos de configuração do serviço
+        setores_atividades: setoresSelecionados.length > 0 ? setoresSelecionados : null,
+        estados_interesse: estadosSelecionados.length > 0 ? estadosSelecionados : null,
         // Adicionar dados da empresa se foram buscados
         ...(dadosEmpresa && {
           situacao_cadastral: dadosEmpresa.situacao_cadastral || null,
@@ -225,7 +336,7 @@ export function CadastroPage() {
           cnae_principal: dadosEmpresa.cnae_principal || null,
           natureza_juridica: dadosEmpresa.natureza_juridica || null,
           porte_empresa: dadosEmpresa.porte_empresa || null,
-          capital_social: dadosEmpresa.capital_social ? parseFloat(dadosEmpresa.capital_social.replace(',', '.')) : null,
+          capital_social: dadosEmpresa.capital_social ? parseFloat(dadosEmpresa.capital_social.toString().replace(',', '.')) : null,
           opcao_simples: dadosEmpresa.opcao_simples || null,
           data_opcao_simples: validarData(dadosEmpresa.data_opcao_simples),
           opcao_mei: dadosEmpresa.opcao_mei || null,
@@ -239,10 +350,16 @@ export function CadastroPage() {
       console.log('📝 Dados a serem salvos:', dadosCompletos)
       
       await signUp(data.email, data.password, dadosCompletos)
-      setLocation('/dashboard')
+      setLocation('/licitacoes')
     } catch (err) {
       console.error('❌ Erro ao criar conta:', err)
-      setError(err.message || 'Erro ao criar conta. Tente novamente.')
+      
+      // Mensagem de erro mais clara para constraint de cargo
+      if (err.code === '23514' && err.message?.includes('profiles_cargo_check')) {
+        setError('Erro: O cargo selecionado não está permitido no banco de dados. Por favor, execute o script SQL "atualizar-opcoes-cargo.sql" no Supabase para atualizar as opções de cargo permitidas.')
+      } else {
+        setError(err.message || 'Erro ao criar conta. Tente novamente.')
+      }
     } finally {
       setLoading(false)
     }
@@ -348,9 +465,25 @@ export function CadastroPage() {
                       <SelectValue placeholder="Selecione seu cargo" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="Proprietário(a) / Sócio(a)">Proprietário(a) / Sócio(a)</SelectItem>
+                      <SelectItem value="Presidente / CEO">Presidente / CEO</SelectItem>
+                      <SelectItem value="Administrador(a)">Administrador(a)</SelectItem>
+                      <SelectItem value="Diretor(a)">Diretor(a)</SelectItem>
+                      <SelectItem value="Engenheiro(a)">Engenheiro(a)</SelectItem>
                       <SelectItem value="Gerente">Gerente</SelectItem>
-                      <SelectItem value="Dono">Dono</SelectItem>
-                      <SelectItem value="Independente">Independente</SelectItem>
+                      <SelectItem value="Analista de licitação">Analista de licitação</SelectItem>
+                      <SelectItem value="Assistente administrativo">Assistente administrativo</SelectItem>
+                      <SelectItem value="Advogado(a)">Advogado(a)</SelectItem>
+                      <SelectItem value="Contador(a)">Contador(a)</SelectItem>
+                      <SelectItem value="Consultor(a)">Consultor(a)</SelectItem>
+                      <SelectItem value="Representante">Representante</SelectItem>
+                      <SelectItem value="Servidor público">Servidor público</SelectItem>
+                      <SelectItem value="Coordenador(a)">Coordenador(a)</SelectItem>
+                      <SelectItem value="Supervisor(a)">Supervisor(a)</SelectItem>
+                      <SelectItem value="Técnico(a)">Técnico(a)</SelectItem>
+                      <SelectItem value="Auxiliar">Auxiliar</SelectItem>
+                      <SelectItem value="Estagiário(a)">Estagiário(a)</SelectItem>
+                      <SelectItem value="Outro">Outro</SelectItem>
                     </SelectContent>
                   </Select>
                   {errors.cargo && <p className="text-red-600 text-xs mt-1">{errors.cargo.message}</p>}
@@ -501,6 +634,211 @@ export function CadastroPage() {
                 </div>
           </div>
         </div>
+
+        {/* Seção: Configuração do serviço */}
+        <div className="mb-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 pb-2 border-b">Configuração do serviço</h3>
+          <div className="space-y-4">
+            {/* Atividades de interesse */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium text-gray-700">
+                Atividades de interesse
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  readOnly
+                  value={
+                    setoresSelecionados.length > 0
+                      ? `${setoresSelecionados.length} setor(es) selecionado(s)`
+                      : ''
+                  }
+                  placeholder="Nenhum setor selecionado"
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setModalSetoresAberto(true)}
+                  className="border-green-500 text-green-600 hover:bg-green-50"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  selecionar atividade
+                </Button>
+              </div>
+              {setoresSelecionados.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {setoresSelecionados.map((item, idx) => (
+                    <Badge key={idx} variant="outline" className="bg-orange-50 text-orange-800 border-orange-200">
+                      {item.setor} {item.subsetores.length > 0 && `(${item.subsetores.length} atividades)`}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Estados */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium text-gray-700">
+                Estados
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  readOnly
+                  value={
+                    estadosSelecionados.length > 0
+                      ? `${estadosSelecionados.length} estado(s) selecionado(s)`
+                      : ''
+                  }
+                  placeholder="Nenhum estado selecionado"
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setModalEstadosAberto(true)}
+                  className="border-green-500 text-green-600 hover:bg-green-50"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  selecionar estados
+                </Button>
+              </div>
+              {estadosSelecionados.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {estadosSelecionados.map((estado) => (
+                    <Badge key={estado} variant="outline" className="bg-orange-50 text-orange-800 border-orange-200">
+                      {estado}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Seção: Informações do Perfil */}
+        <div className="mb-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 pb-2 border-b">Informações do Perfil</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="comoConheceu" className="text-sm font-medium text-gray-700">
+                Como conheceu o Focus?
+              </Label>
+              <Select value={comoConheceu} onValueChange={(value) => setValue('comoConheceu', value)}>
+                <SelectTrigger className="h-11">
+                  <SelectValue placeholder="Selecionar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Google / Busca online">Google / Busca online</SelectItem>
+                  <SelectItem value="Redes sociais (Facebook, Instagram, LinkedIn)">Redes sociais (Facebook, Instagram, LinkedIn)</SelectItem>
+                  <SelectItem value="Indicação de amigo/colega">Indicação de amigo/colega</SelectItem>
+                  <SelectItem value="Email marketing">Email marketing</SelectItem>
+                  <SelectItem value="Evento/Feira">Evento/Feira</SelectItem>
+                  <SelectItem value="Parceiro comercial">Parceiro comercial</SelectItem>
+                  <SelectItem value="Outro">Outro</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="quantidadeFuncionarios" className="text-sm font-medium text-gray-700">
+                Quantidade de funcionários?
+              </Label>
+              <Select value={quantidadeFuncionarios} onValueChange={(value) => setValue('quantidadeFuncionarios', value)}>
+                <SelectTrigger className="h-11">
+                  <SelectValue placeholder="Selecionar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1-5 funcionários">1-5 funcionários</SelectItem>
+                  <SelectItem value="6-10 funcionários">6-10 funcionários</SelectItem>
+                  <SelectItem value="11-50 funcionários">11-50 funcionários</SelectItem>
+                  <SelectItem value="51-200 funcionários">51-200 funcionários</SelectItem>
+                  <SelectItem value="201-500 funcionários">201-500 funcionários</SelectItem>
+                  <SelectItem value="Mais de 500 funcionários">Mais de 500 funcionários</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="licitacoesPorMes" className="text-sm font-medium text-gray-700">
+                Quantas licitações participa por mês?
+              </Label>
+              <Select value={licitacoesPorMes} onValueChange={(value) => setValue('licitacoesPorMes', value)}>
+                <SelectTrigger className="h-11">
+                  <SelectValue placeholder="Selecionar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Nenhuma">Nenhuma</SelectItem>
+                  <SelectItem value="1-5 licitações">1-5 licitações</SelectItem>
+                  <SelectItem value="6-10 licitações">6-10 licitações</SelectItem>
+                  <SelectItem value="11-20 licitações">11-20 licitações</SelectItem>
+                  <SelectItem value="21-50 licitações">21-50 licitações</SelectItem>
+                  <SelectItem value="Mais de 50 licitações">Mais de 50 licitações</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="faturamentoAnual" className="text-sm font-medium text-gray-700">
+                Faturamento anual com licitações?
+              </Label>
+              <Select value={faturamentoAnual} onValueChange={(value) => setValue('faturamentoAnual', value)}>
+                <SelectTrigger className="h-11">
+                  <SelectValue placeholder="Selecionar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Até R$ 100.000">Até R$ 100.000</SelectItem>
+                  <SelectItem value="R$ 100.001 - R$ 500.000">R$ 100.001 - R$ 500.000</SelectItem>
+                  <SelectItem value="R$ 500.001 - R$ 1.000.000">R$ 500.001 - R$ 1.000.000</SelectItem>
+                  <SelectItem value="R$ 1.000.001 - R$ 5.000.000">R$ 1.000.001 - R$ 5.000.000</SelectItem>
+                  <SelectItem value="R$ 5.000.001 - R$ 10.000.000">R$ 5.000.001 - R$ 10.000.000</SelectItem>
+                  <SelectItem value="Mais de R$ 10.000.000">Mais de R$ 10.000.000</SelectItem>
+                  <SelectItem value="Prefiro não informar">Prefiro não informar</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="comoPretendeUsar" className="text-sm font-medium text-gray-700">
+                Como pretende usar os serviços do ConLicitação?
+              </Label>
+              <Select value={comoPretendeUsar} onValueChange={(value) => setValue('comoPretendeUsar', value)}>
+                <SelectTrigger className="h-11">
+                  <SelectValue placeholder="Selecionar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Buscar oportunidades de licitações">Buscar oportunidades de licitações</SelectItem>
+                  <SelectItem value="Monitorar editais do meu interesse">Monitorar editais do meu interesse</SelectItem>
+                  <SelectItem value="Receber alertas personalizados">Receber alertas personalizados</SelectItem>
+                  <SelectItem value="Analisar histórico de licitações">Analisar histórico de licitações</SelectItem>
+                  <SelectItem value="Gerenciar favoritos">Gerenciar favoritos</SelectItem>
+                  <SelectItem value="Todos os recursos">Todos os recursos</SelectItem>
+                  <SelectItem value="Outro">Outro</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+
+        {/* Modais */}
+        <SelecionarSetores
+          open={modalSetoresAberto}
+          onOpenChange={setModalSetoresAberto}
+          setoresSelecionados={setoresSelecionados}
+          onConfirm={(setores) => {
+            setSetoresSelecionados(setores)
+            setValue('setoresAtividades', setores)
+          }}
+        />
+
+        <SelecionarEstados
+          open={modalEstadosAberto}
+          onOpenChange={setModalEstadosAberto}
+          estadosSelecionados={estadosSelecionados}
+          onConfirm={(estados) => {
+            setEstadosSelecionados(estados)
+            setValue('estadosInteresse', estados)
+          }}
+        />
 
         {error && (
                 <div className="bg-red-50 border-l-4 border-red-500 rounded-lg p-4">
