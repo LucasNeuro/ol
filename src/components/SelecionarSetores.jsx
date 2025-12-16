@@ -16,7 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { useSetores } from '@/hooks/useSetores'
 import { Loader2, Search } from 'lucide-react'
@@ -25,7 +24,6 @@ export function SelecionarSetores({ open, onOpenChange, setoresSelecionados, onC
   const { data: SETORES = [], isLoading: carregandoSetores } = useSetores()
   const [setorPrincipal, setSetorPrincipal] = useState('')
   const [subsetoresSelecionados, setSubsetoresSelecionados] = useState([])
-  const [descricaoDetalhada, setDescricaoDetalhada] = useState('')
   const [setoresAdicionados, setSetoresAdicionados] = useState([])
   const [buscaSetor, setBuscaSetor] = useState('')
 
@@ -41,7 +39,6 @@ export function SelecionarSetores({ open, onOpenChange, setoresSelecionados, onC
   // Resetar campos quando mudar o setor principal
   useEffect(() => {
     setSubsetoresSelecionados([])
-    setDescricaoDetalhada('')
   }, [setorPrincipal])
 
   // Filtrar setores por busca
@@ -75,8 +72,7 @@ export function SelecionarSetores({ open, onOpenChange, setoresSelecionados, onC
 
     const novoSetor = {
       setor: setorPrincipal,
-      subsetores: subsetoresSelecionados,
-      descricao: descricaoDetalhada || null
+      subsetores: subsetoresSelecionados
     }
 
     // Verificar se o setor já foi adicionado
@@ -95,7 +91,6 @@ export function SelecionarSetores({ open, onOpenChange, setoresSelecionados, onC
     // Limpar campos
     setSetorPrincipal('')
     setSubsetoresSelecionados([])
-    setDescricaoDetalhada('')
   }
 
   const handleRemoverSetor = (setor) => {
@@ -210,21 +205,6 @@ export function SelecionarSetores({ open, onOpenChange, setoresSelecionados, onC
             </div>
           )}
 
-          {/* Descrição Detalhada */}
-          {setorPrincipal && (
-            <div className="space-y-2">
-              <Label>
-                Se desejar, descreva detalhadamente as atividades da sua empresa:
-              </Label>
-              <Textarea
-                value={descricaoDetalhada}
-                onChange={(e) => setDescricaoDetalhada(e.target.value)}
-                placeholder="Descreva detalhadamente..."
-                rows={4}
-              />
-            </div>
-          )}
-
           {/* Botão Adicionar */}
           {setorPrincipal && (
             <Button
@@ -259,9 +239,6 @@ export function SelecionarSetores({ open, onOpenChange, setoresSelecionados, onC
                               </span>
                             ))}
                           </div>
-                        )}
-                        {item.descricao && (
-                          <p className="text-xs text-gray-600 mt-2">{item.descricao}</p>
                         )}
                       </div>
                       <Button

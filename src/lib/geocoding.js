@@ -63,7 +63,7 @@ export async function geocodificarEndereco(cep, logradouro, numero, municipio, u
       `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(enderecoCompleto)}&limit=1`,
       {
         headers: {
-          'User-Agent': 'Focus-Licitacoes/1.0'
+          'User-Agent': 'Sistema-Licitacao/1.0'
         }
       }
     )

@@ -170,6 +170,57 @@ function AdminUsuariosContent() {
     }
   })
 
+  // Atualizar todos os usuários para Enterprise
+  const atualizarTodosParaEnterprise = useMutation({
+    mutationFn: async () => {
+      // Buscar todos os usuários que não são enterprise
+      const { data: todosUsuarios, error: fetchError } = await supabase
+        .from('profiles')
+        .select('id, plano')
+
+      if (fetchError) throw fetchError
+
+      // Filtrar usuários que não são enterprise
+      const usuariosParaAtualizar = todosUsuarios?.filter(u => 
+        u.plano !== 'enterprise' || !u.plano
+      ) || []
+
+      if (usuariosParaAtualizar.length === 0) {
+        return 0
+      }
+
+      // Atualizar em lotes (Supabase tem limite de 1000 por vez)
+      const tamanhoLote = 1000
+      let totalAtualizados = 0
+
+      for (let i = 0; i < usuariosParaAtualizar.length; i += tamanhoLote) {
+        const lote = usuariosParaAtualizar.slice(i, i + tamanhoLote)
+        const ids = lote.map(u => u.id)
+
+        const { error, count } = await supabase
+          .from('profiles')
+          .update({ 
+            plano: 'enterprise',
+            updated_at: new Date().toISOString()
+          })
+          .in('id', ids)
+
+        if (error) throw error
+        totalAtualizados += count || lote.length
+      }
+
+      return totalAtualizados
+    },
+    onSuccess: (count) => {
+      queryClient.invalidateQueries(['admin-usuarios'])
+      success(`${count} usuário(s) atualizado(s) para Enterprise com sucesso`)
+    },
+    onError: (err) => {
+      showError('Erro ao atualizar usuários para Enterprise')
+      console.error(err)
+    }
+  })
+
   const handleEditar = (usuario) => {
     setUsuarioSelecionado(usuario)
     setEditando(true)
@@ -228,6 +279,24 @@ function AdminUsuariosContent() {
               Gerencie todos os cadastros da plataforma
             </p>
           </div>
+          <Button
+            onClick={() => {
+              if (confirm('Tem certeza que deseja atualizar TODOS os usuários para o plano Enterprise?')) {
+                atualizarTodosParaEnterprise.mutate()
+              }
+            }}
+            disabled={atualizarTodosParaEnterprise.isLoading}
+            className="bg-purple-600 hover:bg-purple-700 text-white"
+          >
+            {atualizarTodosParaEnterprise.isLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Atualizando...
+              </>
+            ) : (
+              'Atualizar Todos para Enterprise'
+            )}
+          </Button>
         </div>
 
         {/* Estatísticas */}

@@ -195,7 +195,7 @@ export function CadastroPage() {
 
   // Redirecionar se já estiver logado
   if (user) {
-    setLocation('/licitacoes')
+    setLocation('/modulos')
     return null
   }
 
@@ -231,12 +231,7 @@ export function CadastroPage() {
         setValue('bairro', dados.bairro || '')
         setValue('municipio', dados.municipio || '')
         setValue('uf', dados.uf || '')
-        // BrasilAPI retorna telefone formatado
-        if (dados.telefone) {
-          setValue('telefone', dados.telefone)
-        } else if (dados.telefones?.[0]) {
-          setValue('telefone', `(${dados.telefones[0].ddd}) ${dados.telefones[0].numero}`)
-        }
+        // Telefone NÃO é preenchido automaticamente - usuário deve preencher manualmente
 
       } catch (err) {
         console.warn('⚠️ Erro ao buscar CNPJ:', err)
@@ -304,6 +299,11 @@ export function CadastroPage() {
         throw new Error('Por favor, selecione um cargo')
       }
 
+      // Validar que pelo menos uma atividade de interesse OU um estado foi selecionado
+      if (setoresSelecionados.length === 0 && estadosSelecionados.length === 0) {
+        throw new Error('Por favor, selecione pelo menos uma atividade de interesse ou um estado para continuar')
+      }
+
       const dadosCompletos = {
         cnpj: data.cnpj,
         razao_social: data.razaoSocial,
@@ -350,7 +350,7 @@ export function CadastroPage() {
       console.log('📝 Dados a serem salvos:', dadosCompletos)
       
       await signUp(data.email, data.password, dadosCompletos)
-      setLocation('/licitacoes')
+      setLocation('/modulos')
     } catch (err) {
       console.error('❌ Erro ao criar conta:', err)
       
@@ -422,7 +422,7 @@ export function CadastroPage() {
                   {errors.razaoSocial && <p className="text-red-600 text-xs mt-1">{errors.razaoSocial.message}</p>}
                 </div>
 
-                <div className="space-y-2 md:col-span-4">
+                <div className="space-y-2 md:col-span-2">
                   <Label htmlFor="nomeFantasia" className="text-sm font-medium text-gray-700">
                     Nome Fantasia
                   </Label>
@@ -433,6 +433,19 @@ export function CadastroPage() {
                     {...register('nomeFantasia')}
                     className={`h-11 ${cnpjEncontrado ? 'bg-green-50' : ''}`}
                     readOnly={cnpjEncontrado}
+                  />
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="telefone" className="text-sm font-medium text-gray-700">
+                    Telefone
+                  </Label>
+                  <Input
+                    id="telefone"
+                    type="text"
+                    placeholder="(11) 99999-9999"
+                    {...register('telefone')}
+                    className="h-11"
                   />
                 </div>
           </div>
@@ -619,19 +632,6 @@ export function CadastroPage() {
                     readOnly={cnpjEncontrado}
                   />
                 </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="telefone" className="text-sm font-medium text-gray-700">
-                    Telefone
-                  </Label>
-                  <Input
-                    id="telefone"
-                    type="text"
-                    placeholder="(11) 99999-9999"
-                    {...register('telefone')}
-                    className={`h-11 ${cnpjEncontrado ? 'bg-green-50' : ''}`}
-                  />
-                </div>
           </div>
         </div>
 
@@ -642,8 +642,11 @@ export function CadastroPage() {
             {/* Atividades de interesse */}
             <div className="space-y-2">
               <Label className="text-sm font-medium text-gray-700">
-                Atividades de interesse
+                Atividades de interesse <span className="text-red-500">*</span>
               </Label>
+              <p className="text-xs text-gray-500">
+                Selecione pelo menos uma atividade de interesse ou um estado para continuar
+              </p>
               <div className="flex gap-2">
                 <Input
                   readOnly
@@ -679,7 +682,7 @@ export function CadastroPage() {
             {/* Estados */}
             <div className="space-y-2">
               <Label className="text-sm font-medium text-gray-700">
-                Estados
+                Estados <span className="text-red-500">*</span>
               </Label>
               <div className="flex gap-2">
                 <Input
@@ -721,7 +724,7 @@ export function CadastroPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="comoConheceu" className="text-sm font-medium text-gray-700">
-                Como conheceu o Focus?
+                Como conheceu o Sitema Licitação?
               </Label>
               <Select value={comoConheceu} onValueChange={(value) => setValue('comoConheceu', value)}>
                 <SelectTrigger className="h-11">
@@ -799,7 +802,7 @@ export function CadastroPage() {
 
             <div className="space-y-2 md:col-span-2">
               <Label htmlFor="comoPretendeUsar" className="text-sm font-medium text-gray-700">
-                Como pretende usar os serviços do ConLicitação?
+                Como pretende usar os serviços do Sistema licitação?
               </Label>
               <Select value={comoPretendeUsar} onValueChange={(value) => setValue('comoPretendeUsar', value)}>
                 <SelectTrigger className="h-11">

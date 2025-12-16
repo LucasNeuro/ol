@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Sheet,
@@ -8,7 +8,7 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
-import { Star, FileText, Calendar, DollarSign, MapPin, Building2, Loader2, Download, ExternalLink } from 'lucide-react'
+import { Star, FileText, Calendar, DollarSign, MapPin, Building2, Loader2, Download, ExternalLink, Brain, Eye } from 'lucide-react'
 import { buscarContratacoesPorData, buscarDetalhesContratacao } from '@/lib/pncp'
 import { formatarData, formatarMoeda } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
@@ -17,6 +17,14 @@ import { useNotifications } from '@/hooks/useNotifications'
 import { useUserStore } from '@/store/userStore'
 import { VisualizadorDocumento } from '@/components/VisualizadorDocumento'
 import { salvarLicitacaoCompleta as salvarLicitacaoCompletaSync, buscarLicitacaoDoBanco as buscarLicitacaoDoBancoSync } from '@/lib/sync'
+import { isZipFile, descompactarZip, limparBlobUrls } from '@/lib/zipService'
+import { Badge } from '@/components/ui/badge'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+} from "@/components/ui/accordion"
+import * as AccordionPrimitive from "@radix-ui/react-accordion"
 
 // Função para salvar licitação completa no banco (usa a função centralizada)
 async function salvarLicitacaoCompleta(licitacao, userId) {
@@ -86,7 +94,79 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
   const { user } = useAuth()
   const { warning, showError } = useNotifications()
   const [isFavorito, setIsFavorito] = useState(false)
+  const [arquivosZipDescompactados, setArquivosZipDescompactados] = useState({}) // { docKey: { loading, arquivos, erro } }
+  const [documentoVisualizacao, setDocumentoVisualizacao] = useState(null)
+  const [visualizadorAberto, setVisualizadorAberto] = useState(false)
+  
+  // Limpar blob URLs quando componente desmontar ou sidepanel fechar
+  useEffect(() => {
+    if (!open) {
+      // Limpar todos os blob URLs quando fechar
+      Object.values(arquivosZipDescompactados).forEach(zipData => {
+        if (zipData?.arquivos && Array.isArray(zipData.arquivos)) {
+          limparBlobUrls(zipData.arquivos)
+        }
+      })
+      setArquivosZipDescompactados({})
+    }
+    
+    return () => {
+      // Limpar ao desmontar
+      Object.values(arquivosZipDescompactados).forEach(zipData => {
+        if (zipData?.arquivos && Array.isArray(zipData.arquivos)) {
+          limparBlobUrls(zipData.arquivos)
+        }
+      })
+    }
+  }, [open, arquivosZipDescompactados])
 
+  // Descompactar ZIPs automaticamente quando documentos são carregados
+  useEffect(() => {
+    if (!open || !licitacao?.documentos || licitacao.documentos.length === 0) {
+      return
+    }
+
+    // Descompactar todos os ZIPs automaticamente
+    licitacao.documentos.forEach((doc, index) => {
+      const docKey = `${licitacao.numeroControlePNCP}-${index}`
+      const url = doc.urlDocumento || doc.linkDocumento || doc.url || doc.link
+      const nome = doc.nomeArquivo || doc.nomeDocumento || doc.nome || `Documento ${index + 1}`
+      
+      // Verificar se é ZIP
+      if (isZipFile(url, nome)) {
+        // Verificar se já foi descompactado
+        const zipData = arquivosZipDescompactados[docKey]
+        if (zipData && (zipData.arquivos?.length > 0 || zipData.loading)) {
+          // Já está sendo processado ou já foi descompactado
+          return
+        }
+
+        // Descompactar automaticamente
+        console.log(`📦 [Auto-ZIP] Descompactando automaticamente: ${nome}`)
+        setArquivosZipDescompactados(prev => ({
+          ...prev,
+          [docKey]: { loading: true, arquivos: [], erro: null }
+        }))
+
+        descompactarZip(url, nome)
+          .then(arquivos => {
+            console.log(`✅ [Auto-ZIP] ${nome} descompactado: ${arquivos.length} arquivos`)
+            setArquivosZipDescompactados(prev => ({
+              ...prev,
+              [docKey]: { loading: false, arquivos, erro: null }
+            }))
+          })
+          .catch(error => {
+            console.error(`❌ [Auto-ZIP] Erro ao descompactar ${nome}:`, error)
+            setArquivosZipDescompactados(prev => ({
+              ...prev,
+              [docKey]: { loading: false, arquivos: [], erro: error.message }
+            }))
+          })
+      }
+    })
+  }, [open, licitacao?.documentos, licitacao?.numeroControlePNCP, arquivosZipDescompactados])
+  
   // Buscar a licitação específica - PRIMEIRO DO BANCO, depois da API
   const { data: licitacao, isLoading, error } = useQuery({
     queryKey: ['edital-sidepanel', numeroControle, user?.id],
@@ -557,55 +637,238 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
               {/* Documentos e Anexos */}
               {licitacao.documentos && licitacao.documentos.length > 0 ? (
                 <div className="pt-4 border-t">
-                  <h3 className="text-sm text-gray-500 mb-3 font-semibold">Documentos e Anexos ({licitacao.documentos.length})</h3>
-                  <div className="space-y-2">
+                  <Accordion type="single" collapsible className="w-full">
+                    <AccordionItem value="documentos" className="border-0">
+                      <AccordionPrimitive.Header className="flex">
+                        <AccordionPrimitive.Trigger className="flex flex-1 items-center justify-between py-3 font-medium transition-all hover:no-underline w-full">
+                          <h3 className="text-sm text-gray-500 font-semibold flex items-center gap-2">
+                            <Download className="w-5 h-5 text-blue-500" />
+                            Documentos e Anexos ({licitacao.documentos.length})
+                          </h3>
+                          <Eye className="h-5 w-5 shrink-0 text-blue-600 transition-colors" />
+                        </AccordionPrimitive.Trigger>
+                      </AccordionPrimitive.Header>
+                      <AccordionContent>
+                        <div className="max-h-96 overflow-y-auto pr-2 space-y-3 mt-2">
                     {licitacao.documentos.map((doc, index) => {
+                      const docKey = `${licitacao.numeroControlePNCP}-${index}`
                       const url = doc.urlDocumento || doc.linkDocumento || doc.url || doc.link
                       const nome = doc.nomeArquivo || doc.nomeDocumento || doc.nome || `Documento ${index + 1}`
+                      const isZip = isZipFile(url, nome)
+                      const zipData = arquivosZipDescompactados[docKey]
                       
-                      return url ? (
-                        <button
-                          key={index}
-                          onClick={() => {
-                            setDocumentoVisualizacao({ url, nome })
-                            setVisualizadorAberto(true)
-                          }}
-                          className="w-full flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200 hover:bg-orange-50 hover:border-orange-300 transition-colors group text-left"
-                        >
-                          <FileText className="w-5 h-5 text-orange-600 flex-shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-semibold text-gray-900 truncate group-hover:text-orange-600">
-                              {nome}
-                            </div>
-                            {doc.tipoDocumentoNome && (
-                              <div className="text-xs text-gray-500">{doc.tipoDocumentoNome}</div>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {doc.tamanhoBytes && (
-                              <div className="text-xs text-gray-500">
-                                {(doc.tamanhoBytes / 1024).toFixed(1)} KB
+                      // Função para descompactar ZIP
+                      const handleDescompactarZip = async (e) => {
+                        e.stopPropagation()
+                        if (!url) return
+                        
+                        setArquivosZipDescompactados(prev => ({
+                          ...prev,
+                          [docKey]: { loading: true, arquivos: [], erro: null }
+                        }))
+                        
+                        try {
+                          const arquivos = await descompactarZip(url, nome)
+                          setArquivosZipDescompactados(prev => ({
+                            ...prev,
+                            [docKey]: { loading: false, arquivos, erro: null }
+                          }))
+                        } catch (error) {
+                          console.error('❌ Erro ao descompactar ZIP:', error)
+                          setArquivosZipDescompactados(prev => ({
+                            ...prev,
+                            [docKey]: { loading: false, arquivos: [], erro: error.message }
+                          }))
+                        }
+                      }
+                      
+                      return (
+                        <div key={index} className="space-y-2">
+                          {/* Card do Documento Principal */}
+                          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200 hover:border-orange-300 transition-colors group">
+                            <FileText className="w-5 h-5 text-orange-600 flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-semibold text-gray-900 truncate flex items-center gap-2">
+                                {nome}
+                                {isZip && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    ZIP
+                                  </Badge>
+                                )}
                               </div>
-                            )}
-                            <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-orange-600" />
-                          </div>
-                        </button>
-                      ) : (
-                        <div
-                          key={index}
-                          className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200"
-                        >
-                          <FileText className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-semibold text-gray-900 truncate">
-                              {nome}
+                              {doc.tipoDocumentoNome && (
+                                <div className="text-xs text-gray-500">{doc.tipoDocumentoNome}</div>
+                              )}
                             </div>
-                            <div className="text-xs text-gray-500">Link não disponível</div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              {doc.tamanhoBytes && (
+                                <div className="text-xs text-gray-500">
+                                  {(doc.tamanhoBytes / 1024).toFixed(1)} KB
+                                </div>
+                              )}
+                              
+                              {/* Botão Download */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (url) {
+                                    const link = document.createElement('a')
+                                    link.href = url
+                                    link.download = nome
+                                    link.target = '_blank'
+                                    link.click()
+                                  }
+                                }}
+                                className="p-1.5 rounded hover:bg-blue-100 text-blue-600 transition-colors"
+                                title="Baixar documento"
+                              >
+                                <Download className="w-4 h-4" />
+                              </button>
+                              
+                              {/* Botão Descompactar ZIP ou Visualizar */}
+                              {isZip ? (
+                                <>
+                                  {/* Se já tem arquivos descompactados, mostrar botão de visualizar o primeiro PDF */}
+                                  {zipData?.arquivos && zipData.arquivos.length > 0 ? (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        // Encontrar o primeiro PDF ou o primeiro arquivo
+                                        const primeiroArquivo = zipData.arquivos.find(a => a.extensao === 'pdf') || zipData.arquivos[0]
+                                        if (primeiroArquivo) {
+                                          setDocumentoVisualizacao({ 
+                                            url: primeiroArquivo.url, 
+                                            nome: primeiroArquivo.nome 
+                                          })
+                                          setVisualizadorAberto(true)
+                                        }
+                                      }}
+                                      className="p-1.5 rounded hover:bg-orange-100 text-orange-600 transition-colors"
+                                      title={`Visualizar ${zipData.arquivos.find(a => a.extensao === 'pdf') ? 'PDF' : 'arquivo'} do ZIP`}
+                                    >
+                                      <ExternalLink className="w-4 h-4" />
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={handleDescompactarZip}
+                                      disabled={zipData?.loading}
+                                      className="p-1.5 rounded hover:bg-green-100 text-green-600 transition-colors disabled:opacity-50"
+                                      title={zipData?.loading ? "Descompactando..." : "Descompactar arquivo ZIP"}
+                                    >
+                                      {zipData?.loading ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                      ) : (
+                                        <Download className="w-4 h-4" />
+                                      )}
+                                    </button>
+                                  )}
+                                </>
+                              ) : (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (url) {
+                                      setDocumentoVisualizacao({ url, nome })
+                                      setVisualizadorAberto(true)
+                                    }
+                                  }}
+                                  className="p-1.5 rounded hover:bg-orange-100 text-orange-600 transition-colors"
+                                  title="Visualizar documento"
+                                >
+                                  <ExternalLink className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
                           </div>
+                          
+                          {/* Arquivos Descompactados do ZIP */}
+                          {isZip && zipData && (
+                            <div className="ml-4 space-y-2 mt-2">
+                              {zipData.loading && (
+                                <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm text-blue-700">
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  <span>Descompactando arquivo ZIP automaticamente...</span>
+                                </div>
+                              )}
+                              
+                              {zipData.erro && (
+                                <div className="p-3 bg-red-50 rounded-lg border border-red-200 text-sm text-red-700">
+                                  <div className="font-semibold mb-1">❌ Erro ao descompactar:</div>
+                                  <div>{zipData.erro}</div>
+                                  <button
+                                    onClick={handleDescompactarZip}
+                                    className="mt-2 text-xs underline hover:no-underline"
+                                  >
+                                    Tentar novamente
+                                  </button>
+                                </div>
+                              )}
+                              
+                              {zipData.arquivos && zipData.arquivos.length > 0 && (
+                                <div className="space-y-2 p-3 bg-green-50 rounded-lg border border-green-200">
+                                  <p className="text-xs font-semibold text-green-800 mb-2">
+                                    ✅ {zipData.arquivos.length} arquivo{zipData.arquivos.length !== 1 ? 's' : ''} descompactado{zipData.arquivos.length !== 1 ? 's' : ''}:
+                                  </p>
+                                  <div className="space-y-1.5">
+                                    {zipData.arquivos.map((arquivo, arquivoIndex) => (
+                                      <div
+                                        key={arquivoIndex}
+                                        className="flex items-center gap-2 p-2 bg-white rounded border border-gray-200 hover:border-orange-300 hover:shadow-sm transition-all cursor-pointer group"
+                                        onClick={() => {
+                                          // Se for PDF, abrir no visualizador
+                                          if (arquivo.extensao === 'pdf') {
+                                            setDocumentoVisualizacao({
+                                              url: arquivo.url,
+                                              nome: arquivo.nome
+                                            })
+                                            setVisualizadorAberto(true)
+                                          } else {
+                                            // Para outros tipos, abrir em nova aba
+                                            window.open(arquivo.url, '_blank')
+                                          }
+                                        }}
+                                      >
+                                        <FileText className="w-4 h-4 text-orange-600 flex-shrink-0" />
+                                        <div className="flex-1 min-w-0">
+                                          <div className="text-xs font-medium text-gray-900 truncate">
+                                            {arquivo.nome}
+                                          </div>
+                                          <div className="text-xs text-gray-500">
+                                            {arquivo.tipo} • {(arquivo.tamanho / 1024).toFixed(1)} KB
+                                          </div>
+                                        </div>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            if (arquivo.extensao === 'pdf') {
+                                              setDocumentoVisualizacao({
+                                                url: arquivo.url,
+                                                nome: arquivo.nome
+                                              })
+                                              setVisualizadorAberto(true)
+                                            } else {
+                                              window.open(arquivo.url, '_blank')
+                                            }
+                                          }}
+                                          className="p-1.5 rounded hover:bg-orange-100 text-orange-600 transition-colors opacity-0 group-hover:opacity-100"
+                                          title={`Visualizar ${arquivo.nome}`}
+                                        >
+                                          <ExternalLink className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )
                     })}
-                  </div>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
                 </div>
               ) : (
                 <div className="pt-4 border-t">

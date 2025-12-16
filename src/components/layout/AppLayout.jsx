@@ -15,7 +15,8 @@ import {
   ChevronRight,
   Calendar,
   Filter,
-  Target
+  Target,
+  Users
 } from 'lucide-react'
 
 export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
@@ -49,6 +50,8 @@ export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
     { icon: Star, label: 'Favoritos', path: '/favoritos' },
     { icon: Bell, label: 'Alertas', path: '/alertas' },
     { icon: User, label: 'Meu Perfil', path: '/perfil' },
+    // Menu administrativo - apenas para super admins
+    ...(user?.is_adm ? [{ icon: Users, label: 'Controle de Usuários', path: '/admin/usuarios' }] : []),
   ]
 
   const isActive = (path) => location === path || location.startsWith(path + '/')
@@ -65,7 +68,7 @@ export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
                 <a className="cursor-pointer flex items-center gap-2">
                   <Target className="w-6 h-6 text-orange-500" />
                   <h1 className="text-xl font-bold text-gray-900">
-                    Focus
+                    Sistema Licitação
                   </h1>
                 </a>
               </Link>

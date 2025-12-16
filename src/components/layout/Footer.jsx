@@ -17,7 +17,7 @@ export function Footer() {
         </div>
 
         <div className=" mt-8 pt-8 border-t border-gray-200 text-center text-sm text-orange-600">
-          <p>&copy; {new Date().getFullYear()} Focus. Todos os direitos reservados.</p>
+          <p>&copy; {new Date().getFullYear()} Sistema Licitação. Todos os direitos reservados.</p>
         </div>
       </div>
     </footer>

@@ -1,14 +1,111 @@
 import { Link, useLocation } from 'wouter'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/hooks/useAuth'
-import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useState, useEffect } from 'react'
 import { User, LogOut, ChevronDown, Target } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 
 export function Header() {
   const [location] = useLocation()
-  const { user, signOut } = useAuth()
-  const isAuthenticated = !!user
+  const { user: userAuth, signOut } = useAuth()
+  const isAuthenticated = !!userAuth
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  
+  // Obter ID do usuário (pode estar em userAuth.id ou na sessão)
+  const userId = userAuth?.id || (() => {
+    try {
+      const userStr = localStorage.getItem('user')
+      if (userStr) {
+        const user = JSON.parse(userStr)
+        return user?.id
+      }
+    } catch {
+      return null
+    }
+    return null
+  })()
+  
+  // Também tentar buscar da sessão salva
+  useEffect(() => {
+    if (!userId && isAuthenticated) {
+      try {
+        const userStr = localStorage.getItem('user')
+        if (userStr) {
+          const user = JSON.parse(userStr)
+          if (user?.id) {
+            console.log('✅ [Header] ID encontrado na sessão:', user.id)
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ [Header] Erro ao ler sessão:', e)
+      }
+    }
+  }, [userId, isAuthenticated])
+
+  // Buscar perfil completo para exibir nome da empresa
+  const { data: perfilCompleto, isLoading: loadingPerfil } = useQuery({
+    queryKey: ['perfil-header', userId],
+    queryFn: async () => {
+      if (!userId) {
+        console.warn('⚠️ [Header] Sem userId')
+        return null
+      }
+      
+      try {
+        console.log('🔍 [Header] Buscando perfil para id:', userId)
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('razao_social, nome_fantasia, email')
+          .eq('id', userId)
+          .maybeSingle()
+        
+        if (error) {
+          console.warn('⚠️ Erro ao buscar perfil no header:', error)
+          return null
+        }
+        
+        if (!data) {
+          console.warn('⚠️ [Header] Perfil não encontrado para id:', userId)
+          return null
+        }
+        
+        console.log('✅ [Header] Perfil completo carregado:', data)
+        return data
+      } catch (err) {
+        console.error('❌ Erro ao buscar perfil no header:', err)
+        return null
+      }
+    },
+    enabled: !!userId && isAuthenticated,
+    staleTime: 1000 * 60 * 5, // Cache por 5 minutos
+    retry: 2,
+    refetchOnWindowFocus: false,
+  })
+
+  // Usar perfil completo se disponível, senão usar userAuth
+  const user = perfilCompleto ? { ...userAuth, ...perfilCompleto } : userAuth
+  
+  // Nome da empresa para exibir - prioridade: perfilCompleto > userAuth > 'Usuário'
+  const nomeEmpresa = perfilCompleto?.razao_social || 
+                      perfilCompleto?.nome_fantasia || 
+                      userAuth?.razao_social || 
+                      userAuth?.nome_fantasia || 
+                      'Usuário'
+  
+  // Email para exibir
+  const emailUsuario = perfilCompleto?.email || userAuth?.email || ''
+  
+  console.log('🔍 [Header] Debug:', { 
+    userId,
+    userAuthId: userAuth?.id,
+    userAuthRazao: userAuth?.razao_social,
+    perfilCompletoRazao: perfilCompleto?.razao_social,
+    perfilCompletoNomeFantasia: perfilCompleto?.nome_fantasia,
+    nomeEmpresaFinal: nomeEmpresa,
+    loadingPerfil,
+    isAuthenticated
+  })
 
   const handleSignOut = async () => {
     try {
@@ -21,8 +118,9 @@ export function Header() {
 
   // Pegar primeira letra do nome ou email
   const getInitials = () => {
-    if (user?.razao_social) {
-      return user.razao_social.substring(0, 2).toUpperCase()
+    const nome = nomeEmpresa
+    if (nome && nome !== 'Usuário') {
+      return nome.substring(0, 2).toUpperCase()
     }
     if (user?.email) {
       return user.email.substring(0, 2).toUpperCase()
@@ -38,7 +136,7 @@ export function Header() {
             <a className="cursor-pointer flex items-center gap-2">
               <Target className="w-6 h-6 text-orange-500" />
               <h1 className="text-xl font-bold text-gray-900">
-                <strong>Focus</strong>
+                <strong>Sistema Licitação</strong>
               </h1>
             </a>
           </Link>
@@ -81,12 +179,20 @@ export function Header() {
                       <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-2xl border border-gray-200 py-2 z-50">
                         {/* Informações do usuário */}
                         <div className="px-4 py-3 border-b border-gray-100">
-                          <p className="text-sm font-semibold text-gray-900">
-                            {user?.razao_social || 'Usuário'}
-                          </p>
-                          <p className="text-xs text-gray-500 truncate mt-1">
-                            {user?.email}
-                          </p>
+                          {loadingPerfil && !perfilCompleto ? (
+                            <p className="text-sm font-semibold text-gray-900">Carregando...</p>
+                          ) : (
+                            <>
+                              <p className="text-sm font-semibold text-gray-900">
+                                {nomeEmpresa}
+                              </p>
+                              {emailUsuario && (
+                                <p className="text-xs text-gray-500 truncate mt-1">
+                                  {emailUsuario}
+                                </p>
+                              )}
+                            </>
+                          )}
                         </div>
 
                         {/* Opções do menu */}

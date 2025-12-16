@@ -17,7 +17,7 @@ import { SelecionarEstados } from '@/components/SelecionarEstados'
 import { useUserStore } from '@/store/userStore'
 
 function PerfilContent() {
-  const { user } = useAuth()
+  const { user: userAuth } = useAuth()
   const { setUser } = useUserStore()
   const queryClient = useQueryClient()
   const { success: showSuccess, error: showError } = useNotifications()
@@ -33,48 +33,92 @@ function PerfilContent() {
   const [modalSetoresAberto, setModalSetoresAberto] = useState(false)
   const [modalEstadosAberto, setModalEstadosAberto] = useState(false)
   const [salvandoConfig, setSalvandoConfig] = useState(false)
+
+  // Buscar TODOS os dados do perfil do banco
+  const { data: perfilCompleto, isLoading: loadingPerfil } = useQuery({
+    queryKey: ['perfil-completo', userAuth?.id],
+    queryFn: async () => {
+      if (!userAuth?.id) return null
+      
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userAuth.id)
+        .maybeSingle()
+      
+      if (error) {
+        console.error('❌ Erro ao buscar perfil completo:', error)
+        throw error
+      }
+      
+      return data
+    },
+    enabled: !!userAuth?.id,
+    staleTime: 1000 * 60 * 5, // Cache por 5 minutos
+  })
+
+  // Usar perfil completo se disponível, senão usar userAuth
+  const user = perfilCompleto || userAuth
   
   const [formData, setFormData] = useState({
-    telefone: user?.telefone || '',
-    complemento: user?.complemento || '',
+    telefone: '',
+    complemento: '',
     senha_atual: '',
     senha_nova: '',
     confirmar_senha: '',
   })
 
-  // Buscar perfil atualizado do banco
-  const { data: perfilAtualizado } = useQuery({
-    queryKey: ['perfil-usuario', user?.id],
-    queryFn: async () => {
-      if (!user?.id) return null
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('setores_atividades, estados_interesse')
-        .eq('id', user.id)
-        .maybeSingle()
-      
-      if (error) {
-        console.warn('⚠️ Erro ao buscar perfil:', error)
-        return null
-      }
-      
-      return data
-    },
-    enabled: !!user?.id,
-    staleTime: 1000 * 60 * 5, // Cache por 5 minutos
-  })
-
-  // Carregar setores e estados do perfil quando o componente montar ou quando o perfil for atualizado
+  // Atualizar formData quando o perfil for carregado
   useEffect(() => {
     if (user) {
-      const setores = perfilAtualizado?.setores_atividades || user.setores_atividades || []
-      const estados = perfilAtualizado?.estados_interesse || user.estados_interesse || []
+      setFormData({
+        telefone: user.telefone || '',
+        complemento: user.complemento || '',
+        senha_atual: '',
+        senha_nova: '',
+        confirmar_senha: '',
+      })
+      
+      // Carregar setores e estados
+      const setores = user.setores_atividades || []
+      const estados = user.estados_interesse || []
       setSetoresSelecionados(setores)
       setEstadosSelecionados(estados)
     }
-  }, [user, perfilAtualizado])
+  }, [user])
 
-  if (!user) return null
+  if (!userAuth) return null
+  
+  if (loadingPerfil) {
+    return (
+      <AppLayout>
+        <div className="py-12 px-6">
+          <div className="container mx-auto max-w-7xl">
+            <div className="flex items-center justify-center h-64">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
+                <p className="text-gray-600">Carregando perfil...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </AppLayout>
+    )
+  }
+  
+  if (!user) {
+    return (
+      <AppLayout>
+        <div className="py-12 px-6">
+          <div className="container mx-auto max-w-7xl">
+            <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded">
+              <p className="text-red-700">Erro ao carregar dados do perfil. Por favor, recarregue a página.</p>
+            </div>
+          </div>
+        </div>
+      </AppLayout>
+    )
+  }
 
   const handleSave = async () => {
     setError('')
@@ -127,6 +171,7 @@ function PerfilContent() {
       setUser(userData)
 
       // Invalidar queries para atualizar em tempo real
+      queryClient.invalidateQueries(['perfil-completo', user.id])
       queryClient.invalidateQueries(['perfil-usuario', user.id])
 
       showSuccess('Dados atualizados com sucesso!')
@@ -182,6 +227,7 @@ function PerfilContent() {
       setUser(userData)
 
       // Invalidar queries para atualizar em tempo real
+      queryClient.invalidateQueries(['perfil-completo', user.id])
       queryClient.invalidateQueries(['perfil-usuario', user.id])
       queryClient.invalidateQueries(['licitacoes']) // Recarregar licitações com novos filtros
 

@@ -41,16 +41,27 @@ serve(async (req) => {
     const messages = [
       {
         role: "system",
-        content: `Você é o "Assistente Focus", especializado em licitações públicas brasileiras. Sempre responda em português (PT-BR), com tom cordial e natural.
+        content: `Você é o "Assistente Sistema Licitação", um especialista em licitações públicas brasileiras. Você tem acesso COMPLETO ao conteúdo do documento PDF do edital e pode conversar LITERALMENTE sobre qualquer parte dele.
 
-ESTILO:
-- Responda em 1 parágrafo curto (máx. 4 frases) e direto ao ponto.
-- Evite títulos, listas e markdown; use texto corrido.
-- Para saudações, cumprimente de forma calorosa e convide para perguntar.
-- Para dúvidas sobre o documento, use o Document QnA e mencione, de forma simples, de onde tirou a informação.
-- Para dúvidas gerais, explique com precisão e linguagem acessível.
-- Se não achar algo no documento, diga que não encontrou e ofereça ajuda para buscar.
-- Nunca responda em inglês.`
+SUA FUNÇÃO:
+- Você pode ler, analisar e responder perguntas sobre QUALQUER parte do documento PDF fornecido
+- Você tem acesso ao texto completo do documento através do Document QnA da Mistral
+- Responda como se você tivesse lido o documento inteiro e pudesse citar informações específicas
+
+ESTILO DE RESPOSTA:
+- Sempre responda em português (PT-BR), com tom cordial, natural e conversacional
+- Responda em 1-2 parágrafos curtos, direto ao ponto
+- Evite títulos, listas numeradas e markdown; use texto corrido e natural
+- Cite informações específicas do documento quando relevante (ex: "Segundo o edital, na página X...")
+- Se não encontrar algo no documento, seja honesto e diga que não encontrou essa informação específica
+- Para perguntas gerais sobre licitações, explique com precisão e linguagem acessível
+- Seja útil, prestativo e sempre convide para mais perguntas
+
+IMPORTANTE:
+- Você está conversando LITERALMENTE com o documento - use o Document QnA para buscar informações precisas
+- Nunca invente informações que não estão no documento
+- Se a pergunta for sobre algo que não está no documento, diga claramente
+- Nunca responda em inglês`
       },
       ...historico.map((msg: any) => ({
         role: msg.role,
@@ -73,20 +84,59 @@ ESTILO:
 
     console.log('📤 Enviando para Mistral API...')
 
-    // 3. Chamar Mistral API
-    const mistralResponse = await fetch('https://api.mistral.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${mistralApiKey}`
-      },
-      body: JSON.stringify({
-        model: 'mistral-small-latest',
-        messages: messages,
-        temperature: 0.5, // Temperatura moderada = mais natural e fluido
-        max_tokens: 1000
-      })
-    })
+    // 3. Chamar Mistral API com timeout e retry
+    let mistralResponse
+    let retries = 2
+    let lastError
+    
+    while (retries > 0) {
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 60000) // 60s timeout
+        
+        mistralResponse = await fetch('https://api.mistral.ai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${mistralApiKey}`
+          },
+          body: JSON.stringify({
+            model: 'mistral-small-latest',
+            messages: messages,
+            temperature: 0.5,
+            max_tokens: 2000 // Aumentado para respostas mais completas
+          }),
+          signal: controller.signal
+        })
+        
+        clearTimeout(timeoutId)
+        
+        if (mistralResponse.ok) {
+          break
+        } else if (mistralResponse.status >= 500 && retries > 1) {
+          retries--
+          await new Promise(resolve => setTimeout(resolve, 3000))
+          continue
+        } else {
+          const errorText = await mistralResponse.text()
+          throw new Error(`Erro Mistral API: ${mistralResponse.status} - ${errorText}`)
+        }
+      } catch (error) {
+        lastError = error
+        if (error.name === 'AbortError') {
+          throw new Error('Timeout ao processar pergunta (60s)')
+        }
+        retries--
+        if (retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, 3000))
+        }
+      }
+    }
+    
+    if (!mistralResponse || !mistralResponse.ok) {
+      const errorText = lastError?.message || 'Erro desconhecido'
+      throw new Error(errorText)
+    }
 
     if (!mistralResponse.ok) {
       const errorText = await mistralResponse.text()

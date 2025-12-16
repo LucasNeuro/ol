@@ -29,9 +29,7 @@ import {
   Eye,
   Star,
   AlertCircle,
-  MessageSquare,
   Loader2,
-  Brain,
   CheckCircle2,
   Plus,
   Edit,
@@ -46,22 +44,20 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion"
+import * as AccordionPrimitive from "@radix-ui/react-accordion"
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
-import { ChatDocumento } from '@/components/ChatDocumento'
 import { VisualizadorDocumento } from '@/components/VisualizadorDocumento'
 import { useNotifications } from '@/hooks/useNotifications'
 import { obterNomeAtividadeCnae, obterListaCompletaCnaes, resumirNomeAtividade } from '@/lib/cnae'
-import { useFiltrosPermanentes } from '@/hooks/useFiltrosPermanentes'
-import { FiltrosPermanentes } from '@/components/FiltrosPermanentes'
 import { 
   extrairPalavrasChaveDosSetores, 
-  correspondeAtividadesHibrido,
-  obterObjetoCompleto,
-  registrarMetricaIA
+  correspondeAtividades,
+  obterObjetoCompleto
 } from '@/lib/filtroSemantico'
 import { useFiltroContext } from '@/contexts/FiltroContext'
+import { isZipFile, descompactarZip, limparBlobUrls } from '@/lib/zipService'
 
 // Função auxiliar para normalizar código CNAE (remover hífens e barras)
 function normalizarCodigoCnae(codigo) {
@@ -76,12 +72,10 @@ function LicitacoesContent() {
   const [cardsExpandidos, setCardsExpandidos] = useState(() => new Set())
   const [favoritos, setFavoritos] = useState(() => new Set())
   const [filtrosSidebarAberta, setFiltrosSidebarAberta] = useState(true)
-  const [chatAberto, setChatAberto] = useState(false)
-  const [documentoSelecionado, setDocumentoSelecionado] = useState(null)
   const [visualizadorAberto, setVisualizadorAberto] = useState(false)
   const [documentoVisualizacao, setDocumentoVisualizacao] = useState(null)
   const [limitePagina, setLimitePagina] = useState(50)
-  const [resumosIA, setResumosIA] = useState({}) // { licitacaoId: { loading, resumo, erro } }
+  const [arquivosZipDescompactados, setArquivosZipDescompactados] = useState({}) // { anexoKey: { loading, arquivos, erro } }
   // Estados para processamento do filtro (compartilhado via contexto)
   const { 
     processandoFiltro, 
@@ -101,9 +95,6 @@ function LicitacoesContent() {
     })
     return `filtro_semantico_${user?.id}_${perfilHash}`
   }
-  // Hook para filtros permanentes
-  const { aplicarFiltrosPermanentes, filtrosAtivos: filtrosPermanentesAtivos, filtrosPermanentes } = useFiltrosPermanentes()
-  
   // Hook para notificações customizadas
   const { success, error: showError, warning, confirm } = useNotifications()
 
@@ -118,8 +109,8 @@ function LicitacoesContent() {
         .from('profiles')
         .select('setores_atividades, estados_interesse, sinonimos_personalizados')
         .eq('id', user.id)
-        .maybeSingle()
-      
+          .maybeSingle()
+
       // Se erro for coluna não existe (42703), tentar sem sinônimos personalizados
       if (error && error.code === '42703') {
         console.log('ℹ️ Coluna sinonimos_personalizados não existe, buscando sem ela...')
@@ -153,10 +144,79 @@ function LicitacoesContent() {
   // API Key do Mistral (opcional - pode estar em variável de ambiente)
   const mistralApiKey = import.meta.env.VITE_MISTRAL_API_KEY || null
 
+  // Buscar sinônimos do banco associados aos setores do usuário
+  const { data: sinonimosBanco } = useQuery({
+    queryKey: ['sinonimos-banco', perfilUsuario?.setores_atividades],
+    queryFn: async () => {
+      if (!perfilUsuario?.setores_atividades || perfilUsuario.setores_atividades.length === 0) {
+        return {}
+      }
+
+      // Extrair IDs dos setores do perfil
+      const setoresIds = perfilUsuario.setores_atividades
+        .map(s => s.setor_id || s.id)
+        .filter(Boolean)
+
+      if (setoresIds.length === 0) {
+        return {}
+      }
+
+      // Buscar sinônimos associados aos setores via setores_sinonimos
+      const { data: setoresSinonimos, error } = await supabase
+        .from('setores_sinonimos')
+        .select(`
+          sinonimo_id,
+          sinonimos (
+            id,
+            palavra_base,
+            sinonimo,
+            peso
+          )
+        `)
+        .in('setor_id', setoresIds)
+        .eq('ativo', true)
+
+      if (error) {
+        console.warn('⚠️ Erro ao buscar sinônimos do banco:', error)
+        return {}
+      }
+
+      // Formatar sinônimos no formato esperado: { palavra_base: [{ sinonimo, peso }] }
+      const sinonimosFormatados = {}
+      
+      if (setoresSinonimos) {
+        setoresSinonimos.forEach(ss => {
+          if (ss.sinonimos && ss.sinonimos.palavra_base) {
+            const palavraBase = ss.sinonimos.palavra_base.toLowerCase()
+            if (!sinonimosFormatados[palavraBase]) {
+              sinonimosFormatados[palavraBase] = []
+            }
+            // Adicionar sinônimo se ainda não estiver na lista
+            const jaExiste = sinonimosFormatados[palavraBase].some(
+              s => s.sinonimo === ss.sinonimos.sinonimo
+            )
+            if (!jaExiste) {
+              sinonimosFormatados[palavraBase].push({
+                sinonimo: ss.sinonimos.sinonimo.toLowerCase(),
+                peso: ss.sinonimos.peso || 10
+              })
+            }
+          }
+        })
+      }
+
+      console.log(`✅ [Sinônimos] Carregados ${Object.keys(sinonimosFormatados).length} palavras-base com sinônimos do banco`)
+      return sinonimosFormatados
+    },
+    enabled: !!perfilUsuario?.setores_atividades && perfilUsuario.setores_atividades.length > 0,
+    staleTime: 1000 * 60 * 60, // Cache por 1 hora
+  })
+
   // Estados dos Filtros
   const [filtros, setFiltros] = useState({
     // Essenciais
     buscaObjeto: '',
+    buscaInvertida: false, // Toggle para inverter busca (mostrar o que NÃO contém)
     uf: '',
     modalidade: '',
     dataPublicacaoInicio: '',
@@ -278,7 +338,7 @@ function LicitacoesContent() {
   })
 
   // Buscar licitações do banco com TODOS os filtros (usar filtrosDebounced para campos de texto)
-  const { data: licitacoes = [], isLoading, error } = useQuery({
+  const { data: licitacoes = [], isLoading, error, refetch: refetchLicitacoes } = useQuery({
     queryKey: ['licitacoes', filtrosDebounced, dataFiltro, limitePagina, perfilUsuario?.estados_interesse, perfilUsuario?.setores_atividades],
     queryFn: async () => {
       let query = supabase
@@ -301,10 +361,13 @@ function LicitacoesContent() {
 
       // FILTROS ESSENCIAIS
       
-      // Busca por Objeto (usar filtrosDebounced para campos de texto)
+      // Busca Rápida - busca em múltiplos campos (objeto, órgão, número controle, modalidade)
+      // A busca será aplicada também no lado do cliente para garantir busca completa
       if (filtrosDebounced.buscaObjeto) {
-        query = query.ilike('objeto_compra', `%${filtrosDebounced.buscaObjeto}%`)
-  }
+        const termoBusca = filtrosDebounced.buscaObjeto.trim()
+        // Buscar primeiro no objeto (campo principal), busca completa será feita no cliente
+        query = query.ilike('objeto_compra', `%${termoBusca}%`)
+      }
 
       // UF
       if (filtrosDebounced.uf) {
@@ -392,19 +455,30 @@ function LicitacoesContent() {
         (perfilUsuario.setores_atividades && perfilUsuario.setores_atividades.length > 0)
       )
 
-      // Aplicar limite: 
-      // - 50 sem filtros e sem perfil
-      // - 2000 com perfil configurado (para ter mais dados para filtrar)
-      // - 500 com filtros manuais
-      if (temPerfilConfigurado && !temFiltrosAtivos) {
-        // Com perfil, buscar mais para ter dados suficientes após filtrar
-        query = query.limit(2000)
-      } else if (!temFiltrosAtivos) {
-        query = query.limit(limitePagina)
-      } else {
-        // Com filtros manuais, limitar a 500 para não sobrecarregar
-        query = query.limit(500)
+      // BUSCAR TODAS AS LICITAÇÕES DISPONÍVEIS NA TABELA
+      // Não limitar por data - o usuário pode usar filtros de data se quiser
+      // Apenas aplicar limite máximo de registros para evitar sobrecarga
+
+      // Se tem estados configurados no perfil, aplicar filtro no banco (muito mais eficiente)
+      if (perfilUsuario?.estados_interesse && perfilUsuario.estados_interesse.length > 0) {
+        const estadosInteresse = perfilUsuario.estados_interesse
+        const temNacional = estadosInteresse.some(e => 
+          typeof e === 'string' ? e === 'Nacional' : e === 'Nacional'
+        )
+        
+        if (!temNacional && !filtrosDebounced.uf) {
+          // Filtrar por estados no banco (muito mais rápido que filtrar no cliente)
+          query = query.in('uf_sigla', estadosInteresse.map(e => 
+            typeof e === 'string' ? e.toUpperCase() : e
+          ))
+          console.log(`🗺️ [Query] Filtrando por estados no banco:`, estadosInteresse)
+        }
       }
+
+      // Aplicar limite máximo de 50.000 registros para evitar sobrecarga
+      // Isso permite buscar praticamente todas as licitações disponíveis
+      // O filtro semântico será aplicado depois nos resultados
+      query = query.limit(50000)
 
       const { data, error } = await query
 
@@ -414,11 +488,23 @@ function LicitacoesContent() {
     }
   })
 
-  // Estado para licitações filtradas (precisa ser assíncrono para IA)
+  // Estado para licitações filtradas (filtro semântico síncrono)
   const [licitacoesFiltradas, setLicitacoesFiltradas] = useState([])
   
   // Estado para desativar filtro semântico e mostrar todas as licitações
   const [mostrarTodasLicitacoes, setMostrarTodasLicitacoes] = useState(false)
+  
+  // Limpar blob URLs quando cards fecharem ou componente desmontar
+  useEffect(() => {
+    return () => {
+      // Limpar todos os blob URLs quando componente desmontar
+      Object.values(arquivosZipDescompactados).forEach(zipData => {
+        if (zipData?.arquivos && Array.isArray(zipData.arquivos)) {
+          limparBlobUrls(zipData.arquivos)
+        }
+      })
+    }
+  }, [arquivosZipDescompactados])
   
   // Filtrar por status do edital, perfil da empresa e exclusões (assíncrono para IA)
   useEffect(() => {
@@ -476,8 +562,16 @@ function LicitacoesContent() {
       const estadosInteresse = perfilUsuario.estados_interesse || []
       const setoresAtividades = perfilUsuario.setores_atividades || []
 
-      // Filtrar por estados de interesse
-      if (estadosInteresse.length > 0) {
+      // Filtrar por estados de interesse (apenas se não foi filtrado no banco)
+      // Se foi filtrado no banco, pular esta etapa para melhor performance
+      const foiFiltradoEstadoNoBanco = perfilUsuario?.estados_interesse && 
+                                       perfilUsuario.estados_interesse.length > 0 &&
+                                       !perfilUsuario.estados_interesse.some(e => 
+                                         typeof e === 'string' ? e === 'Nacional' : e === 'Nacional'
+                                       ) &&
+                                       !filtrosDebounced.uf
+      
+      if (!foiFiltradoEstadoNoBanco && estadosInteresse.length > 0) {
         // Se tem "Nacional", não filtrar por estado
         const temNacional = estadosInteresse.some(e => 
           typeof e === 'string' ? e === 'Nacional' : e === 'Nacional'
@@ -498,6 +592,10 @@ function LicitacoesContent() {
           setProgressoPercentual(40)
           setMensagemProgresso(`${resultado.length} licitações encontradas nos estados selecionados`)
         }
+      } else if (foiFiltradoEstadoNoBanco) {
+        // Já foi filtrado no banco, apenas atualizar progresso
+        setProgressoPercentual(40)
+        setMensagemProgresso(`${resultado.length} licitações encontradas nos estados selecionados`)
       }
 
       // FILTRO OBRIGATÓRIO E RESTRITIVO: Se tem setores cadastrados, DEVE filtrar rigorosamente
@@ -505,9 +603,16 @@ function LicitacoesContent() {
         // Obter sinônimos personalizados do perfil (se existirem) - apenas do profile
         const sinonimosPersonalizados = perfilUsuario?.sinonimos_personalizados || {}
         
-        // Extrair palavras-chave dos setores (SEM usar tabelas de sinônimos)
+        // Obter sinônimos do banco de dados (associados aos setores via setores_sinonimos)
+        const sinonimosBancoFormatados = sinonimosBanco || {}
+        
+        // Extrair palavras-chave dos setores (AGORA COM sinônimos do banco)
         // Retorna { principais, secundarias, todas }
-        const palavrasChave = extrairPalavrasChaveDosSetores(setoresAtividades, sinonimosPersonalizados)
+        const palavrasChave = extrairPalavrasChaveDosSetores(
+          setoresAtividades, 
+          sinonimosPersonalizados,
+          sinonimosBancoFormatados
+        )
         
         // REGRA RESTRITIVA: Se tem setores, DEVE ter palavras-chave válidas
         if (!palavrasChave.todas || palavrasChave.todas.length === 0) {
@@ -522,51 +627,56 @@ function LicitacoesContent() {
         console.log(`🔍 [Filtro] Palavras principais (${palavrasChave.principais.length}):`, palavrasChave.principais.slice(0, 10))
         console.log(`🔍 [Filtro] Palavras secundárias (${palavrasChave.secundarias.length}):`, palavrasChave.secundarias.slice(0, 10))
         console.log(`🔍 [Filtro] Setores cadastrados:`, setoresAtividades.map(s => s.setor).join(', '))
-        console.log(`🔍 [Filtro] IA configurada:`, mistralApiKey ? 'Sim' : 'Não (usando filtro semântico apenas)')
+        console.log(`🔍 [Filtro] Usando APENAS filtro semântico (sem IA)`)
         
         const antesFiltro = resultado.length
         
         setProgressoPercentual(50)
         setMensagemProgresso(`Processando ${antesFiltro} licitações...`)
         
-        // Filtrar usando IA (se disponível) ou filtro semântico
-        // Processar em lotes para não sobrecarregar a API
-        const TAMANHO_LOTE = mistralApiKey ? 10 : 50 // Se tem IA, processar em lotes menores
+        // Filtrar usando APENAS filtro semântico (sem IA)
+        // Processar em lotes de forma ASSÍNCRONA para não bloquear a UI
+        const TAMANHO_LOTE = 50 // Lotes menores para melhor responsividade
         const resultadosFiltrados = []
         const totalLotes = Math.ceil(resultado.length / TAMANHO_LOTE)
         
-        for (let i = 0; i < resultado.length; i += TAMANHO_LOTE) {
-          const lote = resultado.slice(i, i + TAMANHO_LOTE)
-          const loteAtual = Math.floor(i / TAMANHO_LOTE) + 1
+        // Processar lotes de forma assíncrona para não bloquear navegação
+        await new Promise((resolve) => {
+          let indiceAtual = 0
           
-          // Atualizar progresso baseado no lote atual (50% a 90%)
-          const progressoLote = 50 + Math.floor((loteAtual / totalLotes) * 40)
-          setProgressoPercentual(progressoLote)
-          
-          // Atualizar mensagem de progresso
-          setMensagemProgresso(
-            `Processando: ${loteAtual}/${totalLotes} lotes (${i + lote.length}/${antesFiltro} licitações)...`
-          )
-          
-          const resultadosLote = await Promise.all(
-            lote.map(async (licitacao) => {
-              // Usar filtro híbrido: semântico + IA
-              const corresponde = await correspondeAtividadesHibrido(
+          const processarProximoLote = () => {
+            // Verificar se ainda há lotes para processar
+            if (indiceAtual >= resultado.length) {
+              resolve()
+              return
+            }
+            
+            const lote = resultado.slice(indiceAtual, indiceAtual + TAMANHO_LOTE)
+            const loteAtual = Math.floor(indiceAtual / TAMANHO_LOTE) + 1
+            
+            // Atualizar progresso baseado no lote atual (50% a 90%)
+            const progressoLote = 50 + Math.floor((loteAtual / totalLotes) * 40)
+            setProgressoPercentual(progressoLote)
+            
+            // Atualizar mensagem de progresso
+            setMensagemProgresso(
+              `Processando: ${loteAtual}/${totalLotes} lotes (${Math.min(indiceAtual + lote.length, antesFiltro)}/${antesFiltro} licitações)...`
+            )
+            
+            // Processar lote atual
+            const resultadosLote = lote.map((licitacao) => {
+              // Usar APENAS filtro semântico (sem IA)
+              // Mais rápido e eficiente, sem necessidade de API externa
+              const corresponde = correspondeAtividades(
                 licitacao,
                 palavrasChave,
-                setoresAtividades, // Passar setores completos para IA
-                mistralApiKey,
-                {
-                  usarIAParaTodas: !!mistralApiKey, // Se tem API key, usar IA para todas
-                  usarIAParaDuvidosos: false // Já estamos usando para todas se tiver API key
-                }
+                sinonimosPersonalizados, // Sinônimos personalizados
+                sinonimosBancoFormatados, // Sinônimos do banco (AGORA USANDO!)
+                setoresAtividades // Setores para contexto
               )
               
-              // Registrar métrica
-              registrarMetricaIA('filtro_semantico', { mostrou: corresponde })
-              
-              // Log detalhado para debug
-              if (!corresponde && licitacao.objeto_compra) {
+              // Log detalhado para debug (apenas 1% para não poluir console)
+              if (!corresponde && licitacao.objeto_compra && Math.random() < 0.01) {
                 console.log(`🚫 [Filtro] Licitação filtrada:`, {
                   objeto: licitacao.objeto_compra.substring(0, 100),
                   palavrasPrincipais: palavrasChave.principais.slice(0, 3)
@@ -574,11 +684,21 @@ function LicitacoesContent() {
               }
               
               return corresponde ? licitacao : null
-            })
-          )
+            }).filter(Boolean)
+            
+            resultadosFiltrados.push(...resultadosLote)
+            
+            // Avançar para o próximo lote
+            indiceAtual += TAMANHO_LOTE
+            
+            // Usar setTimeout para permitir que o navegador processe outros eventos
+            // Isso evita travar a navegação durante o processamento
+            setTimeout(processarProximoLote, 0)
+          }
           
-          resultadosFiltrados.push(...resultadosLote.filter(Boolean))
-        }
+          // Iniciar processamento
+          processarProximoLote()
+        })
         
         resultado = resultadosFiltrados
         
@@ -614,6 +734,56 @@ function LicitacoesContent() {
       })
     }
 
+    // Busca Rápida - busca em múltiplos campos (objeto, órgão, número controle, modalidade)
+    // Suporta múltiplas palavras separadas por vírgula
+    // Aplicar também no lado do cliente para garantir busca completa
+    if (filtros.buscaObjeto && filtros.buscaObjeto.trim()) {
+      // Dividir por vírgula e limpar cada termo
+      const termosBusca = filtros.buscaObjeto
+        .split(',')
+        .map(termo => termo.trim().toLowerCase())
+        .filter(termo => termo.length > 0)
+      
+      if (termosBusca.length === 0) return resultado
+      
+      if (filtros.buscaInvertida) {
+        // Modo EXCLUIR: mostrar apenas o que NÃO contém NENHUMA das palavras
+        resultado = resultado.filter(licitacao => {
+          const objeto = (licitacao.objeto_compra || '').toLowerCase()
+          const orgao = (licitacao.orgao_razao_social || '').toLowerCase()
+          const numeroControle = (licitacao.numero_controle_pncp || '').toLowerCase()
+          const modalidade = (licitacao.modalidade_nome || '').toLowerCase()
+          
+          // Verificar se contém ALGUMA das palavras em QUALQUER campo
+          const contemAlgumaPalavra = termosBusca.some(termo => 
+            objeto.includes(termo) || 
+            orgao.includes(termo) || 
+            numeroControle.includes(termo) || 
+            modalidade.includes(termo)
+          )
+          
+          // Retornar apenas se NÃO contém nenhuma palavra
+          return !contemAlgumaPalavra
+        })
+      } else {
+        // Modo INCLUIR: mostrar apenas o que contém PELO MENOS UMA palavra
+        resultado = resultado.filter(licitacao => {
+          const objeto = (licitacao.objeto_compra || '').toLowerCase()
+          const orgao = (licitacao.orgao_razao_social || '').toLowerCase()
+          const numeroControle = (licitacao.numero_controle_pncp || '').toLowerCase()
+          const modalidade = (licitacao.modalidade_nome || '').toLowerCase()
+          
+          // Verificar se contém PELO MENOS UMA das palavras em QUALQUER campo
+          return termosBusca.some(termo => 
+            objeto.includes(termo) || 
+            orgao.includes(termo) || 
+            numeroControle.includes(termo) || 
+            modalidade.includes(termo)
+          )
+        })
+      }
+    }
+
     // Filtros de exclusão removidos temporariamente - será repensado
 
     // Aplicar filtros finais
@@ -621,17 +791,60 @@ function LicitacoesContent() {
       setMensagemProgresso('Aplicando filtros finais...')
     }
 
-    // Salvar no cache
+    // Salvar no cache (com tratamento de quota)
     const cacheKeyFinal = getCacheKey()
     if (cacheKeyFinal) {
       try {
+        // Limpar cache antigo se necessário (manter apenas últimos 3)
+        try {
+          const cacheKeys = Object.keys(localStorage).filter(key => key.startsWith('filtro_semantico_'))
+          if (cacheKeys.length > 3) {
+            // Ordenar por timestamp e remover os mais antigos
+            const caches = cacheKeys.map(key => {
+              try {
+                const data = JSON.parse(localStorage.getItem(key))
+                return { key, timestamp: data.timestamp || 0 }
+              } catch {
+                return { key, timestamp: 0 }
+              }
+            }).sort((a, b) => a.timestamp - b.timestamp)
+            
+            // Remover todos exceto os 3 mais recentes
+            caches.slice(0, -3).forEach(({ key }) => {
+              localStorage.removeItem(key)
+            })
+            console.log(`✅ [Cache] ${caches.length - 3} caches antigos removidos`)
+          }
+        } catch (e) {
+          console.warn('⚠️ Erro ao limpar cache antigo:', e)
+        }
+        
         localStorage.setItem(cacheKeyFinal, JSON.stringify({
           resultado,
           timestamp: Date.now()
         }))
         console.log('✅ [Cache] Resultado salvo no cache')
       } catch (e) {
-        console.warn('⚠️ Erro ao salvar cache:', e)
+        if (e.name === 'QuotaExceededError' || e.message?.includes('quota')) {
+          // Se ainda assim exceder, limpar todo o cache de filtros
+          console.warn('⚠️ Quota excedida, limpando todo o cache de filtros...')
+          try {
+            const cacheKeys = Object.keys(localStorage).filter(key => key.startsWith('filtro_semantico_'))
+            cacheKeys.forEach(key => localStorage.removeItem(key))
+            console.log(`✅ [Cache] ${cacheKeys.length} caches removidos`)
+            
+            // Tentar salvar novamente após limpar
+            localStorage.setItem(cacheKeyFinal, JSON.stringify({
+              resultado,
+              timestamp: Date.now()
+            }))
+          } catch (e2) {
+            console.error('❌ Erro ao salvar cache mesmo após limpar:', e2)
+            // Se ainda falhar, não salvar cache (aplicação continua funcionando)
+          }
+        } else {
+          console.warn('⚠️ Erro ao salvar cache:', e)
+        }
       }
     }
 
@@ -652,15 +865,30 @@ function LicitacoesContent() {
   }
     
     aplicarFiltros()
-  }, [licitacoes, filtros.statusEdital, perfilUsuario, mistralApiKey, mostrarTodasLicitacoes])
+  }, [
+    licitacoes, 
+    filtros.statusEdital, 
+    filtros.buscaObjeto, 
+    filtros.buscaInvertida,
+    filtros.uf,
+    filtros.modalidade,
+    filtros.dataPublicacaoInicio,
+    filtros.dataPublicacaoFim,
+    filtros.valorMin,
+    filtros.valorMax,
+    filtros.orgao,
+    filtros.numeroEdital,
+    filtros.comDocumentos,
+    filtros.comItens,
+    filtros.comValor,
+    perfilUsuario, 
+    mostrarTodasLicitacoes,
+    sinonimosBanco,
+    dataFiltro
+  ])
 
-  // Aplicar filtros permanentes - SEMPRE APLICAR PRIMEIRO
-  const { licitacoesFiltradas: licitacoesAposPermanentes, totalExcluido, totalIncluido } = useMemo(() => {
-    return aplicarFiltrosPermanentes(licitacoesFiltradas)
-  }, [licitacoesFiltradas, filtrosPermanentesAtivos, aplicarFiltrosPermanentes])
-
-  // Licitações finais (após filtros permanentes)
-  const licitacoesFinais = licitacoesAposPermanentes
+  // Licitações finais (sem filtros permanentes)
+  const licitacoesFinais = licitacoesFiltradas
 
   // Log para debug do filtro automático baseado no perfil (após todas as declarações)
   useEffect(() => {
@@ -673,7 +901,7 @@ function LicitacoesContent() {
           setores: setores.length,
           totalLicitacoes: licitacoes.length,
           aposFiltroPerfil: licitacoesFiltradas.length,
-          aposFiltrosPermanentes: licitacoesFinais.length
+          licitacoesFinais: licitacoesFinais.length
         })
       }
     }
@@ -730,10 +958,10 @@ function LicitacoesContent() {
       // Verificar se o usuário existe na tabela profiles
       const { data: usuarioExiste, error: erroUsuario } = await supabase
         .from('profiles')
-        .select('id')
+          .select('id')
         .eq('id', user.id)
-        .maybeSingle()
-
+          .maybeSingle()
+        
       if (erroUsuario || !usuarioExiste) {
         console.error('❌ Usuário não encontrado na tabela profiles:', erroUsuario)
         showError('Sua sessão expirou. Por favor, faça login novamente.')
@@ -765,11 +993,11 @@ function LicitacoesContent() {
         // Verificar se já existe (evitar 409)
         console.log('Verificando se já existe...')
         const { data: existente } = await supabase
-          .from('licitacoes_favoritas')
-          .select('id')
-          .eq('usuario_id', user.id)
+        .from('licitacoes_favoritas')
+        .select('id')
+        .eq('usuario_id', user.id)
           .eq('licitacao_id', licitacao.id)
-          .maybeSingle()
+        .maybeSingle()
 
         if (existente) {
           console.log('Já existe nos favoritos')
@@ -846,129 +1074,8 @@ function LicitacoesContent() {
       return newSet
     })
     
-    // Se está expandindo E não tem resumo ainda, gerar
-    if (!estaExpandido && !resumosIA[licitacaoId]) {
-      gerarResumo(licitacaoId, licitacao)
-    }
   }
 
-  const gerarResumo = async (licitacaoId, licitacao) => {
-    // Marcar como loading
-    setResumosIA(prev => ({
-      ...prev,
-      [licitacaoId]: { loading: true, resumo: null, erro: null }
-    }))
-
-    try {
-      const mistralApiKey = import.meta.env.VITE_MISTRAL_API_KEY
-
-      if (!mistralApiKey) {
-        throw new Error('Chave da API Mistral não configurada')
-      }
-
-      // Preparar contexto da licitação
-      const contextoLicitacao = `
-EDITAL: ${licitacao.numero_controle_pncp}
-OBJETO: ${licitacao.objeto_compra}
-ÓRGÃO: ${licitacao.orgao_razao_social} (${licitacao.uf_sigla})
-MODALIDADE: ${licitacao.modalidade_nome}
-VALOR: R$ ${licitacao.valor_total_estimado?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || 'Não informado'}
-PUBLICAÇÃO: ${formatarData(licitacao.data_publicacao_pncp)}
-${licitacao.dados_completos?.dataAberturaProposta ? `ABERTURA: ${formatarData(licitacao.dados_completos.dataAberturaProposta)}` : ''}
-${licitacao.dados_completos?.dataEncerramentoProposta ? `ENCERRAMENTO: ${formatarData(licitacao.dados_completos.dataEncerramentoProposta)}` : ''}
-ITENS: ${licitacao.itens?.length || 0}
-DOCUMENTOS: ${licitacao.anexos?.length || 0}
-      `.trim()
-
-      // Preparar contexto da empresa logada
-      let cnaesSecundarios = []
-      try {
-        if (user?.cnaes_secundarios) {
-          cnaesSecundarios = Array.isArray(user.cnaes_secundarios) 
-            ? user.cnaes_secundarios 
-            : JSON.parse(user.cnaes_secundarios)
-        }
-      } catch (e) {
-        console.warn('Erro ao parsear CNAEs:', e)
-        cnaesSecundarios = []
-      }
-      
-      const perfilEmpresa = user ? `
-EMPRESA LOGADA:
-Razão Social: ${user.razao_social || 'Não informado'}
-CNPJ: ${user.cnpj || 'Não informado'}
-CNAE Principal: ${user.cnae_principal || 'Não informado'}
-CNAEs Secundários: ${cnaesSecundarios.length > 0 ? cnaesSecundarios.join(', ') : 'Nenhum'}
-Porte: ${user.porte_empresa || 'Não informado'}
-UF: ${user.uf || 'Não informado'}
-      `.trim() : ''
-
-      const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${mistralApiKey}`
-        },
-        body: JSON.stringify({
-          model: 'mistral-small-latest',
-          messages: [
-            {
-              role: 'system',
-              content: 'Você é um assistente especializado em análise de licitações públicas brasileiras. Seja objetivo, técnico e preciso. NUNCA use emojis.'
-            },
-            {
-              role: 'user',
-              content: `Analise esta licitação e crie um resumo executivo profissional em UM ÚNICO PARÁGRAFO (máximo 120 palavras).
-
-ESTRUTURA OBRIGATÓRIA:
-1. Inicie com "Edital [NÚMERO] - [MODALIDADE]"
-2. Descreva o objeto resumidamente
-3. Informe valor e prazo de encerramento
-4. Avalie a compatibilidade da empresa com base nos CNAEs (use ALTA/MÉDIA/BAIXA em NEGRITO)
-5. Finalize com recomendação clara (PARTICIPAR ou NÃO PARTICIPAR em NEGRITO)
-
-${contextoLicitacao}
-
-${perfilEmpresa}
-
-REGRAS CRÍTICAS:
-- UM ÚNICO PARÁGRAFO, texto corrido
-- Use **negrito** para destacar: COMPATIBILIDADE, VALOR, PRAZO e RECOMENDAÇÃO
-- SEM emojis, SEM quebras de linha, SEM listas
-- Linguagem técnica e objetiva
-- Foque na análise de aderência aos CNAEs da empresa`
-            }
-          ],
-          temperature: 0.2,
-          max_tokens: 300
-        })
-      })
-
-      if (!response.ok) {
-        throw new Error(`Erro na API: ${response.status}`)
-      }
-
-      const data = await response.json()
-      const resumo = data.choices[0].message.content
-
-      // Salvar resumo
-      setResumosIA(prev => ({
-        ...prev,
-        [licitacaoId]: { loading: false, resumo, erro: null }
-      }))
-
-    } catch (error) {
-      console.error('❌ Erro ao gerar resumo:', error)
-      setResumosIA(prev => ({
-        ...prev,
-        [licitacaoId]: { 
-          loading: false, 
-          resumo: null, 
-          erro: error.message 
-        }
-      }))
-    }
-  }
 
   // Obter CNAEs da empresa logada
   const cnaesEmpresa = useMemo(() => {
@@ -1055,8 +1162,10 @@ REGRAS CRÍTICAS:
 
 
   const limparFiltros = () => {
+    // Resetar todos os filtros
     setFiltros({
       buscaObjeto: '',
+      buscaInvertida: false,
       uf: '',
       modalidade: '',
       statusEdital: '',
@@ -1079,13 +1188,46 @@ REGRAS CRÍTICAS:
     })
     setDataFiltro('')
     setMostrarTodasLicitacoes(false) // Desativar modo "mostrar todas"
+    
+    // Limpar cache de filtros
+    try {
+      const cacheKeys = Object.keys(localStorage).filter(key => key.startsWith('filtro_semantico_'))
+      cacheKeys.forEach(key => localStorage.removeItem(key))
+      console.log('✅ [Limpar Filtros] Cache limpo')
+    } catch (e) {
+      console.warn('⚠️ Erro ao limpar cache:', e)
+    }
+    
+    // Invalidar query para recarregar dados
+    queryClient.invalidateQueries(['licitacoes'])
+    queryClient.invalidateQueries(['perfil-usuario'])
+    
+    // Resetar estado de licitações filtradas para forçar recálculo
+    setLicitacoesFiltradas([])
+    
+    // Forçar refetch dos dados para garantir que sejam recarregados
+    setTimeout(() => {
+      refetchLicitacoes()
+    }, 100)
+    
     window.history.pushState({}, '', '/licitacoes')
+    console.log('✅ [Limpar Filtros] Filtros resetados e dados recarregados')
   }
 
-  const aplicarFiltros = () => {
+  const handleAplicarFiltros = () => {
     // Desativar modo "mostrar todas" quando aplicar filtros
     setMostrarTodasLicitacoes(false)
-    queryClient.invalidateQueries(['licitacoes'])
+    
+    // Forçar atualização imediata dos filtros debounced para aplicar filtros na query
+    // Isso garante que os filtros sejam aplicados imediatamente sem esperar o debounce
+    setFiltrosDebounced(filtros)
+    
+    // Forçar refetch imediato da query com os novos filtros
+    setTimeout(() => {
+      queryClient.invalidateQueries(['licitacoes'])
+      refetchLicitacoes()
+    }, 100)
+    
     console.log('🔍 Filtros aplicados:', filtros)
   }
 
@@ -1171,13 +1313,13 @@ REGRAS CRÍTICAS:
                   Limpar
                 </Button>
                 <Button
-                  onClick={aplicarFiltros}
+                  onClick={handleAplicarFiltros}
                   className="flex-1 bg-orange-500 hover:bg-orange-600"
                 >
                   <Filter className="w-4 h-4 mr-2" />
                   Aplicar
                 </Button>
-              </div>
+            </div>
               {/* Toggle Mostrar Todas */}
               <div className="flex items-center justify-between p-3 rounded-lg border border-gray-200 bg-gray-50">
                 <div className="flex items-center gap-2">
@@ -1185,7 +1327,7 @@ REGRAS CRÍTICAS:
                   <Label htmlFor="mostrar-todas" className="text-sm font-medium text-gray-700 cursor-pointer">
                     Mostrar Todas (Sem Filtro)
                   </Label>
-                </div>
+          </div>
                 <Switch
                   id="mostrar-todas"
                   checked={mostrarTodasLicitacoes}
@@ -1211,22 +1353,59 @@ REGRAS CRÍTICAS:
                   }}
                   className="data-[state=checked]:bg-blue-400"
                 />
-              </div>
             </div>
+          </div>
 
             {/* Busca Rápida */}
             <div className="mb-4">
-              <Label className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                <Filter className="w-4 h-4 text-orange-500" />
-                Busca Rápida
-              </Label>
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-orange-500" />
+                  Busca Rápida
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="busca-invertida" className="text-xs text-gray-600 cursor-pointer">
+                    Excluir
+                  </Label>
+                  <Switch
+                    id="busca-invertida"
+                    checked={filtros.buscaInvertida}
+                    onCheckedChange={(checked) => setFiltros({ ...filtros, buscaInvertida: checked })}
+                    className="data-[state=checked]:bg-orange-500"
+                    disabled={!filtros.buscaObjeto || !filtros.buscaObjeto.trim()}
+                  />
+      </div>
+              </div>
               <Input
-                placeholder="Buscar por objeto..."
+                placeholder={filtros.buscaInvertida 
+                  ? "Excluir licitações que contêm... (separar múltiplas palavras por vírgula)" 
+                  : "Buscar por objeto, órgão, número de controle ou modalidade... (separar múltiplas palavras por vírgula)"
+                }
                 value={filtros.buscaObjeto}
                 onChange={(e) => setFiltros({ ...filtros, buscaObjeto: e.target.value })}
                 className="h-10"
               />
-          </div>
+              {filtros.buscaInvertida && filtros.buscaObjeto && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Mostrando apenas licitações que <strong>NÃO</strong> contêm: {filtros.buscaObjeto.split(',').map(t => t.trim()).filter(t => t).map((termo, idx) => (
+                    <span key={idx}>
+                      <strong>"{termo}"</strong>
+                      {idx < filtros.buscaObjeto.split(',').map(t => t.trim()).filter(t => t).length - 1 && ', '}
+                </span>
+                  ))}
+                </p>
+              )}
+              {!filtros.buscaInvertida && filtros.buscaObjeto && filtros.buscaObjeto.includes(',') && (
+                  <p className="text-xs text-gray-500 mt-1">
+                  Buscando por qualquer uma das palavras: {filtros.buscaObjeto.split(',').map(t => t.trim()).filter(t => t).map((termo, idx, arr) => (
+                    <span key={idx}>
+                      <strong>"{termo}"</strong>
+                      {idx < arr.length - 1 && ', '}
+                    </span>
+                  ))}
+                </p>
+                )}
+              </div>
                 
             {/* Accordion com Filtros */}
             <Accordion type="multiple" defaultValue={['filtros']}>
@@ -1241,28 +1420,14 @@ REGRAS CRÍTICAS:
                 </AccordionTrigger>
                 <AccordionContent className="space-y-4 pt-3">
                 
-                  {/* Busca por Objeto */}
-                  <div>
-                    <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-gray-500" />
-                      Busca por Objeto
-                    </Label>
-                    <Input
-                      placeholder="Buscar por objeto..."
-                      value={filtros.buscaObjeto}
-                      onChange={(e) => setFiltros({ ...filtros, buscaObjeto: e.target.value })}
-                      className="h-9 text-xs"
-                    />
-            </div>
-
                   {/* Data Publicação */}
-                  <div>
+                <div>
                     <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
                       <Calendar className="w-4 h-4 text-gray-500" />
                       Data Publicação
-                    </Label>
+                  </Label>
                     <div className="flex gap-2 mb-2">
-                      <Input
+                  <Input
                         type="date"
                         value={filtros.dataPublicacaoInicio}
                         onChange={(e) => setFiltros({ ...filtros, dataPublicacaoInicio: e.target.value })}
@@ -1280,10 +1445,10 @@ REGRAS CRÍTICAS:
                       <Button variant="ghost" size="sm" onClick={atalhoOntem} className="text-xs h-7 px-2 flex-1">Ontem</Button>
                       <Button variant="ghost" size="sm" onClick={atalhoUltimaSemana} className="text-xs h-7 px-2 flex-1">7 dias</Button>
       </div>
-                  </div>
+                </div>
                 
                   {/* UF */}
-                  <div>
+                <div>
                     <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
                       <MapPin className="w-4 h-4 text-gray-500" />
                       Estado (UF)
@@ -1305,8 +1470,8 @@ REGRAS CRÍTICAS:
                   <div>
                     <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
                       <FileText className="w-4 h-4 text-gray-500" />
-                      Modalidade
-                    </Label>
+                    Modalidade
+                  </Label>
                     <Select value={filtros.modalidade || "TODAS"} onValueChange={(value) => setFiltros({ ...filtros, modalidade: value === "TODAS" ? "" : value })}>
                       <SelectTrigger className="h-9 text-xs">
                         <SelectValue placeholder="Selecione a modalidade" />
@@ -1339,24 +1504,24 @@ REGRAS CRÍTICAS:
                     <Select value={filtros.statusEdital || "TODOS"} onValueChange={(value) => setFiltros({ ...filtros, statusEdital: value === "TODOS" ? "" : value })}>
                       <SelectTrigger className="h-9 text-xs">
                         <SelectValue placeholder="Selecione o status" />
-                      </SelectTrigger>
+                    </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="TODOS">Todos os Status</SelectItem>
                         <SelectItem value="andamento">Em Andamento</SelectItem>
                         <SelectItem value="encerrando">Encerrando (≤ 3 dias)</SelectItem>
                         <SelectItem value="encerrado">Encerrado</SelectItem>
                       </SelectContent>
-                    </Select>
+                  </Select>
                 </div>
 
                   {/* Valor Estimado */}
-                  <div>
+                <div>
                     <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
                       <DollarSign className="w-4 h-4 text-gray-500" />
                       Valor Estimado
-                    </Label>
+                  </Label>
                     <div className="flex gap-2">
-                      <Input
+                  <Input
                         type="number"
                         placeholder="Mínimo"
                         value={filtros.valorMin}
@@ -1369,9 +1534,9 @@ REGRAS CRÍTICAS:
                         value={filtros.valorMax}
                         onChange={(e) => setFiltros({ ...filtros, valorMax: e.target.value })}
                         className="h-9 text-xs"
-                      />
-                    </div>
-                  </div>
+                  />
+                </div>
+              </div>
 
                   {/* Órgão */}
                   <div>
@@ -1385,7 +1550,7 @@ REGRAS CRÍTICAS:
                       onChange={(e) => setFiltros({ ...filtros, orgao: e.target.value })}
                       className="h-9 text-xs"
                     />
-                  </div>
+            </div>
                 
                   {/* N° Edital */}
                   <div>
@@ -1399,7 +1564,7 @@ REGRAS CRÍTICAS:
                       onChange={(e) => setFiltros({ ...filtros, numeroEdital: e.target.value })}
                       className="h-9 text-xs"
                     />
-                  </div>
+          </div>
 
                   {/* Checkboxes */}
                   <div className="space-y-2">
@@ -1413,7 +1578,7 @@ REGRAS CRÍTICAS:
                         <Download className="w-3 h-3 text-gray-500" />
                         Com Documentos
                       </Label>
-                    </div>
+            </div>
                     <div className="flex items-center gap-2">
                       <Checkbox
                         id="comItens"
@@ -1442,45 +1607,6 @@ REGRAS CRÍTICAS:
               </AccordionContent>
             </AccordionItem>
 
-              {/* SEÇÃO FILTROS PERMANENTES */}
-              <AccordionItem value="filtros-permanentes">
-                <AccordionTrigger className="text-sm font-semibold">
-                  <div className="flex items-center gap-2">
-                    <Filter className="w-4 h-4 text-orange-500" />
-                    Filtros Permanentes
-                    {filtrosPermanentes && filtrosPermanentes.length > 0 && (
-                      <Badge className="bg-orange-500 text-white text-xs ml-2">
-                        {filtrosPermanentes.length}
-                      </Badge>
-                    )}
-                  </div>
-                </AccordionTrigger>
-                <AccordionContent className="space-y-3 pt-3">
-                  <FiltrosPermanentes />
-                  
-                  {/* Contadores */}
-                  {filtrosPermanentesAtivos && filtrosPermanentesAtivos.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {totalIncluido > 0 && (
-                        <div className="p-2 bg-green-50 border border-green-200 rounded-md">
-                          <p className="text-xs text-green-700">
-                            <CheckCircle2 className="w-3 h-3 inline mr-1" />
-                            {totalIncluido} edital{totalIncluido > 1 ? 'is' : ''} incluído{totalIncluido > 1 ? 's' : ''}
-                          </p>
-                        </div>
-                      )}
-                      {totalExcluido > 0 && (
-                        <div className="p-2 bg-blue-50 border border-blue-200 rounded-md">
-                          <p className="text-xs text-blue-700">
-                            <AlertCircle className="w-3 h-3 inline mr-1" />
-                            {totalExcluido} edital{totalExcluido > 1 ? 'is' : ''} excluído{totalExcluido > 1 ? 's' : ''}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </AccordionContent>
-              </AccordionItem>
           </Accordion>
 
               </div>
@@ -1615,7 +1741,7 @@ REGRAS CRÍTICAS:
 
           {/* Cards de Licitações - Mostrar quando não estiver carregando do banco */}
           {!isLoading && (
-            <div className="space-y-4">
+              <div className="space-y-4">
               {licitacoesFinais.length > 0 ? (
                 licitacoesFinais.map((licitacao) => {
                   return (
@@ -1857,165 +1983,215 @@ REGRAS CRÍTICAS:
                 {/* Seção Expansível com Detalhes (quando clica no olho) */}
                 {cardsExpandidos.has(licitacao.id) && (
                   <div className="mt-6 pt-6 border-t space-y-6 animate-in slide-in-from-top-2">
-                    {/* Resumo IA */}
-                    <div className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-lg p-4 border border-purple-200">
-                      <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                        <MessageSquare className="w-5 h-5 text-purple-600" />
-                        Resumo Inteligente (IA)
-                        <Badge className="bg-purple-600 text-white text-xs">Mistral AI</Badge>
-                      </h4>
-                      
-                      {/* Loading */}
-                      {resumosIA[licitacao.id]?.loading && (
-                        <div className="flex items-center gap-3 py-6">
-                          <Loader2 className="w-5 h-5 text-purple-600 animate-spin" />
-                          <p className="text-sm text-gray-600">Gerando resumo inteligente...</p>
-                        </div>
-                      )}
-                      
-                      {/* Erro */}
-                      {resumosIA[licitacao.id]?.erro && (
-                        <div className="bg-red-50 border border-red-200 rounded p-3">
-                          <p className="text-sm text-red-700">
-                            ⚠️ {resumosIA[licitacao.id].erro}
-                          </p>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => gerarResumo(licitacao.id, licitacao)}
-                            className="mt-2 text-xs"
-                          >
-                            Tentar novamente
-                          </Button>
-                        </div>
-                      )}
-                      
-                      {/* Resumo */}
-                      {resumosIA[licitacao.id]?.resumo && (
-                        <div className="bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
-                          <div 
-                            className="text-sm text-gray-800 leading-loose text-justify"
-                            dangerouslySetInnerHTML={{
-                              __html: resumosIA[licitacao.id].resumo
-                                .replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-gray-900">$1</strong>')
-                                .replace(/\*(.*?)\*/g, '<em class="italic">$1</em>')
-                            }}
-                          />
-                          
-                          {/* Rodapé com info */}
-                          <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
-                            <p className="text-xs text-gray-500 flex items-center gap-1">
-                              <MessageSquare className="w-3 h-3" />
-                              Análise gerada por IA
-                            </p>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(resumosIA[licitacao.id].resumo)
-                                // TODO: Mostrar toast de sucesso
-                              }}
-                              className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1"
-                            >
-                              Copiar resumo
-                            </button>
-                      </div>
-                        </div>
-                      )}
-                        </div>
-
                     {/* Anexos/Documentos */}
                     {licitacao.anexos && licitacao.anexos.length > 0 && (
                       <div>
-                        <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                          <Download className="w-5 h-5 text-blue-500" />
-                          Documentos ({licitacao.anexos.length})
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {licitacao.anexos.map((anexo, index) => (
-                            <div 
-                              key={index} 
-                              className="flex items-center gap-2 p-3 bg-white border border-gray-200 rounded-lg hover:border-gray-300 hover:shadow-sm transition-all group"
-                            >
-                              {/* Nome do Documento */}
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-gray-900 truncate">
-                                  {anexo.nomeArquivo || anexo.nome || anexo.nomeDocumento || anexo.tipoDocumentoNome || `Documento ${index + 1}`}
-                                </p>
-                                {anexo.tipo && (
-                                  <p className="text-xs text-gray-500 truncate">{anexo.tipo}</p>
-                                )}
-                              </div>
+                        <Accordion type="single" collapsible className="w-full">
+                          <AccordionItem value="documentos" className="border-0">
+                            <AccordionPrimitive.Header className="flex">
+                              <AccordionPrimitive.Trigger className="flex flex-1 items-center justify-between py-3 font-medium transition-all hover:no-underline w-full">
+                                <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                                  <Download className="w-5 h-5 text-blue-500" />
+                                  Documentos ({licitacao.anexos.length})
+                                </h4>
+                                <Eye className="h-5 w-5 shrink-0 text-blue-600 transition-colors" />
+                              </AccordionPrimitive.Trigger>
+                            </AccordionPrimitive.Header>
+                            <AccordionContent>
+                              <div className="max-h-96 overflow-y-auto pr-2 space-y-3">
+                          {licitacao.anexos.map((anexo, index) => {
+                            const anexoKey = `${licitacao.id}-${index}`
+                            const anexoUrl = anexo.url || anexo.urlDocumento || anexo.linkDocumento || anexo.link
+                            const anexoNome = anexo.nomeArquivo || anexo.nome || anexo.nomeDocumento || anexo.tipoDocumentoNome || `Documento ${index + 1}`
+                            const isZip = isZipFile(anexoUrl, anexoNome)
+                            const zipData = arquivosZipDescompactados[anexoKey]
+                            
+                            // Função para descompactar ZIP
+                            const handleDescompactarZip = async () => {
+                              if (!anexoUrl) return
                               
-                              {/* Badges Circulares de Ação */}
-                              <div className="flex items-center gap-1.5 flex-shrink-0">
-                                {/* Badge Download */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    if (anexo.url) {
-                                      const link = document.createElement('a')
-                                      link.href = anexo.url
-                                      link.download = anexo.nomeArquivo || anexo.nome || anexo.nomeDocumento || `documento-${index + 1}.pdf`
-                                      link.target = '_blank'
-                                      link.click()
-                                    }
-                                  }}
-                                  className="w-6 h-6 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-600 flex items-center justify-center transition-colors"
-                                  title="Baixar documento"
-                                >
-                                  <Download className="w-3.5 h-3.5" />
-                                </button>
+                              setArquivosZipDescompactados(prev => ({
+                                ...prev,
+                                [anexoKey]: { loading: true, arquivos: [], erro: null }
+                              }))
+                              
+                              try {
+                                const arquivos = await descompactarZip(anexoUrl, anexoNome)
+                                setArquivosZipDescompactados(prev => ({
+                                  ...prev,
+                                  [anexoKey]: { loading: false, arquivos, erro: null }
+                                }))
+                              } catch (error) {
+                                console.error('❌ Erro ao descompactar ZIP:', error)
+                                setArquivosZipDescompactados(prev => ({
+                                  ...prev,
+                                  [anexoKey]: { loading: false, arquivos: [], erro: error.message }
+                                }))
+                              }
+                            }
+                            
+                            return (
+                              <div key={index} className="space-y-2">
+                                {/* Card do Anexo Principal */}
+                                <div className="flex items-center gap-2 p-3 bg-white border border-gray-200 rounded-lg hover:border-gray-300 hover:shadow-sm transition-all group">
+                                  {/* Nome do Documento */}
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-gray-900 truncate flex items-center gap-2">
+                                      {anexoNome}
+                                      {isZip && (
+                                        <Badge variant="secondary" className="text-xs">
+                                          ZIP
+                                        </Badge>
+                                      )}
+                                    </p>
+                                    {anexo.tipo && (
+                                      <p className="text-xs text-gray-500 truncate">{anexo.tipo}</p>
+                                    )}
+                                  </div>
+                                  
+                                  {/* Badges Circulares de Ação */}
+                                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                                    {/* Badge Download */}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        if (anexoUrl) {
+                                          const link = document.createElement('a')
+                                          link.href = anexoUrl
+                                          link.download = anexoNome
+                                          link.target = '_blank'
+                                          link.click()
+                                        }
+                                      }}
+                                      className="w-6 h-6 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-600 flex items-center justify-center transition-colors"
+                                      title="Baixar documento"
+                                    >
+                                      <Download className="w-3.5 h-3.5" />
+                                    </button>
+                                    
+                                    {/* Badge Visualizar Documento (só se não for ZIP) */}
+                                    {!isZip && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          if (anexoUrl) {
+                                            setDocumentoVisualizacao({
+                                              url: anexoUrl,
+                                              nome: anexoNome,
+                                              licitacaoId: licitacao.id
+                                            })
+                                            setVisualizadorAberto(true)
+                                          }
+                                        }}
+                                        className="w-6 h-6 rounded-full bg-orange-100 hover:bg-orange-200 text-orange-600 flex items-center justify-center transition-colors"
+                                        title="Visualizar documento"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                    
+                                    {/* Badge Descompactar ZIP ou Chat IA */}
+                                    {isZip ? (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          if (!zipData) {
+                                            handleDescompactarZip()
+                                          }
+                                        }}
+                                        disabled={zipData?.loading}
+                                        className="w-6 h-6 rounded-full bg-green-100 hover:bg-green-200 text-green-600 flex items-center justify-center transition-colors disabled:opacity-50"
+                                        title={zipData?.loading ? "Descompactando..." : zipData?.arquivos?.length > 0 ? "Arquivos descompactados" : "Descompactar arquivo ZIP"}
+                                      >
+                                        {zipData?.loading ? (
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        ) : (
+                                          <Download className="w-3.5 h-3.5" />
+                                        )}
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </div>
                                 
-                                {/* Badge Visualizar Documento */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    if (anexo.url) {
-                                      setDocumentoVisualizacao({
-                                        url: anexo.url,
-                                        nome: anexo.nomeArquivo || anexo.nome || anexo.nomeDocumento || `Documento ${index + 1}`
-                                      })
-                                      setVisualizadorAberto(true)
-                                    }
-                                  }}
-                                  className="w-6 h-6 rounded-full bg-orange-100 hover:bg-orange-200 text-orange-600 flex items-center justify-center transition-colors"
-                                  title="Visualizar documento"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                </button>
-                                
-                                {/* Badge Chat IA */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setDocumentoSelecionado({
-                                      url: anexo.url,
-                                      nome: anexo.nomeArquivo || anexo.nome || anexo.nomeDocumento || `Documento ${index + 1}`,
-                                      licitacaoId: licitacao.id
-                                    })
-                                    setChatAberto(true)
-                                  }}
-                                  className="w-6 h-6 rounded-full bg-purple-100 hover:bg-purple-200 text-purple-600 flex items-center justify-center transition-colors"
-                                  title="Conversar com IA sobre este documento"
-                                >
-                                  <Brain className="w-3.5 h-3.5" />
-                                </button>
-                      </div>
-                            </div>
+                                {/* Arquivos Descompactados do ZIP */}
+                                {isZip && zipData && (
+                                  <div className="ml-4 space-y-2">
+                                    {zipData.loading && (
+                                      <div className="flex items-center gap-2 p-2 bg-blue-50 rounded text-sm text-blue-700">
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        Descompactando arquivo ZIP...
+                                      </div>
+                                    )}
+                                    
+                                    {zipData.erro && (
+                                      <div className="p-2 bg-red-50 rounded text-sm text-red-700">
+                                        ❌ Erro: {zipData.erro}
+                                      </div>
+                                    )}
+                                    
+                                    {zipData.arquivos && zipData.arquivos.length > 0 && (
+                                      <div className="space-y-2">
+                                        <p className="text-xs font-medium text-gray-600">
+                                          Arquivos descompactados ({zipData.arquivos.length}):
+                                        </p>
+                                        <div className="flex flex-wrap gap-2">
+                                          {zipData.arquivos.map((arquivo, arquivoIndex) => (
+                                            <Badge
+                                              key={arquivoIndex}
+                                              variant="outline"
+                                              className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-gray-50 transition-colors"
+                          onClick={() => {
+                                                // Se for PDF, abrir no visualizador
+                                                if (arquivo.extensao === 'pdf') {
+                                                  setDocumentoVisualizacao({
+                                                    url: arquivo.url,
+                                                    nome: arquivo.nome
+                                                  })
+                                                  setVisualizadorAberto(true)
+                                                } else {
+                                                  // Para outros tipos, abrir em nova aba
+                                                  window.open(arquivo.url, '_blank')
+                                                }
+                                              }}
+                                            >
+                                              <FileText className="w-3 h-3" />
+                                              <span className="text-xs">{arquivo.nome}</span>
+                                              <span className="text-xs text-gray-500">({arquivo.tipo})</span>
+                                            </Badge>
                 ))}
               </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
                       </div>
                     )}
 
                     {/* Itens */}
                     {licitacao.itens && licitacao.itens.length > 0 && (
                       <div>
-                        <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                          <FileText className="w-5 h-5 text-green-500" />
-                          Itens da Licitação ({licitacao.itens.length})
-                        </h4>
-                        <div className="space-y-4">
-                          {licitacao.itens.map((item, index) => (
-                            <div key={index} className="bg-white border border-gray-200 rounded-lg p-4 hover:border-green-300 transition-colors">
+                        <Accordion type="single" collapsible className="w-full">
+                          <AccordionItem value="itens" className="border-0">
+                            <AccordionPrimitive.Header className="flex">
+                              <AccordionPrimitive.Trigger className="flex flex-1 items-center justify-between py-3 font-medium transition-all hover:no-underline w-full">
+                                <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                                  <FileText className="w-5 h-5 text-green-500" />
+                                  Itens da Licitação ({licitacao.itens.length})
+                                </h4>
+                                <Eye className="h-5 w-5 shrink-0 text-green-600 transition-colors" />
+                              </AccordionPrimitive.Trigger>
+                            </AccordionPrimitive.Header>
+                            <AccordionContent>
+                              <div className="max-h-96 overflow-y-auto pr-2 space-y-4">
+                                {licitacao.itens.map((item, index) => (
+                                  <div key={index} className="bg-white border border-green-200 rounded-lg p-4 hover:border-green-400 hover:shadow-sm transition-all">
                               {/* Header do Item */}
                               <div className="mb-3">
                                 {/* Badges no topo */}
@@ -2034,78 +2210,93 @@ REGRAS CRÍTICAS:
                                     </Badge>
           )}
         </div>
-                                {/* Descrição */}
-                                <p className="text-sm font-medium text-gray-900 leading-relaxed">
-                                  {item.descricao || item.descricaoDetalhada || item.descricao_item || 'Sem descrição'}
-                    </p>
-                  </div>
+                                {/* Descrição - Título do Item */}
+                                <h5 className="text-base font-bold text-gray-900 leading-relaxed mt-2">
+                                  {item.descricao || item.descricaoDetalhada || item.descricao_item || item.descricaoItem || 'Sem descrição'}
+                                </h5>
+                              </div>
 
-                              {/* Informações Detalhadas */}
-                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs bg-gray-50 p-3 rounded">
-                                {/* Quantidade e Unidade */}
-                                {item.quantidade && (
-                                  <div>
-                                    <span className="text-gray-500 block">Quantidade:</span>
-                                    <span className="font-semibold text-gray-900">
-                                      {item.quantidade} {item.unidadeMedida || item.unidade || ''}
-                                    </span>
+                              {/* Informações Detalhadas - 3 colunas como na imagem */}
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                                {/* Coluna 1 */}
+                                <div className="space-y-3">
+                                  {/* Quantidade */}
+                                  {item.quantidade && (
+                                    <div>
+                                      <span className="text-xs text-gray-500 block mb-1">Quantidade:</span>
+                                      <span className="text-sm font-semibold text-gray-900">
+                                        {item.quantidade} {item.unidadeMedida || item.unidade || item.unidade_fornecimento || item.unidadeFornecimento || ''}
+                                      </span>
+                  </div>
+                                  )}
+                                  
+                                  {/* Critério */}
+                                  {(item.criterioJulgamentoNome || item.criterio_julgamento) && (
+                                    <div>
+                                      <span className="text-xs text-gray-500 block mb-1">Critério:</span>
+                                      <span className="text-sm font-medium text-gray-900">
+                                        {item.criterioJulgamentoNome || item.criterio_julgamento}
+                                      </span>
                 </div>
               )}
-                                
-                                {/* Valor Unitário */}
-                                {(item.valorUnitarioEstimado || item.valorUnitario) && (
-                                  <div>
-                                    <span className="text-gray-500 block">Valor Unitário:</span>
-                                    <span className="font-semibold text-green-600">
-                                      {formatarValor(item.valorUnitarioEstimado || item.valorUnitario)}
-                                    </span>
-    </div>
-          )}
-                                
-                                {/* Valor Total */}
-                                {item.valorTotal && (
-                                  <div>
-                                    <span className="text-gray-500 block">Valor Total:</span>
-                                    <span className="font-semibold text-green-700 text-sm">
-                                      {formatarValor(item.valorTotal)}
-                                    </span>
+                                </div>
+
+                                {/* Coluna 2 */}
+                                <div className="space-y-3">
+                                  {/* Valor Unitário */}
+                                  {(item.valorUnitarioEstimado || item.valorUnitario || item.valor_unitario) && (
+                                    <div>
+                                      <span className="text-xs text-gray-500 block mb-1">Valor Unitário:</span>
+                                      <span className="text-sm font-semibold text-green-600">
+                                        {formatarValor(item.valorUnitarioEstimado || item.valorUnitario || item.valor_unitario)}
+                                      </span>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Categoria */}
+                                  {(item.itemCategoriaNome || item.categoria_item || item.categoriaItem) && (
+                                    <div>
+                                      <span className="text-xs text-gray-500 block mb-1">Categoria:</span>
+                                      <span className="text-sm font-medium text-gray-900">
+                                        {item.itemCategoriaNome || item.categoria_item || item.categoriaItem || 'Não se aplica'}
+                                      </span>
         </div>
-                                )}
+                                  )}
+                                </div>
 
-                                {/* Critério de Julgamento */}
-                                {item.criterioJulgamentoNome && (
-                                  <div>
-                                    <span className="text-gray-500 block">Critério:</span>
-                                    <span className="font-medium text-gray-900">{item.criterioJulgamentoNome}</span>
-                                  </div>
-                                )}
-
-                                {/* Categoria */}
-                                {item.itemCategoriaNome && (
-                                  <div>
-                                    <span className="text-gray-500 block">Categoria:</span>
-                                    <span className="font-medium text-gray-900">{item.itemCategoriaNome}</span>
+                                {/* Coluna 3 */}
+                                <div className="space-y-3">
+                                  {/* Valor Total */}
+                                  {(item.valorTotal || item.valor_total || item.valorTotalEstimado) && (
+                                    <div>
+                                      <span className="text-xs text-gray-500 block mb-1">Valor Total:</span>
+                                      <span className="text-sm font-semibold text-green-600">
+                                        {formatarValor(item.valorTotal || item.valor_total || item.valorTotalEstimado)}
+                                      </span>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Benefício */}
+                                  {(item.tipoBeneficioNome || item.tipo_beneficio) && (
+                                    <div>
+                                      <span className="text-xs text-gray-500 block mb-1">Benefício:</span>
+                                      <span className="text-sm font-medium text-gray-900">
+                                        {item.tipoBeneficioNome || item.tipo_beneficio}
+                                      </span>
     </div>
-                                )}
-
-                                {/* Tipo de Benefício */}
-                                {item.tipoBeneficioNome && (
-                                  <div>
-                                    <span className="text-gray-500 block">Benefício:</span>
-                                    <span className="font-medium text-gray-900">{item.tipoBeneficioNome}</span>
-                                  </div>
-                                )}
-
-                                {/* NCM/NBS */}
-                                {item.ncmNbsDescricao && (
-                                  <div className="col-span-2">
-                                    <span className="text-gray-500 block">NCM/NBS:</span>
-                                    <span className="font-medium text-gray-900">
-                                      {item.ncmNbsCodigo ? `${item.ncmNbsCodigo} - ` : ''}{item.ncmNbsDescricao}
-                                    </span>
-                                  </div>
-                                )}
+                                  )}
+                                </div>
                               </div>
+                              
+                              {/* NCM/NBS - abaixo das 3 colunas se existir */}
+                              {item.ncmNbsDescricao && (
+                                <div className="mt-3 pt-3 border-t">
+                                  <span className="text-xs text-gray-500 block mb-1">NCM/NBS:</span>
+                                  <span className="text-sm font-medium text-gray-900">
+                                    {item.ncmNbsCodigo ? `${item.ncmNbsCodigo} - ` : ''}{item.ncmNbsDescricao}
+                                  </span>
+                                </div>
+                              )}
 
                               {/* Informação Complementar */}
                               {item.informacaoComplementar && (
@@ -2145,7 +2336,10 @@ REGRAS CRÍTICAS:
                               </div>
                             </div>
                           ))}
-                        </div>
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
                       </div>
                     )}
                   </div>
@@ -2195,23 +2389,13 @@ REGRAS CRÍTICAS:
         </div>
       </div>
 
-      {/* Chat com Documento IA */}
-      <ChatDocumento
-        aberto={chatAberto}
-        onFechar={() => {
-          setChatAberto(false)
-          setDocumentoSelecionado(null)
-        }}
-        documento={documentoSelecionado}
-        licitacaoId={documentoSelecionado?.licitacaoId}
-      />
-
-      {/* Visualizador de Documento */}
+      {/* Visualizador de Documento com Chat Integrado */}
       <VisualizadorDocumento
         open={visualizadorAberto}
         onOpenChange={setVisualizadorAberto}
         urlDocumento={documentoVisualizacao?.url}
         nomeArquivo={documentoVisualizacao?.nome}
+        licitacaoId={documentoVisualizacao?.licitacaoId}
       />
 
 

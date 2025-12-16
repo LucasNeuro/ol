@@ -40,11 +40,49 @@ serve(async (req) => {
 
     console.log('📥 Baixando documento:', urlDocumento)
 
-    // 1. Fazer download do PDF
-    const downloadResponse = await fetch(urlDocumento)
+    // 1. Fazer download do PDF com timeout e retry
+    let downloadResponse
+    let retries = 3
+    let lastError
     
-    if (!downloadResponse.ok) {
-      throw new Error(`Erro ao baixar documento: ${downloadResponse.status}`)
+    while (retries > 0) {
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 30000) // 30s timeout
+        
+        downloadResponse = await fetch(urlDocumento, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; PNCP-Processor/1.0)'
+          }
+        })
+        
+        clearTimeout(timeoutId)
+        
+        if (downloadResponse.ok) {
+          break
+        } else if (downloadResponse.status >= 500 && retries > 1) {
+          // Retry em caso de erro do servidor
+          retries--
+          await new Promise(resolve => setTimeout(resolve, 2000)) // Aguardar 2s antes de retry
+          continue
+        } else {
+          throw new Error(`Erro ao baixar documento: ${downloadResponse.status}`)
+        }
+      } catch (error) {
+        lastError = error
+        if (error.name === 'AbortError') {
+          throw new Error('Timeout ao baixar documento (30s)')
+        }
+        retries--
+        if (retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, 2000))
+        }
+      }
+    }
+    
+    if (!downloadResponse || !downloadResponse.ok) {
+      throw lastError || new Error(`Erro ao baixar documento após ${3 - retries} tentativas`)
     }
 
     // Baixar arquivo primeiro para validar
