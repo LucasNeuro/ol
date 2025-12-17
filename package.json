@@ -4,11 +4,14 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:server\"",
+    "dev:frontend": "vite",
+    "dev:server": "node server/verificar-alertas.js",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
-    "buscar-edital": "node scripts/buscar-edital-completo.js"
+    "buscar-edital": "node scripts/buscar-edital-completo.js",
+    "verificar-alertas": "node server/verificar-alertas.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.2",
@@ -25,6 +28,7 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "date-fns": "^3.0.6",
+    "dotenv": "^16.6.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.309.0",
     "pdfjs-dist": "^5.4.449",
@@ -33,6 +37,7 @@
     "react-hook-form": "^7.49.2",
     "react-pdf": "^10.2.0",
     "recharts": "^3.5.1",
+    "resend": "^6.6.0",
     "tailwind-merge": "^2.2.0",
     "wouter": "^2.12.1",
     "zod": "^3.22.4",
@@ -43,6 +48,7 @@
     "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
+    "concurrently": "^9.2.1",
     "eslint": "^8.55.0",
     "eslint-plugin-react": "^7.33.2",
     "eslint-plugin-react-hooks": "^4.6.0",

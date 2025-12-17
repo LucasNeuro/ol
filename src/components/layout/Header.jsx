@@ -3,11 +3,11 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/hooks/useAuth'
 import { useQuery } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import { User, LogOut, ChevronDown, Target } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
+import { User, LogOut, ChevronDown, Target, ArrowLeft } from 'lucide-react'
+import { supabase } from '@/lib/supabase' 
 
 export function Header() {
-  const [location] = useLocation()
+  const [location, setLocation] = useLocation()
   const { user: userAuth, signOut } = useAuth()
   const isAuthenticated = !!userAuth
   const [dropdownOpen, setDropdownOpen] = useState(false)
@@ -132,14 +132,27 @@ export function Header() {
     <header className="sticky top-0 z-50 w-full border-b bg-white shadow-sm">
       <div className="container mx-auto px-6 md:px-8 lg:px-12">
         <div className="flex h-16 items-center justify-between">
-          <Link href="/">
-            <a className="cursor-pointer flex items-center gap-2">
+          <div className="flex items-center gap-4">
+            {/* Botão Voltar para Módulos */}
+            <button
+              onClick={() => setLocation('/modulos')}
+              className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-gray-100 transition-colors text-gray-600 hover:text-orange-500"
+              title="Voltar para Módulos"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            
+            <button
+              onClick={() => setLocation('/modulos')}
+              className="cursor-pointer flex items-center gap-2 hover:opacity-80 transition-opacity"
+              title="Voltar para Módulos"
+            >
               <Target className="w-6 h-6 text-orange-500" />
               <h1 className="text-xl font-bold text-gray-900">
                 <strong>Sistema Licitação</strong>
               </h1>
-            </a>
-          </Link>
+            </button>
+          </div>
 
           <nav className="flex items-center gap-3">
             {isAuthenticated ? (
@@ -157,15 +170,40 @@ export function Header() {
                 
                 {/* Avatar Dropdown */}
                 <div className="relative">
-                  <button
-                    onClick={() => setDropdownOpen(!dropdownOpen)}
-                    className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center text-white font-semibold shadow-lg">
-                      {getInitials()}
-                    </div>
-                    <ChevronDown className={`w-4 h-4 text-gray-600 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {/* Avatar e Nome - clicável para voltar aos módulos */}
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setLocation('/modulos')
+                      }}
+                      className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
+                      title="Voltar para Módulos"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center text-white font-semibold shadow-lg">
+                        {getInitials()}
+                      </div>
+                      {nomeEmpresa && nomeEmpresa !== 'Usuário' && (
+                        <span className="text-sm font-medium text-gray-700 hidden sm:block">
+                          {nomeEmpresa}
+                        </span>
+                      )}
+                    </button>
+                    
+                    {/* Botão dropdown separado */}
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setDropdownOpen(!dropdownOpen)
+                      }}
+                      className="hover:opacity-80 transition-opacity cursor-pointer"
+                      title="Menu do usuário"
+                    >
+                      <ChevronDown className={`w-4 h-4 text-gray-600 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
 
                   {/* Dropdown Menu */}
                   {dropdownOpen && (
@@ -183,9 +221,18 @@ export function Header() {
                             <p className="text-sm font-semibold text-gray-900">Carregando...</p>
                           ) : (
                             <>
-                              <p className="text-sm font-semibold text-gray-900">
+                              <button
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  setDropdownOpen(false)
+                                  setLocation('/modulos')
+                                }}
+                                className="text-sm font-semibold text-gray-900 hover:text-orange-500 transition-colors cursor-pointer w-full text-left"
+                                title="Voltar para Módulos"
+                              >
                                 {nomeEmpresa}
-                              </p>
+                              </button>
                               {emailUsuario && (
                                 <p className="text-xs text-gray-500 truncate mt-1">
                                   {emailUsuario}

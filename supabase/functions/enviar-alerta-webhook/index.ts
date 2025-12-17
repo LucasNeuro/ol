@@ -12,8 +12,13 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// Webhook URL padrão - pode ser sobrescrito por variável de ambiente ou por alerta específico
-const WEBHOOK_URL_DEFAULT = Deno.env.get('WEBHOOK_URL_DEFAULT') || 'https://webhook.fiqon.app/webhook/019afae9-4e94-72fc-b30f-c60f686bacf5/9b0754d5-af77-4c95-b991-67d9a81fee99'
+// Webhook URL padrão - Configurar no Supabase Dashboard > Settings > Edge Functions > Secrets
+// Nome da variável: WEBHOOK_URL_DEFAULT
+// Pode ser sobrescrito por alerta específico (campo webhook_url na tabela alertas_usuario)
+const WEBHOOK_URL_DEFAULT = Deno.env.get('WEBHOOK_URL_DEFAULT') || 'https://webhook.fiqon.app/webhook/019b290b-64f6-7310-acb5-3c7ecdce4e29/b23c4811-a696-4b15-8f58-d275cdaa2eea'
+
+// Log para verificar se está usando variável de ambiente
+console.log('🔗 Webhook URL configurada:', Deno.env.get('WEBHOOK_URL_DEFAULT') ? '✅ Usando variável de ambiente' : '⚠️ Usando valor padrão do código')
 
 serve(async (req) => {
   // Handle CORS preflight
@@ -54,10 +59,7 @@ serve(async (req) => {
       .select(`
         *,
         profiles:usuario_id (
-          id,
-          razao_social,
-          cnae_principal,
-          cnaes_secundarios
+          *
         )
       `)
       .eq('ativo', true)
@@ -93,9 +95,11 @@ serve(async (req) => {
           const dadosWebhook = prepararDadosWebhook(licitacao, alerta, usuario)
 
           // Usar webhook_url do alerta se configurado, senão usar o padrão
+          // Prioridade: 1) webhook_url do alerta, 2) WEBHOOK_URL_DEFAULT da variável de ambiente, 3) valor padrão
           const webhookUrl = alerta.webhook_url || WEBHOOK_URL_DEFAULT
           
           console.log(`📤 Enviando webhook para: ${webhookUrl}`)
+          console.log(`🔍 Fonte da URL: ${alerta.webhook_url ? 'Alerta específico' : Deno.env.get('WEBHOOK_URL_DEFAULT') ? 'Variável de ambiente' : 'Valor padrão'}`)
 
           // Enviar webhook
           const webhookResponse = await fetch(webhookUrl, {
@@ -282,10 +286,45 @@ function prepararDadosWebhook(licitacao: any, alerta: any, usuario: any): any {
       email_notificacao: alerta.email_notificacao,
     },
     empresa: {
+      // Dados completos da empresa do perfil
       id: usuario.id,
+      cnpj: usuario.cnpj,
       razao_social: usuario.razao_social,
+      nome_fantasia: usuario.nome_fantasia,
+      email: usuario.email,
+      telefone: usuario.telefone,
+      site: usuario.site,
+      cargo: usuario.cargo,
+      situacao_cadastral: usuario.situacao_cadastral,
+      data_situacao_cadastral: usuario.data_situacao_cadastral,
+      matriz_filial: usuario.matriz_filial,
+      data_inicio_atividade: usuario.data_inicio_atividade,
       cnae_principal: usuario.cnae_principal,
       cnaes_secundarios: usuario.cnaes_secundarios,
+      natureza_juridica: usuario.natureza_juridica,
+      porte_empresa: usuario.porte_empresa,
+      capital_social: usuario.capital_social,
+      logradouro: usuario.logradouro,
+      numero: usuario.numero,
+      complemento: usuario.complemento,
+      bairro: usuario.bairro,
+      cep: usuario.cep,
+      uf: usuario.uf,
+      municipio: usuario.municipio,
+      email_secundario: usuario.email_secundario,
+      nome_responsavel: usuario.nome_responsavel,
+      setores_atividades: usuario.setores_atividades,
+      estados_interesse: usuario.estados_interesse,
+      quantidade_funcionarios: usuario.quantidade_funcionarios,
+      faturamento_anual: usuario.faturamento_anual,
+      licitacoes_por_mes: usuario.licitacoes_por_mes,
+      como_pretende_usar: usuario.como_pretende_usar,
+      opcao_simples: usuario.opcao_simples,
+      data_opcao_simples: usuario.data_opcao_simples,
+      opcao_mei: usuario.opcao_mei,
+      data_opcao_mei: usuario.data_opcao_mei,
+      dados_completos_receita: usuario.dados_completos_receita,
+      quadro_societario: usuario.quadro_societario,
     },
     licitacao: {
       id: licitacao.id,

@@ -5,12 +5,37 @@
 
 import { useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/hooks/useAuth'
 
 export function useChatDocumento() {
   const [mensagens, setMensagens] = useState([])
   const [loading, setLoading] = useState(false)
   const [erro, setErro] = useState(null)
   const [documentoProcessado, setDocumentoProcessado] = useState(null)
+  const { user } = useAuth()
+  
+  // Buscar dados do perfil da empresa
+  const buscarDadosEmpresa = useCallback(async () => {
+    if (!user?.id) return null
+    
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle()
+      
+      if (error) {
+        console.warn('⚠️ Erro ao buscar perfil:', error)
+        return null
+      }
+      
+      return data
+    } catch (err) {
+      console.error('❌ Erro ao buscar dados da empresa:', err)
+      return null
+    }
+  }, [user?.id])
 
   // Processar documento (download + upload para Storage)
   const processarDocumento = useCallback(async (urlDocumento, nomeArquivo, licitacaoId) => {
@@ -75,6 +100,10 @@ export function useChatDocumento() {
     try {
       console.log('💬 Enviando pergunta:', pergunta)
 
+      // Buscar dados da empresa para contexto
+      const dadosEmpresa = await buscarDadosEmpresa()
+      console.log('🏢 Dados da empresa carregados:', dadosEmpresa ? 'Sim' : 'Não')
+
       // Adicionar mensagem do usuário
       const mensagemUsuario = {
         role: 'user',
@@ -100,6 +129,7 @@ export function useChatDocumento() {
             pergunta,
             documentoUrl: documentoProcessado.urlStorage,
             documentoId: documentoProcessado.id,
+            dadosEmpresa: dadosEmpresa, // Passar dados da empresa
             historico: mensagens.map(m => ({
               role: m.role,
               content: m.content
@@ -139,7 +169,7 @@ export function useChatDocumento() {
     } finally {
       setLoading(false)
     }
-  }, [documentoProcessado, mensagens])
+  }, [documentoProcessado, mensagens, buscarDadosEmpresa])
 
   // Limpar conversa
   const limparConversa = useCallback(() => {
@@ -169,6 +199,8 @@ export function useChatDocumento() {
     resetar,
   }
 }
+
+
 
 
 

@@ -13,8 +13,12 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// Webhook URL padrão
-const WEBHOOK_URL_DEFAULT = Deno.env.get('WEBHOOK_URL_DEFAULT') || 'https://webhook.fiqon.app/webhook/019afae9-4e94-72fc-b30f-c60f686bacf5/9b0754d5-af77-4c95-b991-67d9a81fee99'
+// Webhook URL padrão - Configurar no Supabase Dashboard > Settings > Edge Functions > Secrets
+// Nome da variável: WEBHOOK_URL_DEFAULT
+const WEBHOOK_URL_DEFAULT = Deno.env.get('WEBHOOK_URL_DEFAULT') || 'https://webhook.fiqon.app/webhook/019b290b-64f6-7310-acb5-3c7ecdce4e29/b23c4811-a696-4b15-8f58-d275cdaa2eea'
+
+// Log para verificar se está usando variável de ambiente
+console.log('🔗 Webhook URL configurada:', Deno.env.get('WEBHOOK_URL_DEFAULT') ? '✅ Usando variável de ambiente' : '⚠️ Usando valor padrão do código')
 
 serve(async (req) => {
   // Handle CORS preflight
@@ -23,9 +27,42 @@ serve(async (req) => {
   }
 
   try {
-    const { alerta_id } = await req.json().catch(() => ({})) // Opcional: pode processar um alerta específico
+    // Verificar autenticação (aceita GET ou POST)
+    const authHeader = req.headers.get('Authorization') || req.headers.get('authorization')
+    const apikeyHeader = req.headers.get('apikey') || req.headers.get('x-api-key')
+    
+    // Se não tiver autenticação, retornar erro 401
+    if (!authHeader && !apikeyHeader) {
+      console.error('❌ Requisição sem autenticação')
+      return new Response(
+        JSON.stringify({ 
+          error: 'Unauthorized',
+          message: 'Esta função requer autenticação. Envie o header Authorization com Bearer token ou apikey.'
+        }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, 
+          status: 401 
+        }
+      )
+    }
+
+    // Aceitar tanto GET quanto POST
+    let alerta_id = null
+    if (req.method === 'POST') {
+      try {
+        const body = await req.json().catch(() => ({}))
+        alerta_id = body.alerta_id
+      } catch (e) {
+        // Se não conseguir parsear JSON, continuar sem alerta_id
+      }
+    } else if (req.method === 'GET') {
+      // Para GET, tentar pegar alerta_id da query string
+      const url = new URL(req.url)
+      alerta_id = url.searchParams.get('alerta_id')
+    }
 
     console.log('🔍 Iniciando verificação periódica de alertas...')
+    console.log(`📋 Método: ${req.method}, Alerta ID: ${alerta_id || 'todos'}`)
 
     // Criar cliente Supabase
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
@@ -45,10 +82,7 @@ serve(async (req) => {
       .select(`
         *,
         profiles:usuario_id (
-          id,
-          razao_social,
-          cnae_principal,
-          cnaes_secundarios
+          *
         )
       `)
       .eq('ativo', true)
@@ -146,23 +180,20 @@ serve(async (req) => {
       if (!usuario) continue
 
       try {
-        // Calcular data de início da busca (última verificação ou 7 dias atrás)
-        const ultimaVerificacao = alerta.ultima_verificacao 
-          ? new Date(alerta.ultima_verificacao)
-          : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // 7 dias atrás se nunca verificou
+        // Buscar TODAS as licitações filtradas (últimos 30 dias para não sobrecarregar)
+        const dataInicio = formatarDataParaQuery(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
 
-        const dataInicio = formatarDataParaQuery(ultimaVerificacao)
+        console.log(`📋 Verificando alerta ${alerta.nome_alerta} - buscando todas as licitações filtradas`)
 
-        console.log(`📋 Verificando alerta ${alerta.nome_alerta} desde ${dataInicio}`)
-
-        // 3. Buscar novas licitações que correspondem aos critérios
-        const novasLicitacoes = await buscarLicitacoesNovas(
+        // 3. Buscar TODAS as licitações que correspondem aos critérios
+        const licitacoesFiltradas = await buscarLicitacoesFiltradas(
           supabase,
           alerta,
+          usuario,
           dataInicio
         )
 
-        console.log(`✅ Encontradas ${novasLicitacoes.length} novas licitações para ${alerta.nome_alerta}`)
+        console.log(`✅ Encontradas ${licitacoesFiltradas.length} licitações filtradas para ${alerta.nome_alerta}`)
 
         // 4. Preparar dados para webhook
         const dadosWebhook = {
@@ -176,19 +207,54 @@ serve(async (req) => {
             ultima_verificacao: alerta.ultima_verificacao,
           },
           empresa: {
+            // Dados completos da empresa do perfil
             id: usuario.id,
+            cnpj: usuario.cnpj,
             razao_social: usuario.razao_social,
+            nome_fantasia: usuario.nome_fantasia,
+            email: usuario.email,
+            telefone: usuario.telefone,
+            site: usuario.site,
+            cargo: usuario.cargo,
+            situacao_cadastral: usuario.situacao_cadastral,
+            data_situacao_cadastral: usuario.data_situacao_cadastral,
+            matriz_filial: usuario.matriz_filial,
+            data_inicio_atividade: usuario.data_inicio_atividade,
             cnae_principal: usuario.cnae_principal,
             cnaes_secundarios: usuario.cnaes_secundarios,
+            natureza_juridica: usuario.natureza_juridica,
+            porte_empresa: usuario.porte_empresa,
+            capital_social: usuario.capital_social,
+            logradouro: usuario.logradouro,
+            numero: usuario.numero,
+            complemento: usuario.complemento,
+            bairro: usuario.bairro,
+            cep: usuario.cep,
+            uf: usuario.uf,
+            municipio: usuario.municipio,
+            email_secundario: usuario.email_secundario,
+            nome_responsavel: usuario.nome_responsavel,
+            setores_atividades: usuario.setores_atividades,
+            estados_interesse: usuario.estados_interesse,
+            quantidade_funcionarios: usuario.quantidade_funcionarios,
+            faturamento_anual: usuario.faturamento_anual,
+            licitacoes_por_mes: usuario.licitacoes_por_mes,
+            como_pretende_usar: usuario.como_pretende_usar,
+            opcao_simples: usuario.opcao_simples,
+            data_opcao_simples: usuario.data_opcao_simples,
+            opcao_mei: usuario.opcao_mei,
+            data_opcao_mei: usuario.data_opcao_mei,
+            dados_completos_receita: usuario.dados_completos_receita,
+            quadro_societario: usuario.quadro_societario,
           },
           resultado: {
-            total_encontradas: novasLicitacoes.length,
+            total_encontradas: licitacoesFiltradas.length,
             periodo_verificado: {
               desde: dataInicio,
               ate: formatarDataParaQuery(new Date()),
             },
           },
-          licitacoes: novasLicitacoes.map(lic => ({
+          licitacoes: licitacoesFiltradas.map(lic => ({
             id: lic.id,
             numero_controle_pncp: lic.numero_controle_pncp,
             objeto_compra: lic.objeto_compra,
@@ -201,18 +267,34 @@ serve(async (req) => {
           })),
         }
 
-        // 5. Enviar webhook (sempre, mesmo se não houver novas licitações)
+        // 5. Enviar webhook SEMPRE (mesmo se não houver licitações)
+        // Prioridade: 1) webhook_url do alerta, 2) WEBHOOK_URL_DEFAULT da variável de ambiente, 3) valor padrão
         const webhookUrl = alerta.webhook_url || WEBHOOK_URL_DEFAULT
         
         console.log(`📤 Enviando webhook para: ${webhookUrl}`)
+        console.log(`📊 Total de licitações a enviar: ${licitacoesFiltradas.length}`)
+        console.log(`🔍 Fonte da URL: ${alerta.webhook_url ? 'Alerta específico' : Deno.env.get('WEBHOOK_URL_DEFAULT') ? 'Variável de ambiente' : 'Valor padrão'}`)
 
-        const webhookResponse = await fetch(webhookUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(dadosWebhook),
-        })
+        let webhookResponse
+        try {
+          webhookResponse = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(dadosWebhook),
+          })
+
+          if (!webhookResponse.ok) {
+            const errorText = await webhookResponse.text().catch(() => 'Erro desconhecido')
+            console.error(`❌ Erro ao enviar webhook: ${webhookResponse.status} - ${errorText}`)
+          } else {
+            console.log(`✅ Webhook enviado com sucesso! Status: ${webhookResponse.status}`)
+          }
+        } catch (webhookError: any) {
+          console.error(`❌ Erro ao fazer requisição webhook:`, webhookError.message)
+          throw webhookError
+        }
 
         // 6. Atualizar última verificação
         await supabase
@@ -223,12 +305,12 @@ serve(async (req) => {
         resultados.push({
           alerta_id: alerta.id,
           nome_alerta: alerta.nome_alerta,
-          novas_licitacoes: novasLicitacoes.length,
-          webhook_enviado: webhookResponse.ok,
-          status: webhookResponse.status,
+          licitacoes_encontradas: licitacoesFiltradas.length,
+          webhook_enviado: webhookResponse?.ok || false,
+          status: webhookResponse?.status || 0,
         })
 
-        console.log(`✅ Alerta ${alerta.nome_alerta} processado: ${novasLicitacoes.length} novas licitações`)
+        console.log(`✅ Alerta ${alerta.nome_alerta} processado: ${licitacoesFiltradas.length} licitações filtradas enviadas`)
 
       } catch (error) {
         console.error(`❌ Erro ao processar alerta ${alerta.id}:`, error)
@@ -262,11 +344,14 @@ serve(async (req) => {
 })
 
 /**
- * Busca novas licitações que correspondem aos critérios do alerta
+ * Busca TODAS as licitações filtradas que correspondem aos critérios do alerta
+ * Usa filtros do alerta + perfil da empresa
+ * Busca dos últimos 30 dias (ou período configurado)
  */
-async function buscarLicitacoesNovas(
+async function buscarLicitacoesFiltradas(
   supabase: any,
   alerta: any,
+  usuario: any,
   dataInicio: string
 ): Promise<any[]> {
   const filtros = alerta.filtros || {}
@@ -279,11 +364,21 @@ async function buscarLicitacoesNovas(
     .gte('data_publicacao_pncp', dataInicio)
     .order('data_publicacao_pncp', { ascending: false })
 
-  // Aplicar filtros básicos
-  if (filtros.uf) {
+  // Aplicar filtros de estados de interesse do perfil
+  if (usuario.estados_interesse && Array.isArray(usuario.estados_interesse) && usuario.estados_interesse.length > 0) {
+    // Se tiver apenas um estado, usar filtro direto
+    if (usuario.estados_interesse.length === 1) {
+      query = query.eq('uf_sigla', usuario.estados_interesse[0])
+    } else {
+      // Se tiver múltiplos estados, usar filtro IN
+      query = query.in('uf_sigla', usuario.estados_interesse)
+    }
+  } else if (filtros.uf) {
+    // Fallback para filtro do alerta se não tiver estados de interesse
     query = query.eq('uf_sigla', filtros.uf)
   }
 
+  // Aplicar filtros básicos do alerta (se não foram sobrescritos pelo perfil)
   if (filtros.modalidade) {
     query = query.ilike('modalidade_nome', `%${filtros.modalidade}%`)
   }
@@ -315,21 +410,58 @@ async function buscarLicitacoesNovas(
     }
   }
 
-  const { data, error } = await query.limit(100) // Limitar a 100 resultados
+  const { data, error } = await query.limit(500) // Limitar a 500 resultados (aumentado para pegar mais licitações)
 
   if (error) {
     console.error('Erro ao buscar licitações:', error)
     return []
   }
 
-  // Filtrar por CNAEs se necessário (filtro mais complexo, fazer em memória)
+  // Filtrar por CNAEs do perfil (setores_atividades + cnae_principal)
   let licitacoes = data || []
 
+  // Coletar todos os CNAEs do perfil
+  const cnaesPerfil: string[] = []
+  
+  if (usuario.cnae_principal) {
+    cnaesPerfil.push(String(usuario.cnae_principal).trim())
+  }
+
+  if (usuario.cnaes_secundarios && Array.isArray(usuario.cnaes_secundarios)) {
+    usuario.cnaes_secundarios.forEach((cnae: any) => {
+      const cnaeStr = String(cnae).trim()
+      if (cnaeStr && !cnaesPerfil.includes(cnaeStr)) {
+        cnaesPerfil.push(cnaeStr)
+      }
+    })
+  }
+
+  // Adicionar CNAEs de setores_atividades
+  if (usuario.setores_atividades && Array.isArray(usuario.setores_atividades)) {
+    usuario.setores_atividades.forEach((cnae: any) => {
+      const cnaeStr = String(cnae).trim()
+      if (cnaeStr && !cnaesPerfil.includes(cnaeStr)) {
+        cnaesPerfil.push(cnaeStr)
+      }
+    })
+  }
+
+  // Adicionar CNAEs dos filtros avançados do alerta
   if (filtrosAvancados.filtros_cnaes && Object.keys(filtrosAvancados.filtros_cnaes).length > 0) {
-    const cnaesFiltro = Object.keys(filtrosAvancados.filtros_cnaes)
+    Object.keys(filtrosAvancados.filtros_cnaes).forEach((cnae: string) => {
+      const cnaeStr = String(cnae).trim()
+      if (cnaeStr && !cnaesPerfil.includes(cnaeStr)) {
+        cnaesPerfil.push(cnaeStr)
+      }
+    })
+  }
+
+  // Filtrar licitações por CNAEs se houver
+  if (cnaesPerfil.length > 0) {
     licitacoes = licitacoes.filter((lic: any) => {
       const cnaesLicitacao = extrairCnaesLicitacao(lic)
-      return cnaesFiltro.some((cnae: string) => cnaesLicitacao.includes(cnae))
+      // Verificar se há interseção entre CNAEs do perfil e da licitação
+      return cnaesPerfil.some((cnae: string) => cnaesLicitacao.includes(cnae))
     })
   }
 

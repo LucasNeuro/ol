@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Send, MessageSquare, Sparkles, Copy, Trash2, FileText, AlertCircle } from 'lucide-react'
+import { X, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Send, MessageSquare, Sparkles, Copy, Trash2, FileText, AlertCircle, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -33,6 +33,7 @@ export function VisualizadorDocumento({
   const processedUrlRef = useRef(null)
   const [pergunta, setPergunta] = useState('')
   const [processandoDoc, setProcessandoDoc] = useState(false)
+  const [zoom, setZoom] = useState(1.0) // Zoom inicial 100%
   
   // Hook do chat
   const {
@@ -194,6 +195,8 @@ export function VisualizadorDocumento({
       // Usar Edge Function para baixar e salvar (contorna CORS)
       const edgeFunctionUrl = `${supabaseUrl}/functions/v1/processar-documento`
       
+      console.log('🔗 Chamando Edge Function:', edgeFunctionUrl)
+      
       let response
       try {
         response = await fetch(edgeFunctionUrl, {
@@ -201,6 +204,7 @@ export function VisualizadorDocumento({
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '',
           },
           body: JSON.stringify({
             urlDocumento,
@@ -209,28 +213,55 @@ export function VisualizadorDocumento({
           }),
         })
       } catch (fetchError) {
+        console.error('❌ Erro na requisição fetch:', fetchError)
         // Se a Edge Function não existir ou não estiver disponível
         if (fetchError.message.includes('Failed to fetch') || fetchError.message.includes('NetworkError')) {
-          throw new Error('Edge Function não disponível. O documento precisa ser aberto em nova aba devido a restrições CORS.')
+          throw new Error('Edge Function não disponível. Verifique se está deployada e acessível. O documento precisa ser aberto em nova aba devido a restrições CORS.')
         }
         throw fetchError
       }
       
+      console.log('📡 Resposta recebida:', response.status, response.statusText)
+      
       if (!response.ok) {
         // Se retornar 404, a Edge Function não existe
         if (response.status === 404) {
-          throw new Error('Edge Function não encontrada. Use "Abrir em nova aba" para visualizar.')
+          throw new Error('Edge Function não encontrada (404). Verifique se a função "processar-documento" está deployada no Supabase.')
         }
         
-        const errorText = await response.text()
-        console.error('❌ Erro na Edge Function:', errorText)
-        throw new Error(`Erro ao processar documento: ${response.status}`)
+        let errorText = 'Erro desconhecido'
+        try {
+          errorText = await response.text()
+          console.error('❌ Erro na Edge Function:', errorText)
+          
+          // Tentar parsear como JSON
+          try {
+            const errorJson = JSON.parse(errorText)
+            if (errorJson.error) {
+              errorText = errorJson.error
+            }
+            if (errorJson.details) {
+              console.error('❌ Detalhes do erro:', errorJson.details)
+            }
+          } catch (e) {
+            // Não é JSON, usar texto direto
+          }
+        } catch (e) {
+          console.error('❌ Erro ao ler resposta de erro:', e)
+        }
+        
+        throw new Error(`Erro ao processar documento (${response.status}): ${errorText}`)
       }
       
       const result = await response.json()
+      console.log('✅ Resultado da Edge Function:', result)
       
       if (!result.success) {
         throw new Error(result.error || 'Erro ao processar documento')
+      }
+      
+      if (!result.documento || !result.documento.urlStorage) {
+        throw new Error('Resposta da Edge Function inválida: URL do documento não encontrada')
       }
       
       console.log('✅ PDF processado e salvo:', result.documento)
@@ -239,6 +270,7 @@ export function VisualizadorDocumento({
       return result.documento.urlStorage
     } catch (err) {
       console.error('❌ Erro ao processar PDF via Edge Function:', err)
+      console.error('❌ Stack:', err.stack)
       throw err
     }
   }
@@ -327,7 +359,7 @@ export function VisualizadorDocumento({
     if (pdfDoc && canvasRef.current && pageNumber) {
       renderizarPagina()
     }
-  }, [pdfDoc, pageNumber])
+  }, [pdfDoc, pageNumber, zoom])
 
   const renderizarPagina = async () => {
     if (!pdfDoc || !canvasRef.current) return
@@ -343,13 +375,18 @@ export function VisualizadorDocumento({
       }
       
       const page = await pdfDoc.getPage(pageNumber)
-      const viewport = page.getViewport({ scale: 4.5 })
+      const viewport = page.getViewport({ scale: zoom })
       
       const canvas = canvasRef.current
       const context = canvas.getContext('2d')
       
+      // Definir dimensões do canvas baseadas no viewport (zoom aplicado)
       canvas.height = viewport.height
       canvas.width = viewport.width
+      
+      // Garantir que o canvas tenha o tamanho físico correto
+      canvas.style.width = `${viewport.width}px`
+      canvas.style.height = `${viewport.height}px`
       
       const renderContext = {
         canvasContext: context,
@@ -358,7 +395,7 @@ export function VisualizadorDocumento({
       
       renderTaskRef.current = page.render(renderContext)
       await renderTaskRef.current.promise
-      console.log('✅ Página renderizada:', pageNumber)
+      console.log('✅ Página renderizada:', pageNumber, 'zoom:', zoom, 'dimensões:', viewport.width, 'x', viewport.height)
     } catch (err) {
       console.error('❌ Erro ao renderizar página:', err)
       setError('Erro ao renderizar página do documento')
@@ -373,6 +410,18 @@ export function VisualizadorDocumento({
 
   const goToNextPage = () => {
     setPageNumber(prev => Math.min(numPages || 1, prev + 1))
+  }
+
+  const handleZoomIn = () => {
+    setZoom(prev => Math.min(prev + 0.5, 8)) // Máximo 8x
+  }
+
+  const handleZoomOut = () => {
+    setZoom(prev => Math.max(prev - 0.5, 1)) // Mínimo 1x
+  }
+
+  const handleZoomReset = () => {
+    setZoom(1.0) // Voltar ao zoom padrão (100%)
   }
 
   const handleDownload = () => {
@@ -417,6 +466,46 @@ export function VisualizadorDocumento({
           </div>
           
           <div className="flex items-center gap-2">
+            {/* Controles de Zoom */}
+            {isPdf && pdfDoc && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleZoomOut}
+                  disabled={zoom <= 1}
+                  className="text-white hover:bg-white/20 h-8 w-8 p-0"
+                  title="Diminuir zoom"
+                >
+                  <ZoomOut className="w-4 h-4" />
+                </Button>
+                <span className="text-xs text-white/70 px-2 min-w-[60px] text-center">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleZoomIn}
+                  disabled={zoom >= 8}
+                  className="text-white hover:bg-white/20 h-8 w-8 p-0"
+                  title="Aumentar zoom"
+                >
+                  <ZoomIn className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleZoomReset}
+                  className="text-white hover:bg-white/20 h-8 px-2 text-xs"
+                  title="Resetar zoom"
+                >
+                  <Maximize2 className="w-3 h-3 mr-1" />
+                  Reset
+                </Button>
+                <div className="w-px h-6 bg-white/20 mx-1" />
+              </>
+            )}
+
             {/* Controles de navegação */}
             {isPdf && numPages && numPages > 1 && (
               <>
@@ -426,6 +515,7 @@ export function VisualizadorDocumento({
                   onClick={goToPrevPage}
                   disabled={pageNumber === 1}
                   className="text-white hover:bg-white/20 h-8 w-8 p-0"
+                  title="Página anterior"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
@@ -438,9 +528,11 @@ export function VisualizadorDocumento({
                   onClick={goToNextPage}
                   disabled={pageNumber === numPages}
                   className="text-white hover:bg-white/20 h-8 w-8 p-0"
+                  title="Próxima página"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </Button>
+                <div className="w-px h-6 bg-white/20 mx-1" />
               </>
             )}
             
@@ -472,6 +564,7 @@ export function VisualizadorDocumento({
               size="sm"
               onClick={() => onOpenChange(false)}
               className="text-white hover:bg-white/20 h-8 w-8 p-0"
+              title="Fechar"
             >
               <X className="w-4 h-4" />
             </Button>
@@ -525,13 +618,12 @@ export function VisualizadorDocumento({
 
           {/* Visualizador PDF usando PDF.js */}
           {isPdf && !error && !loading && pdfDoc ? (
-            <div className="w-full h-full flex items-center justify-center p-2">
+            <div className="w-full h-full flex items-start justify-center p-4 overflow-auto">
               <canvas
                 ref={canvasRef}
                 className="shadow-2xl bg-white rounded"
                 style={{ 
-                  maxWidth: '100%', 
-                  maxHeight: 'calc(100vh - 60px)',
+                  display: 'block',
                   width: 'auto',
                   height: 'auto'
                 }}

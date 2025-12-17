@@ -119,7 +119,7 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
       })
     }
   }, [open, arquivosZipDescompactados])
-
+  
   // Descompactar ZIPs automaticamente quando documentos são carregados
   useEffect(() => {
     if (!open || !licitacao?.documentos || licitacao.documentos.length === 0) {
@@ -749,18 +749,18 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
                                       <ExternalLink className="w-4 h-4" />
                                     </button>
                                   ) : (
-                                    <button
-                                      onClick={handleDescompactarZip}
-                                      disabled={zipData?.loading}
-                                      className="p-1.5 rounded hover:bg-green-100 text-green-600 transition-colors disabled:opacity-50"
+                                <button
+                                  onClick={handleDescompactarZip}
+                                  disabled={zipData?.loading}
+                                  className="p-1.5 rounded hover:bg-green-100 text-green-600 transition-colors disabled:opacity-50"
                                       title={zipData?.loading ? "Descompactando..." : "Descompactar arquivo ZIP"}
-                                    >
-                                      {zipData?.loading ? (
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                      ) : (
-                                        <Download className="w-4 h-4" />
-                                      )}
-                                    </button>
+                                >
+                                  {zipData?.loading ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Download className="w-4 h-4" />
+                                  )}
+                                </button>
                                   )}
                                 </>
                               ) : (
@@ -837,9 +837,9 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
                                             {arquivo.tipo} • {(arquivo.tamanho / 1024).toFixed(1)} KB
                                           </div>
                                         </div>
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation()
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation()
                                             if (arquivo.extensao === 'pdf') {
                                               setDocumentoVisualizacao({
                                                 url: arquivo.url,
@@ -849,12 +849,12 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
                                             } else {
                                               window.open(arquivo.url, '_blank')
                                             }
-                                          }}
+                                            }}
                                           className="p-1.5 rounded hover:bg-orange-100 text-orange-600 transition-colors opacity-0 group-hover:opacity-100"
                                           title={`Visualizar ${arquivo.nome}`}
-                                        >
+                                          >
                                           <ExternalLink className="w-3.5 h-3.5" />
-                                        </button>
+                                          </button>
                                       </div>
                                     ))}
                                   </div>

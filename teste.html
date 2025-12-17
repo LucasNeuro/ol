@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      font-family: 'Roboto', Arial, sans-serif;
+      background-color: #FFFFFF;
+      color: #333333;
+      padding: 20px;
+      line-height: 1.5;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+    }
+    .header h1 {
+      color: #333333;
+      font-size: 24px;
+      margin: 0;
+    }
+    .new-alert-button {
+      background-color: #FF6B35;
+      color: #FFFFFF;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .card-container {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+    .card {
+      border: 1px solid #E0E0E0;
+      border-radius: 8px;
+      padding: 20px;
+      background-color: #FFFFFF;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .card-title {
+      font-weight: bold;
+      font-size: 16px;
+      margin-bottom: 10px;
+      color: #333333;
+    }
+    .card-subtitle {
+      font-size: 14px;
+      color: #666666;
+      margin-bottom: 15px;
+    }
+    .card-details {
+      font-size: 14px;
+      color: #666666;
+      margin-bottom: 5px;
+    }
+    .card-status {
+      display: flex;
+      align-items: center;
+      margin-top: 10px;
+    }
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      background-color: #4CAF50; /* Verde para "Ativo" */
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+    .card-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+    }
+    .action-button {
+      padding: 5px 10px;
+      border: 1px solid #E0E0E0;
+      border-radius: 4px;
+      background-color: #FFFFFF;
+      color: #666666;
+      cursor: pointer;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Alertas</h1>
+    <p>Configure alertas para receber notificações sobre novas licitações</p>
+    <button class="new-alert-button">+ Novo Alerta</button>
+  </div>
+
+  <div class="card-container">
+    <!-- Card 1 -->
+    <div class="card">
+      <div class="card-title">CONTRUÇÃO - TESTE</div>
+      <div class="card-details"><strong>Email:</strong> lucasoffgod@hotmail.com</div>
+      <div class="card-details"><strong>Frequência:</strong> Diário (automático)</div>
+      <div class="card-details"><strong>Horário:</strong> 20:05</div>
+      <div class="card-details"><strong>Última verificação:</strong> 16/12/2025, 19:58:39</div>
+      <div class="card-status">
+        <div class="status-indicator"></div>
+        <span>Ativo</span>
+      </div>
+      <div class="card-details"><strong>Filtros automáticos:</strong> Usa estados de interesse, setores e CNAEs do seu perfil</div>
+      <div class="card-actions">
+        <button class="action-button">Editar</button>
+        <button class="action-button">Desativar</button>
+        <button class="action-button" style="color: #FF6B35;">Excluir</button>
+      </div>
+    </div>
+
+    <!-- Adicione mais cards conforme necessário -->
+  </div>
+</body>
+</html>

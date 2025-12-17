@@ -15,7 +15,16 @@ serve(async (req) => {
   }
 
   try {
-    const { urlZip, nomeArquivo } = await req.json()
+    // Parse do body com tratamento de erro
+    let body
+    try {
+      body = await req.json()
+    } catch (parseError) {
+      console.error('❌ Erro ao fazer parse do JSON:', parseError)
+      throw new Error('Erro ao processar requisição: body inválido')
+    }
+
+    const { urlZip, nomeArquivo } = body
     
     if (!urlZip) {
       throw new Error('URL do arquivo ZIP é obrigatória')
@@ -23,15 +32,48 @@ serve(async (req) => {
 
     console.log('📦 [Edge Function] Baixando ZIP:', { urlZip, nomeArquivo })
 
-    // Baixar o arquivo ZIP do servidor (sem CORS)
-    const zipResponse = await fetch(urlZip, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    })
+    // Baixar o arquivo ZIP do servidor (sem CORS) com timeout e retry
+    let zipResponse
+    let retries = 3
+    let lastError
     
-    if (!zipResponse.ok) {
-      throw new Error(`Erro ao baixar ZIP: ${zipResponse.status} ${zipResponse.statusText}`)
+    while (retries > 0) {
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 30000) // 30s timeout
+        
+        zipResponse = await fetch(urlZip, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        })
+        
+        clearTimeout(timeoutId)
+        
+        if (zipResponse.ok) {
+          break
+        } else if (zipResponse.status >= 500 && retries > 1) {
+          retries--
+          await new Promise(resolve => setTimeout(resolve, 2000))
+          continue
+        } else {
+          throw new Error(`Erro ao baixar ZIP: ${zipResponse.status} ${zipResponse.statusText}`)
+        }
+      } catch (error) {
+        lastError = error
+        if (error.name === 'AbortError') {
+          throw new Error('Timeout ao baixar ZIP (30s)')
+        }
+        retries--
+        if (retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, 2000))
+        }
+      }
+    }
+    
+    if (!zipResponse || !zipResponse.ok) {
+      throw lastError || new Error(`Erro ao baixar ZIP após ${3 - retries} tentativas`)
     }
 
     const zipArrayBuffer = await zipResponse.arrayBuffer()
@@ -79,10 +121,15 @@ serve(async (req) => {
     )
   } catch (error) {
     console.error('❌ [Edge Function] Erro:', error)
+    console.error('❌ Stack trace:', error.stack)
+    console.error('❌ Error name:', error.name)
+    console.error('❌ Error message:', error.message)
+    
     return new Response(
       JSON.stringify({ 
         success: false,
-        error: error.message || 'Erro ao processar arquivo ZIP'
+        error: error.message || 'Erro desconhecido ao processar arquivo ZIP',
+        details: error.stack || 'Sem detalhes adicionais'
       }),
       { 
         status: 500,

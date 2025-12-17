@@ -91,27 +91,37 @@ serve(async (req) => {
     const pdfBuffer = new Uint8Array(pdfArrayBuffer)
 
     // Validação robusta de PDF:
-    // 1. Verificar Content-Type
-    const contentType = downloadResponse.headers.get('content-type') || ''
-    const isContentTypePDF = contentType.includes('pdf')
-    
-    // 2. Verificar extensão na URL
-    const urlLower = urlDocumento.toLowerCase()
-    const hasPdfExtension = urlLower.includes('.pdf') || urlLower.includes('pdf')
-    
-    // 3. Verificar assinatura do arquivo (PDF sempre começa com "%PDF")
+    // 1. Verificar assinatura do arquivo (PDF sempre começa com "%PDF") - MAIS IMPORTANTE
     const firstBytes = new TextDecoder().decode(pdfBuffer.slice(0, 4))
     const isPdfSignature = firstBytes === '%PDF'
     
-    // Aceitar se qualquer validação passar
-    if (!isContentTypePDF && !hasPdfExtension && !isPdfSignature) {
-      console.warn('⚠️ Validação de PDF:', {
-        contentType,
-        hasPdfExtension,
-        isPdfSignature,
-        firstBytes
-      })
-      throw new Error(`Tipo de arquivo inválido: ${contentType || 'desconhecido'}. Apenas PDF é permitido.`)
+    // 2. Verificar Content-Type
+    const contentType = downloadResponse.headers.get('content-type') || ''
+    const isContentTypePDF = contentType.includes('pdf')
+    const isOctetStream = contentType.includes('application/octet-stream')
+    
+    // 3. Verificar extensão na URL
+    const urlLower = urlDocumento.toLowerCase()
+    const hasPdfExtension = urlLower.includes('.pdf') || urlLower.includes('pdf')
+    
+    // Aceitar se tiver assinatura PDF (mesmo que Content-Type seja application/octet-stream)
+    // Muitos servidores retornam application/octet-stream mesmo para PDFs válidos
+    if (isPdfSignature) {
+      // Se tem assinatura PDF, aceitar mesmo que Content-Type seja application/octet-stream
+      console.log('✅ Arquivo tem assinatura PDF válida, aceitando mesmo com Content-Type:', contentType)
+    } else {
+      // Se não tem assinatura PDF, verificar outras validações
+      if (!isContentTypePDF && !hasPdfExtension) {
+        console.warn('⚠️ Validação de PDF falhou:', {
+          contentType,
+          hasPdfExtension,
+          isPdfSignature,
+          firstBytes
+        })
+        throw new Error(`Tipo de arquivo inválido: ${contentType || 'desconhecido'}. Apenas PDF é permitido.`)
+      }
+      // Se tem Content-Type PDF ou extensão PDF mas não tem assinatura, avisar mas aceitar
+      console.warn('⚠️ Arquivo parece ser PDF mas não tem assinatura válida. Aceitando mesmo assim.')
     }
 
     console.log('✅ Validação de PDF passou:', {
@@ -131,9 +141,15 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
     
+    console.log('🔍 Verificando variáveis de ambiente...')
+    console.log('🔍 SUPABASE_URL:', supabaseUrl ? 'Configurado' : 'NÃO CONFIGURADO')
+    console.log('🔍 SERVICE_ROLE_KEY:', supabaseServiceKey ? 'Configurado' : 'NÃO CONFIGURADO')
+    
     if (!supabaseUrl || !supabaseServiceKey) {
       console.error('❌ Variáveis de ambiente não configuradas')
-      throw new Error('Configuração do Supabase não encontrada')
+      console.error('❌ SUPABASE_URL:', supabaseUrl ? 'OK' : 'FALTANDO')
+      console.error('❌ SERVICE_ROLE_KEY:', supabaseServiceKey ? 'OK' : 'FALTANDO')
+      throw new Error('Configuração do Supabase não encontrada. Verifique as variáveis de ambiente SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY.')
     }
     
     console.log('🔧 Criando cliente Supabase...')
@@ -165,12 +181,29 @@ serve(async (req) => {
 
     console.log('✅ Upload concluído:', uploadData.path)
 
-    // 5. Obter URL pública
+    // 5. Obter URL pública (garantir que seja acessível publicamente)
     const { data: { publicUrl } } = supabase.storage
       .from('editais')
       .getPublicUrl(storagePath)
 
-    console.log('🔗 URL pública:', publicUrl)
+    console.log('🔗 URL pública gerada:', publicUrl)
+    
+    // IMPORTANTE: O Document QnA do Mistral precisa de URL pública e acessível
+    // Verificar se o bucket está configurado como público no Dashboard do Supabase
+    // Storage > Buckets > editais > Configurações > Público
+    
+    // Validar que a URL é acessível (teste opcional)
+    try {
+      const testResponse = await fetch(publicUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+      if (testResponse.ok) {
+        console.log('✅ URL pública é acessível')
+      } else {
+        console.warn('⚠️ URL pública pode não ser acessível:', testResponse.status)
+      }
+    } catch (error) {
+      console.warn('⚠️ Não foi possível verificar acessibilidade da URL:', error.message)
+      console.warn('⚠️ Certifique-se de que o bucket "editais" está configurado como PÚBLICO')
+    }
 
     // 6. Obter usuário autenticado
     const authHeader = req.headers.get('Authorization')

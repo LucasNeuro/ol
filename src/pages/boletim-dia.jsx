@@ -215,8 +215,8 @@ function LicitacoesContent() {
   // Estados dos Filtros
   const [filtros, setFiltros] = useState({
     // Essenciais
-    buscaObjeto: '',
-    buscaInvertida: false, // Toggle para inverter busca (mostrar o que NÃO contém)
+    buscaObjeto: '', // Campo para INCLUIR palavras (busca normal)
+    excluirPalavras: '', // Campo para EXCLUIR palavras (separado)
     uf: '',
     modalidade: '',
     dataPublicacaoInicio: '',
@@ -288,6 +288,67 @@ function LicitacoesContent() {
   }, [filtros])
 
   // Determinar status do edital (definido antes do useMemo)
+  // Função auxiliar para extrair documentos de diferentes fontes
+  const getDocumentos = useCallback((licitacao) => {
+    // Tentar de diferentes lugares na estrutura
+    if (licitacao.anexos && Array.isArray(licitacao.anexos) && licitacao.anexos.length > 0) {
+      return licitacao.anexos
+    }
+    
+    // Tentar de dados_completos
+    if (licitacao.dados_completos) {
+      // Pode estar como string JSON ou objeto
+      let dadosCompletos = licitacao.dados_completos
+      if (typeof dadosCompletos === 'string') {
+        try {
+          dadosCompletos = JSON.parse(dadosCompletos)
+        } catch (e) {
+          console.warn('Erro ao parsear dados_completos:', e)
+          return []
+        }
+      }
+      
+      // Verificar diferentes estruturas possíveis
+      if (dadosCompletos.anexos && Array.isArray(dadosCompletos.anexos)) {
+        return dadosCompletos.anexos
+      }
+      if (dadosCompletos.documentos && Array.isArray(dadosCompletos.documentos)) {
+        return dadosCompletos.documentos
+      }
+    }
+    
+    return []
+  }, [])
+
+  // Função auxiliar para extrair itens de diferentes fontes
+  const getItens = useCallback((licitacao) => {
+    // Tentar de diferentes lugares na estrutura
+    if (licitacao.itens && Array.isArray(licitacao.itens) && licitacao.itens.length > 0) {
+      return licitacao.itens
+    }
+    
+    // Tentar de dados_completos
+    if (licitacao.dados_completos) {
+      // Pode estar como string JSON ou objeto
+      let dadosCompletos = licitacao.dados_completos
+      if (typeof dadosCompletos === 'string') {
+        try {
+          dadosCompletos = JSON.parse(dadosCompletos)
+        } catch (e) {
+          console.warn('Erro ao parsear dados_completos:', e)
+          return []
+        }
+      }
+      
+      // Verificar diferentes estruturas possíveis
+      if (dadosCompletos.itens && Array.isArray(dadosCompletos.itens)) {
+        return dadosCompletos.itens
+      }
+    }
+    
+    return []
+  }, [])
+
   const getStatusEdital = useCallback((licitacao) => {
     // Tentar buscar de diferentes lugares na estrutura JSONB
     const dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
@@ -361,13 +422,16 @@ function LicitacoesContent() {
 
       // FILTROS ESSENCIAIS
       
-      // Busca Rápida - busca em múltiplos campos (objeto, órgão, número controle, modalidade)
+      // Busca Rápida (INCLUIR) - busca em múltiplos campos (objeto, órgão, número controle, modalidade)
       // A busca será aplicada também no lado do cliente para garantir busca completa
       if (filtrosDebounced.buscaObjeto) {
         const termoBusca = filtrosDebounced.buscaObjeto.trim()
         // Buscar primeiro no objeto (campo principal), busca completa será feita no cliente
         query = query.ilike('objeto_compra', `%${termoBusca}%`)
       }
+      
+      // Excluir Palavras - filtro de exclusão será aplicado apenas no cliente
+      // (não aplicamos no banco para não limitar a busca inicial)
 
       // UF
       if (filtrosDebounced.uf) {
@@ -484,7 +548,65 @@ function LicitacoesContent() {
 
       if (error) throw error
       
-      return data || []
+      // Processar dados: parsear dados_completos se for string e garantir que anexos/itens sejam arrays
+      const dadosProcessados = (data || []).map(licitacao => {
+        // Parsear dados_completos se for string
+        let dadosCompletos = licitacao.dados_completos
+        if (typeof dadosCompletos === 'string') {
+          try {
+            dadosCompletos = JSON.parse(dadosCompletos)
+          } catch (e) {
+            console.warn('Erro ao parsear dados_completos:', e)
+            dadosCompletos = {}
+          }
+        }
+        
+        // Garantir que anexos e itens sejam arrays válidos
+        let anexos = licitacao.anexos
+        if (typeof anexos === 'string') {
+          try {
+            anexos = JSON.parse(anexos)
+          } catch (e) {
+            anexos = []
+          }
+        }
+        if (!Array.isArray(anexos)) {
+          // Tentar extrair de dados_completos
+          if (dadosCompletos?.anexos && Array.isArray(dadosCompletos.anexos)) {
+            anexos = dadosCompletos.anexos
+          } else if (dadosCompletos?.documentos && Array.isArray(dadosCompletos.documentos)) {
+            anexos = dadosCompletos.documentos
+          } else {
+            anexos = []
+          }
+        }
+        
+        let itens = licitacao.itens
+        if (typeof itens === 'string') {
+          try {
+            itens = JSON.parse(itens)
+          } catch (e) {
+            itens = []
+          }
+        }
+        if (!Array.isArray(itens)) {
+          // Tentar extrair de dados_completos
+          if (dadosCompletos?.itens && Array.isArray(dadosCompletos.itens)) {
+            itens = dadosCompletos.itens
+          } else {
+            itens = []
+          }
+        }
+        
+        return {
+          ...licitacao,
+          dados_completos: dadosCompletos,
+          anexos: anexos,
+          itens: itens
+        }
+      })
+      
+      return dadosProcessados
     }
   })
 
@@ -734,9 +856,9 @@ function LicitacoesContent() {
       })
     }
 
-    // Busca Rápida - busca em múltiplos campos (objeto, órgão, número controle, modalidade)
+    // Busca Rápida (INCLUIR) - busca em múltiplos campos (objeto, órgão, número controle, modalidade)
     // Suporta múltiplas palavras separadas por vírgula
-    // Aplicar também no lado do cliente para garantir busca completa
+    // Mostra licitações que contêm PELO MENOS UMA das palavras
     if (filtros.buscaObjeto && filtros.buscaObjeto.trim()) {
       // Dividir por vírgula e limpar cada termo
       const termosBusca = filtros.buscaObjeto
@@ -744,29 +866,7 @@ function LicitacoesContent() {
         .map(termo => termo.trim().toLowerCase())
         .filter(termo => termo.length > 0)
       
-      if (termosBusca.length === 0) return resultado
-      
-      if (filtros.buscaInvertida) {
-        // Modo EXCLUIR: mostrar apenas o que NÃO contém NENHUMA das palavras
-        resultado = resultado.filter(licitacao => {
-          const objeto = (licitacao.objeto_compra || '').toLowerCase()
-          const orgao = (licitacao.orgao_razao_social || '').toLowerCase()
-          const numeroControle = (licitacao.numero_controle_pncp || '').toLowerCase()
-          const modalidade = (licitacao.modalidade_nome || '').toLowerCase()
-          
-          // Verificar se contém ALGUMA das palavras em QUALQUER campo
-          const contemAlgumaPalavra = termosBusca.some(termo => 
-            objeto.includes(termo) || 
-            orgao.includes(termo) || 
-            numeroControle.includes(termo) || 
-            modalidade.includes(termo)
-          )
-          
-          // Retornar apenas se NÃO contém nenhuma palavra
-          return !contemAlgumaPalavra
-        })
-      } else {
-        // Modo INCLUIR: mostrar apenas o que contém PELO MENOS UMA palavra
+      if (termosBusca.length > 0) {
         resultado = resultado.filter(licitacao => {
           const objeto = (licitacao.objeto_compra || '').toLowerCase()
           const orgao = (licitacao.orgao_razao_social || '').toLowerCase()
@@ -780,6 +880,37 @@ function LicitacoesContent() {
             numeroControle.includes(termo) || 
             modalidade.includes(termo)
           )
+        })
+      }
+    }
+
+    // Excluir Palavras (EXCLUIR) - remove licitações que contêm qualquer uma das palavras
+    // Suporta múltiplas palavras separadas por vírgula
+    // Mostra apenas licitações que NÃO contêm NENHUMA das palavras
+    if (filtros.excluirPalavras && filtros.excluirPalavras.trim()) {
+      // Dividir por vírgula e limpar cada termo
+      const termosExclusao = filtros.excluirPalavras
+        .split(',')
+        .map(termo => termo.trim().toLowerCase())
+        .filter(termo => termo.length > 0)
+      
+      if (termosExclusao.length > 0) {
+        resultado = resultado.filter(licitacao => {
+          const objeto = (licitacao.objeto_compra || '').toLowerCase()
+          const orgao = (licitacao.orgao_razao_social || '').toLowerCase()
+          const numeroControle = (licitacao.numero_controle_pncp || '').toLowerCase()
+          const modalidade = (licitacao.modalidade_nome || '').toLowerCase()
+          
+          // Verificar se contém ALGUMA das palavras em QUALQUER campo
+          const contemAlgumaPalavra = termosExclusao.some(termo => 
+            objeto.includes(termo) || 
+            orgao.includes(termo) || 
+            numeroControle.includes(termo) || 
+            modalidade.includes(termo)
+          )
+          
+          // Retornar apenas se NÃO contém nenhuma palavra
+          return !contemAlgumaPalavra
         })
       }
     }
@@ -869,7 +1000,7 @@ function LicitacoesContent() {
     licitacoes, 
     filtros.statusEdital, 
     filtros.buscaObjeto, 
-    filtros.buscaInvertida,
+    filtros.excluirPalavras,
     filtros.uf,
     filtros.modalidade,
     filtros.dataPublicacaoInicio,
@@ -1165,7 +1296,7 @@ function LicitacoesContent() {
     // Resetar todos os filtros
     setFiltros({
       buscaObjeto: '',
-      buscaInvertida: false,
+      excluirPalavras: '',
       uf: '',
       modalidade: '',
       statusEdital: '',
@@ -1234,6 +1365,7 @@ function LicitacoesContent() {
   const contarFiltrosAtivos = () => {
     let count = 0
     if (filtros.buscaObjeto) count++
+    if (filtros.excluirPalavras) count++
     if (filtros.uf) count++
     if (filtros.modalidade) count++
     if (filtros.statusEdital) count++
@@ -1356,47 +1488,20 @@ function LicitacoesContent() {
             </div>
           </div>
 
-            {/* Busca Rápida */}
+            {/* Busca Rápida (INCLUIR) */}
             <div className="mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                  <Filter className="w-4 h-4 text-orange-500" />
-                  Busca Rápida
-                </Label>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="busca-invertida" className="text-xs text-gray-600 cursor-pointer">
-                    Excluir
-                  </Label>
-                  <Switch
-                    id="busca-invertida"
-                    checked={filtros.buscaInvertida}
-                    onCheckedChange={(checked) => setFiltros({ ...filtros, buscaInvertida: checked })}
-                    className="data-[state=checked]:bg-orange-500"
-                    disabled={!filtros.buscaObjeto || !filtros.buscaObjeto.trim()}
-                  />
-      </div>
-              </div>
+              <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-2">
+                <Filter className="w-4 h-4 text-orange-500" />
+                Busca Rápida
+              </Label>
               <Input
-                placeholder={filtros.buscaInvertida 
-                  ? "Excluir licitações que contêm... (separar múltiplas palavras por vírgula)" 
-                  : "Buscar por objeto, órgão, número de controle ou modalidade... (separar múltiplas palavras por vírgula)"
-                }
+                placeholder="Buscar por objeto, órgão, número de controle ou modalidade... (separar múltiplas palavras por vírgula)"
                 value={filtros.buscaObjeto}
                 onChange={(e) => setFiltros({ ...filtros, buscaObjeto: e.target.value })}
                 className="h-10"
               />
-              {filtros.buscaInvertida && filtros.buscaObjeto && (
+              {filtros.buscaObjeto && filtros.buscaObjeto.includes(',') && (
                 <p className="text-xs text-gray-500 mt-1">
-                  Mostrando apenas licitações que <strong>NÃO</strong> contêm: {filtros.buscaObjeto.split(',').map(t => t.trim()).filter(t => t).map((termo, idx) => (
-                    <span key={idx}>
-                      <strong>"{termo}"</strong>
-                      {idx < filtros.buscaObjeto.split(',').map(t => t.trim()).filter(t => t).length - 1 && ', '}
-                </span>
-                  ))}
-                </p>
-              )}
-              {!filtros.buscaInvertida && filtros.buscaObjeto && filtros.buscaObjeto.includes(',') && (
-                  <p className="text-xs text-gray-500 mt-1">
                   Buscando por qualquer uma das palavras: {filtros.buscaObjeto.split(',').map(t => t.trim()).filter(t => t).map((termo, idx, arr) => (
                     <span key={idx}>
                       <strong>"{termo}"</strong>
@@ -1404,8 +1509,32 @@ function LicitacoesContent() {
                     </span>
                   ))}
                 </p>
-                )}
-              </div>
+              )}
+            </div>
+
+            {/* Excluir Palavras (EXCLUIR) */}
+            <div className="mb-4">
+              <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-2">
+                <Filter className="w-4 h-4 text-red-500" />
+                Excluir Palavras
+              </Label>
+              <Input
+                placeholder="Excluir licitações que contêm... (separar múltiplas palavras por vírgula)"
+                value={filtros.excluirPalavras}
+                onChange={(e) => setFiltros({ ...filtros, excluirPalavras: e.target.value })}
+                className="h-10"
+              />
+              {filtros.excluirPalavras && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Mostrando apenas licitações que <strong>NÃO</strong> contêm: {filtros.excluirPalavras.split(',').map(t => t.trim()).filter(t => t).map((termo, idx, arr) => (
+                    <span key={idx}>
+                      <strong>"{termo}"</strong>
+                      {idx < arr.length - 1 && ', '}
+                    </span>
+                  ))}
+                </p>
+              )}
+            </div>
                 
             {/* Accordion com Filtros */}
             <Accordion type="multiple" defaultValue={['filtros']}>
@@ -1635,8 +1764,14 @@ function LicitacoesContent() {
               <div className="flex flex-wrap gap-2 mt-4">
                 {filtros.buscaObjeto && (
                   <Badge variant="secondary" className="gap-1">
-                    Objeto: {filtros.buscaObjeto}
+                    Busca: {filtros.buscaObjeto}
                     <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, buscaObjeto: '' })} />
+                  </Badge>
+                )}
+                {filtros.excluirPalavras && (
+                  <Badge variant="secondary" className="gap-1 bg-red-50 text-red-700 border-red-200">
+                    Excluir: {filtros.excluirPalavras}
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, excluirPalavras: '' })} />
                   </Badge>
                 )}
                 {filtros.uf && (
@@ -1728,7 +1863,7 @@ function LicitacoesContent() {
                   </span>
                 )}
               </p>
-              {(filtros.buscaObjeto || filtros.uf || filtros.modalidade || filtros.statusEdital || 
+              {(filtros.buscaObjeto || filtros.excluirPalavras || filtros.uf || filtros.modalidade || filtros.statusEdital || 
                 filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim || filtros.valorMin || 
                 filtros.valorMax || filtros.orgao || filtros.numeroEdital || filtros.comDocumentos || 
                 filtros.comItens || filtros.comValor || dataFiltro) && licitacoesFinais.length > 100 && (
@@ -1780,30 +1915,38 @@ function LicitacoesContent() {
                           : 'text-blue-500 hover:text-blue-600'
                       }`} />
                       {/* Indicador de conteúdo disponível */}
-                      {((licitacao.anexos && licitacao.anexos.length > 0) || 
-                        (licitacao.itens && licitacao.itens.length > 0)) && 
-                        !cardsExpandidos.has(licitacao.id) && (
-                        <span className="absolute -top-1 -right-1 w-3 h-3 bg-orange-500 rounded-full border-2 border-white"></span>
-                      )}
+                      {(() => {
+                        const documentos = getDocumentos(licitacao)
+                        const itens = getItens(licitacao)
+                        return (documentos.length > 0 || itens.length > 0) && 
+                               !cardsExpandidos.has(licitacao.id) && (
+                          <span className="absolute -top-1 -right-1 w-3 h-3 bg-orange-500 rounded-full border-2 border-white"></span>
+                        )
+                      })()}
                     </button>
                     
                     {/* Badges de indicadores (quando não expandido) */}
-                    {!cardsExpandidos.has(licitacao.id) && (
-                      <>
-                        {licitacao.anexos && licitacao.anexos.length > 0 && (
-                          <Badge variant="outline" className="text-xs">
-                            <Download className="w-3 h-3 mr-1" />
-                            {licitacao.anexos.length} doc{licitacao.anexos.length > 1 ? 's' : ''}
-                          </Badge>
-                        )}
-                        {licitacao.itens && licitacao.itens.length > 0 && (
-                          <Badge variant="outline" className="text-xs">
-                            <FileText className="w-3 h-3 mr-1" />
-                            {licitacao.itens.length} {licitacao.itens.length > 1 ? 'itens' : 'item'}
-                          </Badge>
-                        )}
-                      </>
-                              )}
+                    {!cardsExpandidos.has(licitacao.id) && (() => {
+                      const documentos = getDocumentos(licitacao)
+                      const itens = getItens(licitacao)
+                      
+                      return (
+                        <>
+                          {documentos.length > 0 && (
+                            <Badge variant="outline" className="text-xs">
+                              <Download className="w-3 h-3 mr-1" />
+                              {documentos.length} doc{documentos.length > 1 ? 's' : ''}
+                            </Badge>
+                          )}
+                          {itens.length > 0 && (
+                            <Badge variant="outline" className="text-xs">
+                              <FileText className="w-3 h-3 mr-1" />
+                              {itens.length} {itens.length > 1 ? 'itens' : 'item'}
+                            </Badge>
+                          )}
+                        </>
+                      )
+                    })()}
                             </div>
                   
                   {/* Badges de Status e Datas */}
@@ -2368,7 +2511,7 @@ function LicitacoesContent() {
 
           {/* Botão Carregar Mais (apenas sem filtros) */}
           {!isLoading && !error && !processandoFiltro && licitacoesFinais.length >= limitePagina && 
-           !(filtros.buscaObjeto || filtros.uf || filtros.modalidade || filtros.statusEdital || 
+           !(filtros.buscaObjeto || filtros.excluirPalavras || filtros.uf || filtros.modalidade || filtros.statusEdital || 
              filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim || filtros.valorMin || 
              filtros.valorMax || filtros.orgao || filtros.numeroEdital || filtros.comDocumentos || 
              filtros.comItens || filtros.comValor || dataFiltro) && (

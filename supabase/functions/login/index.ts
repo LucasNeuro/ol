@@ -1,9 +1,22 @@
-// Edge Function para login com verificação de senha
+// ============================================
+// EDGE FUNCTION: LOGIN
+// ============================================
+// Login com verificação de senha usando bcrypt
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { compare } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts"
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
 serve(async (req) => {
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
   try {
     const { email, password } = await req.json()
     
@@ -11,9 +24,20 @@ serve(async (req) => {
       throw new Error('Email e senha são obrigatórios')
     }
 
+    console.log('🔐 Tentando login:', email)
+
+    // Verificar variáveis de ambiente
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error('❌ Variáveis de ambiente não configuradas')
+      throw new Error('Configuração do Supabase não encontrada')
+    }
+
     const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+      supabaseUrl,
+      supabaseServiceKey,
       {
         auth: {
           autoRefreshToken: false,
@@ -50,14 +74,29 @@ serve(async (req) => {
     // Remover password_hash antes de retornar
     const { password_hash, ...userData } = user
 
+    console.log('✅ Login bem-sucedido:', userData.id)
+
     return new Response(
-      JSON.stringify({ data: { user: userData } }),
-      { headers: { "Content-Type": "application/json" } }
+      JSON.stringify({ 
+        success: true,
+        data: { user: userData } 
+      }),
+      { 
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200
+      }
     )
   } catch (error) {
+    console.error('❌ Erro no login:', error.message)
     return new Response(
-      JSON.stringify({ error: error.message }),
-      { status: 401, headers: { "Content-Type": "application/json" } }
+      JSON.stringify({ 
+        success: false,
+        error: error.message || 'Email ou senha incorretos'
+      }),
+      { 
+        status: 401, 
+        headers: { ...corsHeaders, "Content-Type": "application/json" } 
+      }
     )
   }
 })

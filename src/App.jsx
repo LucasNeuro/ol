@@ -5,11 +5,15 @@ import { queryClient } from '@/lib/queryClient'
 import { ToastProvider } from '@/components/ui/toast'
 import { ConfirmDialogProvider } from '@/components/ui/confirm-dialog'
 import { FiltroProvider } from '@/contexts/FiltroContext'
+import { useVerificarAlertas } from '@/hooks/useVerificarAlertas'
+import { useAuth } from '@/hooks/useAuth'
 
 // Páginas públicas
 import { LandingPage } from '@/pages/landing'
 import { LoginPage } from '@/pages/login'
 import { CadastroPage } from '@/pages/cadastro'
+import { RecuperarSenhaPage } from '@/pages/recuperar-senha'
+import { RedefinirSenhaPage } from '@/pages/redefinir-senha'
 
 // Páginas protegidas
 import { ModulosPage } from '@/pages/modulos'
@@ -69,38 +73,51 @@ function limparCacheInicial() {
   }
 }
 
+function AppContent() {
+  const { user } = useAuth()
+  // Iniciar verificação automática de alertas apenas se usuário estiver autenticado
+  useVerificarAlertas({ intervaloMinutos: 5, ativo: !!user })
+
+  return (
+    <Switch>
+      <Route path="/" component={LandingPage} />
+      <Route path="/login" component={LoginPage} />
+      <Route path="/cadastro" component={CadastroPage} />
+      <Route path="/recuperar-senha" component={RecuperarSenhaPage} />
+      <Route path="/redefinir-senha/:token" component={RedefinirSenhaPage} />
+      
+      <Route path="/modulos" component={ModulosPage} />
+      <Route path="/dashboard" component={DashboardPage} />
+      <Route path="/perfil" component={PerfilPage} />
+      <Route path="/boletim" component={BoletimPage} />
+      <Route path="/licitacoes" component={BoletimDiaPage} />
+      <Route path="/favoritos" component={FavoritosPage} />
+      <Route path="/alertas" component={AlertasPage} />
+      <Route path="/edital/:numeroControle" component={EditalPage} />
+      
+      {/* Rotas Administrativas */}
+      <Route path="/admin/usuarios" component={AdminUsuariosPage} />
+      
+      {/* Rotas não encontradas - redirecionar para licitações se autenticado, senão para login */}
+      <Route>
+        <Redirect to="/licitacoes" />
+      </Route>
+    </Switch>
+  )
+}
+
 function App() {
   // Limpar cache ao iniciar a aplicação
   useEffect(() => {
     limparCacheInicial()
   }, [])
+  
   return (
     <QueryClientProvider client={queryClient}>
       <FiltroProvider>
         <ToastProvider>
           <ConfirmDialogProvider>
-            <Switch>
-            <Route path="/" component={LandingPage} />
-            <Route path="/login" component={LoginPage} />
-            <Route path="/cadastro" component={CadastroPage} />
-            
-            <Route path="/modulos" component={ModulosPage} />
-            <Route path="/dashboard" component={DashboardPage} />
-            <Route path="/perfil" component={PerfilPage} />
-            <Route path="/boletim" component={BoletimPage} />
-            <Route path="/licitacoes" component={BoletimDiaPage} />
-            <Route path="/favoritos" component={FavoritosPage} />
-            <Route path="/alertas" component={AlertasPage} />
-            <Route path="/edital/:numeroControle" component={EditalPage} />
-            
-            {/* Rotas Administrativas */}
-            <Route path="/admin/usuarios" component={AdminUsuariosPage} />
-            
-            {/* Rotas não encontradas - redirecionar para licitações se autenticado, senão para login */}
-            <Route>
-              <Redirect to="/licitacoes" />
-            </Route>
-            </Switch>
+            <AppContent />
           </ConfirmDialogProvider>
         </ToastProvider>
       </FiltroProvider>

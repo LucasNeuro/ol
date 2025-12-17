@@ -33,7 +33,7 @@ function PerfilContent() {
   const [modalSetoresAberto, setModalSetoresAberto] = useState(false)
   const [modalEstadosAberto, setModalEstadosAberto] = useState(false)
   const [salvandoConfig, setSalvandoConfig] = useState(false)
-
+  
   // Buscar TODOS os dados do perfil do banco
   const { data: perfilCompleto, isLoading: loadingPerfil } = useQuery({
     queryKey: ['perfil-completo', userAuth?.id],

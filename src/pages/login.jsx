@@ -92,6 +92,14 @@ export function LoginPage() {
                 </Button>
           </form>
 
+          <div className="mt-4 text-center">
+            <Link href="/recuperar-senha">
+              <a className="text-sm text-orange-600 hover:text-orange-700 font-medium hover:underline cursor-pointer">
+                Esqueci minha senha
+              </a>
+            </Link>
+          </div>
+
           <div className="mt-6 pt-6 border-t border-gray-200 text-center">
             <p className="text-sm text-gray-600">
               Não tem uma conta?{' '}
