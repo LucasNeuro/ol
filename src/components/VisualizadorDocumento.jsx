@@ -287,36 +287,14 @@ export function VisualizadorDocumento({
       
       console.log('📥 Iniciando carregamento de PDF...')
       
-      // Estratégia 1: Tentar carregar diretamente primeiro (pode funcionar se não houver CORS)
+      // SEMPRE usar Edge Function primeiro para evitar problemas de CORS
+      // A API do PNCP tem problemas de CORS que impedem acesso direto
       let urlParaUsar = urlDocumento
-      let tentouDireto = false
       let tentouBucket = false
       
+      // Estratégia 1: Usar Edge Function para baixar e salvar no bucket (contorna CORS)
       try {
-        console.log('🔄 Tentativa 1: Carregando diretamente da URL...')
-        const loadingTaskDireto = pdfjsLib.getDocument({
-          url: urlDocumento,
-          withCredentials: false,
-          httpHeaders: {},
-          verbosity: 0
-        })
-        
-        const pdfDataDireto = await loadingTaskDireto.promise
-        console.log('✅ PDF carregado diretamente:', pdfDataDireto.numPages, 'páginas')
-        
-        setPdfDoc(pdfDataDireto)
-        setNumPages(pdfDataDireto.numPages)
-        setPageNumber(1)
-        setLoading(false)
-        return // Sucesso!
-      } catch (erroDireto) {
-        console.warn('⚠️ Falha ao carregar diretamente:', erroDireto.message)
-        tentouDireto = true
-      }
-      
-      // Estratégia 2: Tentar usar Edge Function para baixar e salvar no bucket
-      try {
-        console.log('🔄 Tentativa 2: Usando Edge Function para contornar CORS...')
+        console.log('🔄 Usando Edge Function para contornar CORS...')
         const urlLocalStorage = await baixarESalvarNoBucket()
         urlParaUsar = urlLocalStorage
         setUrlLocal(urlLocalStorage)
@@ -340,13 +318,36 @@ export function VisualizadorDocumento({
         setLoading(false)
         return // Sucesso!
       } catch (bucketError) {
-        console.warn('⚠️ Falha ao processar via Edge Function:', bucketError.message)
-        tentouBucket = true
+        console.error('❌ Falha ao processar via Edge Function:', bucketError.message)
+        
+        // Se o erro for de tamanho, mostrar mensagem específica
+        if (bucketError.message.includes('muito grande')) {
+          throw new Error(bucketError.message + ' Você pode visualizar o documento diretamente no site do PNCP usando "Abrir em nova aba".')
+        }
+        
+        // Se o erro for de CORS ou outro, tentar carregar diretamente como fallback
+        console.warn('⚠️ Tentando carregar diretamente como fallback...')
+        try {
+          const loadingTaskDireto = pdfjsLib.getDocument({
+            url: urlDocumento,
+            withCredentials: false,
+            httpHeaders: {},
+            verbosity: 0
+          })
+          
+          const pdfDataDireto = await loadingTaskDireto.promise
+          console.log('✅ PDF carregado diretamente (fallback):', pdfDataDireto.numPages, 'páginas')
+          
+          setPdfDoc(pdfDataDireto)
+          setNumPages(pdfDataDireto.numPages)
+          setPageNumber(1)
+          setLoading(false)
+          return // Sucesso no fallback!
+        } catch (erroDireto) {
+          console.error('❌ Fallback também falhou:', erroDireto.message)
+          throw new Error('Não foi possível carregar o documento. O servidor bloqueia o acesso devido a restrições de segurança (CORS). Use "Abrir em nova aba" para visualizar o documento.')
+        }
       }
-      
-      // Se ambas as estratégias falharam, é CORS
-      console.error('❌ Todas as tentativas falharam - CORS bloqueando acesso')
-      throw new Error('Não foi possível carregar o documento. O servidor bloqueia o acesso devido a restrições de segurança (CORS). Use "Abrir em nova aba" para visualizar o documento.')
       
     } catch (err) {
       console.error('❌ Erro ao carregar PDF:', err)

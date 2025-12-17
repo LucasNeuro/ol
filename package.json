@@ -7,7 +7,7 @@
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:server\"",
     "dev:frontend": "vite",
     "dev:server": "node server/verificar-alertas.js",
-    "build": "vite build",
+    "build": "vite build && node scripts/copy-redirects.js",
     "preview": "vite preview",
     "start": "node server/verificar-alertas.js",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",

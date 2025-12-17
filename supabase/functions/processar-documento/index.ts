@@ -132,9 +132,12 @@ serve(async (req) => {
 
     console.log('✅ Download concluído:', (pdfBuffer.length / 1024 / 1024).toFixed(2), 'MB')
 
-    // Verificar tamanho (max 10MB)
-    if (pdfBuffer.length > 10 * 1024 * 1024) {
-      throw new Error('Arquivo muito grande. Máximo: 10MB')
+    // Verificar tamanho (max 70MB para permitir documentos maiores)
+    const tamanhoMaximoMB = 70
+    const tamanhoMaximoBytes = tamanhoMaximoMB * 1024 * 1024
+    if (pdfBuffer.length > tamanhoMaximoBytes) {
+      const tamanhoMB = (pdfBuffer.length / 1024 / 1024).toFixed(2)
+      throw new Error(`Arquivo muito grande (${tamanhoMB} MB). Máximo permitido: ${tamanhoMaximoMB}MB. O documento pode ser visualizado diretamente no site do PNCP.`)
     }
 
     // 2. Criar cliente Supabase
