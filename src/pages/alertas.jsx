@@ -61,7 +61,7 @@ function AlertasContent() {
       // 2. Preparar filtros baseados no perfil da empresa
       const filtros = {}
       const filtrosAvancados = {}
-
+      
       // Estados de interesse do perfil
       if (perfil.estados_interesse && Array.isArray(perfil.estados_interesse) && perfil.estados_interesse.length > 0) {
         // Se tiver apenas um estado, usar diretamente
@@ -90,7 +90,7 @@ function AlertasContent() {
         }
         filtrosAvancados.filtros_cnaes[perfil.cnae_principal] = true
       }
-
+      
       // 3. Preparar dados para inserção
       const horario = novoAlerta.horario_verificacao.includes(':') 
         ? novoAlerta.horario_verificacao.length === 5 
@@ -360,20 +360,20 @@ function AlertasContent() {
 
                     <div className="space-y-2">
                       <Label htmlFor="horario_verificacao">Horário de Verificação *</Label>
-                      <Input
-                        id="horario_verificacao"
-                        type="time"
-                        {...register('horario_verificacao')}
-                        defaultValue="09:00"
-                        className={errors.horario_verificacao ? 'border-red-500' : ''}
-                      />
-                      {errors.horario_verificacao && (
-                        <p className="text-red-600 text-sm mt-1">{errors.horario_verificacao.message}</p>
-                      )}
-                      <p className="text-xs text-gray-500">
+                        <Input
+                          id="horario_verificacao"
+                          type="time"
+                          {...register('horario_verificacao')}
+                          defaultValue="09:00"
+                          className={errors.horario_verificacao ? 'border-red-500' : ''}
+                        />
+                        {errors.horario_verificacao && (
+                          <p className="text-red-600 text-sm mt-1">{errors.horario_verificacao.message}</p>
+                        )}
+                        <p className="text-xs text-gray-500">
                         Horário em que o sistema verificará novas licitações diariamente
-                      </p>
-                    </div>
+                        </p>
+                      </div>
                   </div>
 
                   {/* Informação sobre filtros automáticos */}
@@ -421,18 +421,18 @@ function AlertasContent() {
                           <CardTitle>{alerta.nome_alerta}</CardTitle>
                           <CardDescription className="mt-2">
                             <div className="space-y-1 text-sm">
-                              <p><strong>Email:</strong> {alerta.email_notificacao}</p>
+                            <p><strong>Email:</strong> {alerta.email_notificacao}</p>
                               <p><strong>Frequência:</strong> Diário (automático)</p>
-                              {alerta.horario_verificacao && (
+                            {alerta.horario_verificacao && (
                                 <p className="flex items-center gap-1">
                                   <Clock className="w-4 h-4" />
                                   <strong>Horário:</strong> {alerta.horario_verificacao.slice(0, 5)}
                                 </p>
-                              )}
-                              {alerta.ultima_verificacao && (
-                                <p><strong>Última verificação:</strong> {new Date(alerta.ultima_verificacao).toLocaleString('pt-BR')}</p>
-                              )}
-                              <p><strong>Status:</strong> {alerta.ativo ? 'Ativo' : 'Inativo'}</p>
+                            )}
+                            {alerta.ultima_verificacao && (
+                              <p><strong>Última verificação:</strong> {new Date(alerta.ultima_verificacao).toLocaleString('pt-BR')}</p>
+                            )}
+                            <p><strong>Status:</strong> {alerta.ativo ? 'Ativo' : 'Inativo'}</p>
                               <div className="mt-2 pt-2 border-t">
                                 <p className="text-xs text-gray-600">
                                   <strong>Filtros automáticos:</strong> Usa estados de interesse, setores e CNAEs do seu perfil
