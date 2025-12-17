@@ -147,7 +147,7 @@ export const useUserStore = create(
 
       setLoading: (isLoading) => set({ isLoading }),
 
-      // Logout completo
+      // Logout completo (redirecionamento deve ser feito pelo componente que chama)
       logout: () => {
         // Limpar estado
         set({ 
@@ -165,8 +165,8 @@ export const useUserStore = create(
           console.warn('⚠️ Erro ao limpar localStorage no logout:', e)
         }
         
-        // Redirecionar para login
-        window.location.href = '/login'
+        // Não redirecionar aqui - deixar o componente fazer isso
+        // Isso garante que funcione corretamente com SPA no Render
       },
     }),
     {

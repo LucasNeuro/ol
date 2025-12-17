@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 
 export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
-  const [location] = useLocation()
+  const [location, setLocation] = useLocation()
   const { user, signOut } = useAuth()
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const { processandoFiltro, mensagemProgresso, progressoPercentual } = useFiltroContext()
@@ -29,6 +29,8 @@ export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
     try {
       await signOut()
       setDropdownOpen(false)
+      // Redirecionar para login usando o roteador do wouter (funciona melhor no Render)
+      setLocation('/login')
     } catch (error) {
       console.error('Erro ao fazer logout:', error)
     }
