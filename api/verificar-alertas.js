@@ -1,3 +1,16 @@
+/**
+ * API Route para Vercel - Verificar Alertas
+ * 
+ * Esta API Route será chamada por um serviço de cron externo (cron-job.org, EasyCron, etc.)
+ * porque a conta Hobby do Vercel tem limitações nos cron jobs (apenas 1x por dia).
+ * 
+ * Como usar:
+ * 1. Configure um cron job externo para chamar esta URL a cada 5 minutos
+ * 2. URL: https://seu-projeto.vercel.app/api/verificar-alertas
+ * 3. Método: GET ou POST
+ * 
+ * Veja CONFIGURAR_CRON_EXTERNO.md para instruções detalhadas.
+ */
 
 import { createClient } from '@supabase/supabase-js'
 import { Resend } from 'resend'

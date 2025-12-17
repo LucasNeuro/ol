@@ -9,6 +9,7 @@
     "dev:server": "node server/verificar-alertas.js",
     "build": "vite build",
     "preview": "vite preview",
+    "start": "node server/verificar-alertas.js",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "buscar-edital": "node scripts/buscar-edital-completo.js",
     "verificar-alertas": "node server/verificar-alertas.js"

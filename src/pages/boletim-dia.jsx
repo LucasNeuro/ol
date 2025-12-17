@@ -775,40 +775,40 @@ function LicitacoesContent() {
             
             const lote = resultado.slice(indiceAtual, indiceAtual + TAMANHO_LOTE)
             const loteAtual = Math.floor(indiceAtual / TAMANHO_LOTE) + 1
-            
-            // Atualizar progresso baseado no lote atual (50% a 90%)
-            const progressoLote = 50 + Math.floor((loteAtual / totalLotes) * 40)
-            setProgressoPercentual(progressoLote)
-            
-            // Atualizar mensagem de progresso
-            setMensagemProgresso(
+          
+          // Atualizar progresso baseado no lote atual (50% a 90%)
+          const progressoLote = 50 + Math.floor((loteAtual / totalLotes) * 40)
+          setProgressoPercentual(progressoLote)
+          
+          // Atualizar mensagem de progresso
+          setMensagemProgresso(
               `Processando: ${loteAtual}/${totalLotes} lotes (${Math.min(indiceAtual + lote.length, antesFiltro)}/${antesFiltro} licitações)...`
+          )
+          
+            // Processar lote atual
+          const resultadosLote = lote.map((licitacao) => {
+            // Usar APENAS filtro semântico (sem IA)
+            // Mais rápido e eficiente, sem necessidade de API externa
+            const corresponde = correspondeAtividades(
+              licitacao,
+              palavrasChave,
+              sinonimosPersonalizados, // Sinônimos personalizados
+              sinonimosBancoFormatados, // Sinônimos do banco (AGORA USANDO!)
+              setoresAtividades // Setores para contexto
             )
             
-            // Processar lote atual
-            const resultadosLote = lote.map((licitacao) => {
-              // Usar APENAS filtro semântico (sem IA)
-              // Mais rápido e eficiente, sem necessidade de API externa
-              const corresponde = correspondeAtividades(
-                licitacao,
-                palavrasChave,
-                sinonimosPersonalizados, // Sinônimos personalizados
-                sinonimosBancoFormatados, // Sinônimos do banco (AGORA USANDO!)
-                setoresAtividades // Setores para contexto
-              )
-              
-              // Log detalhado para debug (apenas 1% para não poluir console)
-              if (!corresponde && licitacao.objeto_compra && Math.random() < 0.01) {
-                console.log(`🚫 [Filtro] Licitação filtrada:`, {
-                  objeto: licitacao.objeto_compra.substring(0, 100),
-                  palavrasPrincipais: palavrasChave.principais.slice(0, 3)
-                })
-              }
-              
-              return corresponde ? licitacao : null
-            }).filter(Boolean)
+            // Log detalhado para debug (apenas 1% para não poluir console)
+            if (!corresponde && licitacao.objeto_compra && Math.random() < 0.01) {
+              console.log(`🚫 [Filtro] Licitação filtrada:`, {
+                objeto: licitacao.objeto_compra.substring(0, 100),
+                palavrasPrincipais: palavrasChave.principais.slice(0, 3)
+              })
+            }
             
-            resultadosFiltrados.push(...resultadosLote)
+            return corresponde ? licitacao : null
+          }).filter(Boolean)
+          
+          resultadosFiltrados.push(...resultadosLote)
             
             // Avançar para o próximo lote
             indiceAtual += TAMANHO_LOTE
@@ -1355,7 +1355,7 @@ function LicitacoesContent() {
     
     // Forçar refetch imediato da query com os novos filtros
     setTimeout(() => {
-      queryClient.invalidateQueries(['licitacoes'])
+    queryClient.invalidateQueries(['licitacoes'])
       refetchLicitacoes()
     }, 100)
     
@@ -1491,9 +1491,9 @@ function LicitacoesContent() {
             {/* Busca Rápida (INCLUIR) */}
             <div className="mb-4">
               <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-2">
-                <Filter className="w-4 h-4 text-orange-500" />
-                Busca Rápida
-              </Label>
+                  <Filter className="w-4 h-4 text-orange-500" />
+                  Busca Rápida
+                </Label>
               <Input
                 placeholder="Buscar por objeto, órgão, número de controle ou modalidade... (separar múltiplas palavras por vírgula)"
                 value={filtros.buscaObjeto}
@@ -1506,7 +1506,7 @@ function LicitacoesContent() {
                     <span key={idx}>
                       <strong>"{termo}"</strong>
                       {idx < arr.length - 1 && ', '}
-                    </span>
+                </span>
                   ))}
                 </p>
               )}
@@ -1525,7 +1525,7 @@ function LicitacoesContent() {
                 className="h-10"
               />
               {filtros.excluirPalavras && (
-                <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-gray-500 mt-1">
                   Mostrando apenas licitações que <strong>NÃO</strong> contêm: {filtros.excluirPalavras.split(',').map(t => t.trim()).filter(t => t).map((termo, idx, arr) => (
                     <span key={idx}>
                       <strong>"{termo}"</strong>
@@ -1533,8 +1533,8 @@ function LicitacoesContent() {
                     </span>
                   ))}
                 </p>
-              )}
-            </div>
+                )}
+              </div>
                 
             {/* Accordion com Filtros */}
             <Accordion type="multiple" defaultValue={['filtros']}>
@@ -1919,8 +1919,8 @@ function LicitacoesContent() {
                         const documentos = getDocumentos(licitacao)
                         const itens = getItens(licitacao)
                         return (documentos.length > 0 || itens.length > 0) && 
-                               !cardsExpandidos.has(licitacao.id) && (
-                          <span className="absolute -top-1 -right-1 w-3 h-3 bg-orange-500 rounded-full border-2 border-white"></span>
+                        !cardsExpandidos.has(licitacao.id) && (
+                        <span className="absolute -top-1 -right-1 w-3 h-3 bg-orange-500 rounded-full border-2 border-white"></span>
                         )
                       })()}
                     </button>
@@ -1933,18 +1933,18 @@ function LicitacoesContent() {
                       return (
                         <>
                           {documentos.length > 0 && (
-                            <Badge variant="outline" className="text-xs">
-                              <Download className="w-3 h-3 mr-1" />
+                          <Badge variant="outline" className="text-xs">
+                            <Download className="w-3 h-3 mr-1" />
                               {documentos.length} doc{documentos.length > 1 ? 's' : ''}
-                            </Badge>
-                          )}
+                          </Badge>
+                        )}
                           {itens.length > 0 && (
-                            <Badge variant="outline" className="text-xs">
-                              <FileText className="w-3 h-3 mr-1" />
+                          <Badge variant="outline" className="text-xs">
+                            <FileText className="w-3 h-3 mr-1" />
                               {itens.length} {itens.length > 1 ? 'itens' : 'item'}
-                            </Badge>
-                          )}
-                        </>
+                          </Badge>
+                        )}
+                      </>
                       )
                     })()}
                             </div>
