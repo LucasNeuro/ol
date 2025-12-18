@@ -73,8 +73,8 @@ export function useAuth() {
 
   async function signOut() {
     try {
-      // Usar a função logout do store que já faz tudo
-      logout()
+      // Usar a função logout do store que já faz tudo (agora é async)
+      await logout()
     } catch (error) {
       console.error('Erro ao fazer logout:', error)
       throw error

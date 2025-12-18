@@ -56,6 +56,7 @@ import {
   correspondeAtividades,
   obterObjetoCompleto
 } from '@/lib/filtroSemantico'
+import { filtrarLicitacoesPorBusca, buscarEmLicitacao } from '@/lib/buscaFuzzy'
 import { useFiltroContext } from '@/contexts/FiltroContext'
 import { isZipFile, descompactarZip, limparBlobUrls } from '@/lib/zipService'
 
@@ -76,6 +77,7 @@ function LicitacoesContent() {
   const [documentoVisualizacao, setDocumentoVisualizacao] = useState(null)
   const [limitePagina, setLimitePagina] = useState(50)
   const [arquivosZipDescompactados, setArquivosZipDescompactados] = useState({}) // { anexoKey: { loading, arquivos, erro } }
+  const [baixandoDocumentos, setBaixandoDocumentos] = useState(new Set()) // IDs de licitações sendo processadas
   // Estados para processamento do filtro (compartilhado via contexto)
   const { 
     processandoFiltro, 
@@ -226,8 +228,6 @@ function LicitacoesContent() {
     statusEdital: '', // Em Andamento, Encerrando, Encerrado
     
     // Úteis
-    orgao: '',
-    numeroEdital: '',
     comDocumentos: false,
     comItens: false,
     comValor: false,
@@ -271,21 +271,49 @@ function LicitacoesContent() {
     }
   }, [location])
 
-  // Resetar limite quando mudar filtros
-  useEffect(() => {
-    setLimitePagina(50)
-  }, [filtros, dataFiltro])
-
-  // Debounce para filtros de texto (melhorar performance)
-  const [filtrosDebounced, setFiltrosDebounced] = useState(filtros)
+ 
+  const [filtrosAplicados, setFiltrosAplicados] = useState(filtros)
+  
   
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setFiltrosDebounced(filtros)
-    }, 300) // 300ms de delay
+    setLimitePagina(50)
+  }, [filtrosAplicados, dataFiltro])
 
-    return () => clearTimeout(timer)
-  }, [filtros])
+  
+  useEffect(() => {
+    setFiltrosAplicados(prev => ({
+      ...prev,
+      // Manter buscaObjeto, excluirPalavras, dataPublicacaoInicio e dataPublicacaoFim como estão (só mudam ao clicar em "Aplicar")
+      // Atualizar apenas filtros não-texto e não-data
+      uf: filtros.uf,
+      modalidade: filtros.modalidade,
+      statusEdital: filtros.statusEdital,
+      valorMin: filtros.valorMin,
+      valorMax: filtros.valorMax,
+      comDocumentos: filtros.comDocumentos,
+      comItens: filtros.comItens,
+      comValor: filtros.comValor,
+      situacao: filtros.situacao,
+      esfera: filtros.esfera,
+      modoDisputa: filtros.modoDisputa,
+      amparoLegal: filtros.amparoLegal,
+    }))
+  }, [
+    filtros.uf, 
+    filtros.modalidade, 
+    filtros.statusEdital, 
+    filtros.valorMin, 
+    filtros.valorMax, 
+    filtros.comDocumentos, 
+    filtros.comItens, 
+    filtros.comValor, 
+    filtros.situacao, 
+    filtros.esfera, 
+    filtros.modoDisputa, 
+    filtros.amparoLegal
+    // NÃO incluir: filtros.buscaObjeto, filtros.excluirPalavras, filtros.dataPublicacaoInicio, filtros.dataPublicacaoFim
+    // Esses campos só são aplicados ao clicar no botão "Aplicar"
+  ])
 
   // Determinar status do edital (definido antes do useMemo)
   // Função auxiliar para extrair documentos de diferentes fontes
@@ -320,6 +348,99 @@ function LicitacoesContent() {
     return []
   }, [])
 
+  // Função para baixar e compactar todos os documentos de uma licitação em ZIP
+  const baixarDocumentosComoZip = useCallback(async (licitacao) => {
+    try {
+      const licitacaoId = licitacao.id || licitacao.numero_controle_pncp
+      const numeroControlePNCP = licitacao.numero_controle_pncp
+      
+      setBaixandoDocumentos(prev => new Set(prev).add(licitacaoId))
+      
+      console.log('📦 [Download ZIP] Chamando Edge Function para baixar e compactar documentos...')
+      
+      // Obter token de autenticação
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      if (!supabaseUrl) {
+        throw new Error('VITE_SUPABASE_URL não configurado')
+      }
+
+      const { supabase } = await import('@/lib/supabase')
+      const { data: session } = await supabase.auth.getSession()
+      const token = session?.session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY
+
+      // Chamar Edge Function
+      const response = await fetch(
+        `${supabaseUrl}/functions/v1/baixar-documentos-zip`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '',
+          },
+          body: JSON.stringify({
+            numeroControlePNCP: numeroControlePNCP,
+            licitacaoId: licitacao.id,
+          }),
+        }
+      )
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Erro desconhecido' }))
+        throw new Error(errorData.error || `Erro ${response.status}: ${response.statusText}`)
+      }
+
+      const result = await response.json()
+
+      if (!result.success || !result.zipBase64) {
+        throw new Error(result.error || 'Erro ao processar ZIP')
+      }
+
+      console.log(`✅ [Download ZIP] ZIP recebido! ${result.documentosBaixados} documentos baixados`)
+
+      // Converter base64 para blob
+      const binaryString = atob(result.zipBase64)
+      const len = binaryString.length
+      const bytes = new Uint8Array(len)
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+      const zipBlob = new Blob([bytes], { type: 'application/zip' })
+
+      // Criar link de download
+      const urlZip = URL.createObjectURL(zipBlob)
+      const link = document.createElement('a')
+      link.href = urlZip
+      link.download = result.nomeArquivo || `Documentos_${numeroControlePNCP}_${new Date().toISOString().split('T')[0]}.zip`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+
+      // Limpar URL do blob após um tempo
+      setTimeout(() => URL.revokeObjectURL(urlZip), 1000)
+
+      console.log(`✅ [Download ZIP] ZIP baixado com sucesso!`)
+
+      if (result.documentosErros > 0) {
+        alert(`Download concluído! ${result.documentosBaixados} documentos baixados com sucesso, ${result.documentosErros} documentos não puderam ser baixados.`)
+      }
+      
+      setBaixandoDocumentos(prev => {
+        const novo = new Set(prev)
+        novo.delete(licitacaoId)
+        return novo
+      })
+    } catch (error) {
+      console.error('❌ [Download ZIP] Erro ao baixar ZIP:', error)
+      alert(`Erro ao baixar documentos: ${error.message}`)
+      setBaixandoDocumentos(prev => {
+        const novo = new Set(prev)
+        novo.delete(licitacao.id || licitacao.numero_controle_pncp)
+        return novo
+      })
+    }
+  }, [])
+
   // Função auxiliar para extrair itens de diferentes fontes
   const getItens = useCallback((licitacao) => {
     // Tentar de diferentes lugares na estrutura
@@ -351,29 +472,71 @@ function LicitacoesContent() {
 
   const getStatusEdital = useCallback((licitacao) => {
     // Tentar buscar de diferentes lugares na estrutura JSONB
-    const dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
+    let dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
                         licitacao.dados_completos?.data_abertura_proposta ||
                         licitacao.dados_completos?.dataAberturaPropostaData
-    const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
+    let dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
                              licitacao.dados_completos?.data_encerramento_proposta ||
                              licitacao.dados_completos?.dataEncerramentoPropostaData
     
-    if (!dataEncerramento) return null
-    
     const hoje = new Date()
+    hoje.setHours(0, 0, 0, 0) // Normalizar para comparar apenas datas
+    
+    // Se tem data de abertura, verificar se ainda não abriu (PRÓXIMO)
+    if (dataAbertura) {
+      const abertura = new Date(dataAbertura)
+      abertura.setHours(0, 0, 0, 0)
+      
+      // Se ainda não abriu
+      if (hoje < abertura) {
+        return 'proximo'
+      }
+    }
+    
+    // Se tem data de encerramento, verificar status baseado nela
+    if (dataEncerramento) {
     const encerramento = new Date(dataEncerramento)
+      encerramento.setHours(0, 0, 0, 0)
     const diasRestantes = Math.ceil((encerramento - hoje) / (1000 * 60 * 60 * 24))
     
     // Encerrado
-    if (diasRestantes < 0) return 'encerrado'
+      if (diasRestantes < 0) {
+        return 'encerrado'
+      }
     
     // Encerrando (3 dias ou menos)
-    if (diasRestantes <= 3 && diasRestantes > 0) return 'encerrando'
+      if (diasRestantes <= 3 && diasRestantes > 0) {
+        return 'encerrando'
+      }
     
-    // Em andamento
+      // Em andamento (se já abriu e ainda não encerrou)
     if (dataAbertura) {
       const abertura = new Date(dataAbertura)
+        abertura.setHours(0, 0, 0, 0)
       if (hoje >= abertura && hoje <= encerramento) {
+          return 'andamento'
+        }
+      } else {
+        // Se não tem abertura mas tem encerramento no futuro, considerar em andamento
+        if (diasRestantes > 0) {
+          return 'andamento'
+        }
+      }
+    } else if (dataAbertura) {
+      // Se só tem abertura, verificar se já abriu
+      const abertura = new Date(dataAbertura)
+      abertura.setHours(0, 0, 0, 0)
+      if (hoje >= abertura) {
+        return 'andamento'
+      }
+    }
+
+    // Se não tem datas específicas mas tem data de publicação recente, considerar ativa
+    if (!dataAbertura && !dataEncerramento && licitacao.data_publicacao_pncp) {
+      const publicacao = new Date(licitacao.data_publicacao_pncp)
+      publicacao.setHours(0, 0, 0, 0)
+      const diasDesdePublicacao = Math.ceil((hoje - publicacao) / (1000 * 60 * 60 * 24))
+      if (diasDesdePublicacao <= 30 && diasDesdePublicacao >= 0) {
         return 'andamento'
       }
     }
@@ -398,217 +561,75 @@ function LicitacoesContent() {
     enabled: !!user?.id
   })
 
-  // Buscar licitações do banco com TODOS os filtros (usar filtrosDebounced para campos de texto)
-  const { data: licitacoes = [], isLoading, error, refetch: refetchLicitacoes } = useQuery({
-    queryKey: ['licitacoes', filtrosDebounced, dataFiltro, limitePagina, perfilUsuario?.estados_interesse, perfilUsuario?.setores_atividades],
+  // Estado para rastrear último userId (para detectar mudança de usuário)
+  const [ultimoUserId, setUltimoUserId] = useState(null)
+  
+  // IMPORTANTE: Buscar TODAS as licitações UMA VEZ ao iniciar sessão
+  // QueryKey inclui userId - garante cache separado por usuário
+  // Todos os filtros serão aplicados no cliente depois
+  const { data: licitacoes = [], isLoading, error } = useQuery({
+    queryKey: ['licitacoes-sessao-completa', user?.id], // Incluir userId para cache específico
     queryFn: async () => {
-      let query = supabase
-            .from('licitacoes')
-        .select(`
-          id,
-          numero_controle_pncp,
-          objeto_compra,
-          data_publicacao_pncp,
-          data_atualizacao,
-          uf_sigla,
-          modalidade_nome,
-          orgao_razao_social,
-          valor_total_estimado,
-          dados_completos,
-          anexos,
-          itens
-        `)
-        .order('data_publicacao_pncp', { ascending: false })
-
-      // FILTROS ESSENCIAIS
-      
-      // Busca Rápida (INCLUIR) - busca em múltiplos campos (objeto, órgão, número controle, modalidade)
-      // A busca será aplicada também no lado do cliente para garantir busca completa
-      if (filtrosDebounced.buscaObjeto) {
-        const termoBusca = filtrosDebounced.buscaObjeto.trim()
-        // Buscar primeiro no objeto (campo principal), busca completa será feita no cliente
-        query = query.ilike('objeto_compra', `%${termoBusca}%`)
+      if (!user?.id) {
+        console.warn('⚠️ [Sessão] Usuário não autenticado, não carregando licitações')
+        return []
       }
       
-      // Excluir Palavras - filtro de exclusão será aplicado apenas no cliente
-      // (não aplicamos no banco para não limitar a busca inicial)
-
-      // UF
-      if (filtrosDebounced.uf) {
-        query = query.eq('uf_sigla', filtrosDebounced.uf.toUpperCase())
+      // IMPORTANTE: Se mudou de usuário, limpar cache antigo e buscar do banco
+      const mudouUsuario = ultimoUserId && ultimoUserId !== user.id
+      if (mudouUsuario) {
+        console.log(`🔄 [Sessão] Usuário mudou (${ultimoUserId} → ${user.id}), limpando cache e buscando do banco...`)
+        const { limparCacheLicitacoes } = await import('@/lib/collections/licitacoesStore')
+        await limparCacheLicitacoes(ultimoUserId) // Limpar cache do usuário anterior
+        // Continuar para buscar do banco (não usar cache do usuário anterior)
       }
-
-      // Modalidade
-      if (filtrosDebounced.modalidade) {
-        query = query.ilike('modalidade_nome', `%${filtrosDebounced.modalidade}%`)
-      }
-
-      // Data Publicação
-      if (filtrosDebounced.dataPublicacaoInicio) {
-        query = query.gte('data_publicacao_pncp', filtrosDebounced.dataPublicacaoInicio)
-      }
-      if (filtrosDebounced.dataPublicacaoFim) {
-        query = query.lte('data_publicacao_pncp', filtrosDebounced.dataPublicacaoFim)
-      }
-
-      // Valor Estimado
-      if (filtrosDebounced.valorMin) {
-        query = query.gte('valor_total_estimado', parseFloat(filtrosDebounced.valorMin))
-      }
-      if (filtrosDebounced.valorMax) {
-        query = query.lte('valor_total_estimado', parseFloat(filtrosDebounced.valorMax))
-      }
-
-      // FILTROS ÚTEIS
-
-      // Órgão
-      if (filtrosDebounced.orgao) {
-        query = query.ilike('orgao_razao_social', `%${filtrosDebounced.orgao}%`)
-      }
-
-      // Número Edital
-      if (filtrosDebounced.numeroEdital) {
-        query = query.ilike('numero_controle_pncp', `%${filtrosDebounced.numeroEdital}%`)
-      }
-
-      // Com Documentos
-      if (filtrosDebounced.comDocumentos) {
-        query = query.neq('anexos', '[]')
-      }
-
-      // Com Itens
-      if (filtrosDebounced.comItens) {
-        query = query.neq('itens', '[]')
-      }
-
-      // Com Valor
-      if (filtrosDebounced.comValor) {
-        query = query.not('valor_total_estimado', 'is', null)
-      }
-
-      // FILTROS DE EXCLUSÃO serão aplicados no useMemo após a query
-      // (não aplicamos aqui porque precisamos filtrar por palavras no objeto)
-
-      // Filtro de data do calendário (prioritário)
-      if (dataFiltro) {
-        query = query.eq('data_publicacao_pncp', dataFiltro)
-      }
-
-      // Verificar se há filtros ativos (usar filtrosDebounced)
-      const temFiltrosAtivos = !!(
-        filtrosDebounced.buscaObjeto ||
-        filtrosDebounced.uf ||
-        filtrosDebounced.modalidade ||
-        filtrosDebounced.statusEdital ||
-        filtrosDebounced.dataPublicacaoInicio ||
-        filtrosDebounced.dataPublicacaoFim ||
-        filtrosDebounced.valorMin ||
-        filtrosDebounced.valorMax ||
-        filtrosDebounced.orgao ||
-        filtrosDebounced.numeroEdital ||
-        filtrosDebounced.comDocumentos ||
-        filtrosDebounced.comItens ||
-        filtrosDebounced.comValor ||
-        dataFiltro
-      )
-
-      // Verificar se há perfil configurado (estados ou setores)
-      // Se houver, precisamos buscar mais licitações para aplicar o filtro depois
-      const temPerfilConfigurado = perfilUsuario && (
-        (perfilUsuario.estados_interesse && perfilUsuario.estados_interesse.length > 0) ||
-        (perfilUsuario.setores_atividades && perfilUsuario.setores_atividades.length > 0)
-      )
-
-      // BUSCAR TODAS AS LICITAÇÕES DISPONÍVEIS NA TABELA
-      // Não limitar por data - o usuário pode usar filtros de data se quiser
-      // Apenas aplicar limite máximo de registros para evitar sobrecarga
-
-      // Se tem estados configurados no perfil, aplicar filtro no banco (muito mais eficiente)
-      if (perfilUsuario?.estados_interesse && perfilUsuario.estados_interesse.length > 0) {
-        const estadosInteresse = perfilUsuario.estados_interesse
-        const temNacional = estadosInteresse.some(e => 
-          typeof e === 'string' ? e === 'Nacional' : e === 'Nacional'
-        )
-        
-        if (!temNacional && !filtrosDebounced.uf) {
-          // Filtrar por estados no banco (muito mais rápido que filtrar no cliente)
-          query = query.in('uf_sigla', estadosInteresse.map(e => 
-            typeof e === 'string' ? e.toUpperCase() : e
-          ))
-          console.log(`🗺️ [Query] Filtrando por estados no banco:`, estadosInteresse)
-        }
-      }
-
-      // Aplicar limite máximo de 50.000 registros para evitar sobrecarga
-      // Isso permite buscar praticamente todas as licitações disponíveis
-      // O filtro semântico será aplicado depois nos resultados
-      query = query.limit(50000)
-
-      const { data, error } = await query
-
-      if (error) throw error
       
-      // Processar dados: parsear dados_completos se for string e garantir que anexos/itens sejam arrays
-      const dadosProcessados = (data || []).map(licitacao => {
-        // Parsear dados_completos se for string
-        let dadosCompletos = licitacao.dados_completos
-        if (typeof dadosCompletos === 'string') {
-          try {
-            dadosCompletos = JSON.parse(dadosCompletos)
-          } catch (e) {
-            console.warn('Erro ao parsear dados_completos:', e)
-            dadosCompletos = {}
-          }
-        }
-        
-        // Garantir que anexos e itens sejam arrays válidos
-        let anexos = licitacao.anexos
-        if (typeof anexos === 'string') {
-          try {
-            anexos = JSON.parse(anexos)
-          } catch (e) {
-            anexos = []
-          }
-        }
-        if (!Array.isArray(anexos)) {
-          // Tentar extrair de dados_completos
-          if (dadosCompletos?.anexos && Array.isArray(dadosCompletos.anexos)) {
-            anexos = dadosCompletos.anexos
-          } else if (dadosCompletos?.documentos && Array.isArray(dadosCompletos.documentos)) {
-            anexos = dadosCompletos.documentos
-          } else {
-            anexos = []
-          }
-        }
-        
-        let itens = licitacao.itens
-        if (typeof itens === 'string') {
-          try {
-            itens = JSON.parse(itens)
-          } catch (e) {
-            itens = []
-          }
-        }
-        if (!Array.isArray(itens)) {
-          // Tentar extrair de dados_completos
-          if (dadosCompletos?.itens && Array.isArray(dadosCompletos.itens)) {
-            itens = dadosCompletos.itens
-          } else {
-            itens = []
-          }
-        }
-        
-        return {
-          ...licitacao,
-          dados_completos: dadosCompletos,
-          anexos: anexos,
-          itens: itens
-        }
-      })
+      // Atualizar último userId
+      setUltimoUserId(user.id)
       
-      return dadosProcessados
-    }
+      // IMPORTANTE: Sempre buscar do banco ao logar (não usar cache)
+      // O filtro semântico será aplicado depois, garantindo dados corretos para o usuário
+      const { buscarLicitacoesDoBanco, salvarCacheLicitacoes, limparCacheLicitacoes } = await import('@/lib/collections/licitacoesStore')
+      
+      // Se mudou de usuário, limpar cache do usuário anterior
+      if (mudouUsuario) {
+        await limparCacheLicitacoes(ultimoUserId)
+        console.log(`🔄 [Sessão] Cache do usuário anterior limpo`)
+      }
+      
+      // Limpar TODOS os caches do usuário atual (incluindo cache semântico) para garantir dados frescos
+      await limparCacheLicitacoes(user.id)
+      console.log(`🔄 [Sessão] Todos os caches limpos, buscando dados frescos do banco para usuário: ${user.id}`)
+      
+      // Buscar do banco (SEM FILTROS - busca tudo)
+      console.log(`📡 [Sessão] Buscando TODAS as licitações do banco (usuário: ${user.id})...`)
+      const todasLicitacoes = await buscarLicitacoesDoBanco()
+      
+      // Salvar no cache com userId (IndexedDB) - será usado como base para o filtro semântico
+      await salvarCacheLicitacoes(todasLicitacoes, user.id)
+      
+      console.log(`✅ [Sessão] ${todasLicitacoes.length} licitações carregadas do banco e salvas no cache`)
+      console.log(`🔄 [Sessão] Cache semântico foi limpo - filtro semântico será aplicado na próxima renderização`)
+      
+      return todasLicitacoes
+    },
+    enabled: !!user?.id, // Só executar se tiver usuário autenticado
+    staleTime: Infinity, // Nunca considera stale - cache permanente na sessão
+    gcTime: 1000 * 60 * 60 * 24, // Mantém cache por 24 horas
+    refetchOnWindowFocus: false, // Não refaz busca ao focar na janela
+    refetchOnMount: false, // Não refaz busca ao montar componente novamente
+    refetchOnReconnect: false, // Não refaz busca ao reconectar
   })
+  
+  // Limpar cache semântico quando mudar de usuário
+  useEffect(() => {
+    if (ultimoUserId && ultimoUserId !== user?.id && user?.id) {
+      console.log(`🔄 [Sessão] Limpando cache semântico do usuário anterior: ${ultimoUserId}`)
+      import('@/lib/collections/licitacoesStore').then(async ({ limparCacheLicitacoes }) => {
+        await limparCacheLicitacoes(ultimoUserId)
+      })
+    }
+  }, [user?.id, ultimoUserId])
 
   // Estado para licitações filtradas (filtro semântico síncrono)
   const [licitacoesFiltradas, setLicitacoesFiltradas] = useState([])
@@ -639,38 +660,26 @@ function LicitacoesContent() {
         return
       }
       
-      // Verificar cache primeiro (mas não usar se estiver no modo "mostrar todas")
-      if (!mostrarTodasLicitacoes) {
-        const cacheKey = getCacheKey()
-        if (cacheKey) {
-          try {
-            const cached = localStorage.getItem(cacheKey)
-            if (cached) {
-              const { resultado, timestamp } = JSON.parse(cached)
-              // Cache válido por 5 minutos
-              if (Date.now() - timestamp < 5 * 60 * 1000) {
-                console.log('✅ [Cache] Usando resultado em cache')
-                setLicitacoesFiltradas(resultado)
-                setProcessandoFiltro(false)
-                setProgressoPercentual(0)
-                return
-              }
-            }
-          } catch (e) {
-            console.warn('⚠️ Erro ao ler cache:', e)
-          }
-        }
-      }
+      // IMPORTANTE: Ao logar, sempre aplicar filtro semântico para garantir dados corretos
+      // Não usar cache semântico ao logar - garante que licitações estejam alinhadas com o perfil atual
+      let resultado = licitacoes // Inicializar com todas as licitações
+      let temCacheSemantico = false
       
-      // Iniciar processamento
+      // Removido: Não usar cache semântico ao logar
+      // Sempre aplicar filtro semântico para garantir dados corretos do perfil atual
+      
+      // REMOVIDO: Cache final não é mais necessário
+      // Já temos cache semântico no IndexedDB que é suficiente
+      // O cache final estava causando problemas de quota no localStorage
+      
+      // Iniciar processamento do filtro semântico (sempre ao logar)
+      if (!mostrarTodasLicitacoes) {
       setProcessandoFiltro(true)
       setProgressoPercentual(10)
       setMensagemProgresso('Iniciando filtro semântico...')
-      
-      let resultado = licitacoes
-      
       setProgressoPercentual(20)
       setMensagemProgresso('Carregando perfil da empresa...')
+      }
 
     // Se o botão "Mostrar Todas" foi clicado, pular filtro semântico
     if (mostrarTodasLicitacoes) {
@@ -679,6 +688,7 @@ function LicitacoesContent() {
       setProgressoPercentual(100)
       setMensagemProgresso('Mostrando todas as licitações')
     } else {
+      // SEMPRE aplicar filtro semântico ao logar (garantir dados corretos do perfil)
     // FILTRO AUTOMÁTICO BASEADO NO PERFIL DA EMPRESA
     if (perfilUsuario) {
       const estadosInteresse = perfilUsuario.estados_interesse || []
@@ -691,7 +701,7 @@ function LicitacoesContent() {
                                        !perfilUsuario.estados_interesse.some(e => 
                                          typeof e === 'string' ? e === 'Nacional' : e === 'Nacional'
                                        ) &&
-                                       !filtrosDebounced.uf
+                                       !filtrosAplicados.uf
       
       if (!foiFiltradoEstadoNoBanco && estadosInteresse.length > 0) {
         // Se tem "Nacional", não filtrar por estado
@@ -824,12 +834,18 @@ function LicitacoesContent() {
         
         resultado = resultadosFiltrados
         
+        // IMPORTANTE: Salvar resultado do filtro semântico no cache - específico por usuário (IndexedDB)
+        if (user?.id) {
+          const { salvarCacheSemantico } = await import('@/lib/collections/licitacoesStore')
+          await salvarCacheSemantico(resultado, user.id)
+        }
+        
         setProgressoPercentual(90)
         setMensagemProgresso(`Filtro concluído! ${resultado.length} licitações encontradas.`)
         
         const depoisFiltro = resultado.length
         const percentualRemovido = antesFiltro > 0 ? ((1 - depoisFiltro/antesFiltro) * 100).toFixed(1) : 0
-        console.log(`✅ [Filtro] Filtrado: ${antesFiltro} → ${depoisFiltro} licitações (${percentualRemovido}% removidas)`)
+        console.log(`✅ [Filtro Semântico] Filtrado: ${antesFiltro} → ${depoisFiltro} licitações (${percentualRemovido}% removidas) - Salvo no cache`)
       } else {
         // Se NÃO tem setores cadastrados, NÃO MOSTRAR NADA (muito restritivo)
         console.warn('⚠️ Empresa sem setores cadastrados. NÃO MOSTRANDO licitações até configurar setores.')
@@ -849,135 +865,316 @@ function LicitacoesContent() {
     } // Fim do else do mostrarTodasLicitacoes
 
     // Filtrar por status do edital
-    if (filtros.statusEdital) {
+    if (filtrosAplicados.statusEdital) {
+      const antesStatus = resultado.length
       resultado = resultado.filter(licitacao => {
+        // Se filtro for "urgente", usar função isUrgente
+        if (filtrosAplicados.statusEdital === 'urgente') {
+          return isUrgente(licitacao)
+        }
+        
+        // Para outros status, usar getStatusEdital
         const status = getStatusEdital(licitacao)
-        return status === filtros.statusEdital
+        return status === filtrosAplicados.statusEdital
       })
+      const depoisStatus = resultado.length
+      console.log(`📊 [Filtro Status] ${antesStatus - depoisStatus} licitações removidas. ${depoisStatus} restantes. Status: ${filtrosAplicados.statusEdital}`)
     }
 
-    // Busca Rápida (INCLUIR) - busca em múltiplos campos (objeto, órgão, número controle, modalidade)
-    // Suporta múltiplas palavras separadas por vírgula
-    // Mostra licitações que contêm PELO MENOS UMA das palavras
-    if (filtros.buscaObjeto && filtros.buscaObjeto.trim()) {
-      // Dividir por vírgula e limpar cada termo
-      const termosBusca = filtros.buscaObjeto
-        .split(',')
-        .map(termo => termo.trim().toLowerCase())
-        .filter(termo => termo.length > 0)
-      
-      if (termosBusca.length > 0) {
+    // Filtrar por UF
+    if (filtrosAplicados.uf && filtrosAplicados.uf.trim()) {
+      const antesUF = resultado.length
+      resultado = resultado.filter(licitacao => {
+        return licitacao.uf_sigla?.toUpperCase() === filtrosAplicados.uf.toUpperCase()
+      })
+      console.log(`🗺️ [Filtro UF] ${antesUF - resultado.length} licitações removidas. ${resultado.length} restantes. UF: ${filtrosAplicados.uf}`)
+    }
+
+    // Filtrar por modalidade
+    if (filtrosAplicados.modalidade && filtrosAplicados.modalidade.trim()) {
+      const antesModalidade = resultado.length
         resultado = resultado.filter(licitacao => {
-          const objeto = (licitacao.objeto_compra || '').toLowerCase()
-          const orgao = (licitacao.orgao_razao_social || '').toLowerCase()
-          const numeroControle = (licitacao.numero_controle_pncp || '').toLowerCase()
-          const modalidade = (licitacao.modalidade_nome || '').toLowerCase()
-          
-          // Verificar se contém PELO MENOS UMA das palavras em QUALQUER campo
-          return termosBusca.some(termo => 
-            objeto.includes(termo) || 
-            orgao.includes(termo) || 
-            numeroControle.includes(termo) || 
-            modalidade.includes(termo)
-          )
-        })
-      }
+        return licitacao.modalidade_nome === filtrosAplicados.modalidade
+      })
+      console.log(`📋 [Filtro Modalidade] ${antesModalidade - resultado.length} licitações removidas. ${resultado.length} restantes. Modalidade: ${filtrosAplicados.modalidade}`)
     }
 
-    // Excluir Palavras (EXCLUIR) - remove licitações que contêm qualquer uma das palavras
-    // Suporta múltiplas palavras separadas por vírgula
-    // Mostra apenas licitações que NÃO contêm NENHUMA das palavras
-    if (filtros.excluirPalavras && filtros.excluirPalavras.trim()) {
-      // Dividir por vírgula e limpar cada termo
-      const termosExclusao = filtros.excluirPalavras
-        .split(',')
-        .map(termo => termo.trim().toLowerCase())
+    // Filtrar por valor (min e max)
+    if (filtrosAplicados.valorMin || filtrosAplicados.valorMax) {
+      const antesValor = resultado.length
+      resultado = resultado.filter(licitacao => {
+        const valor = licitacao.valor_total_estimado || 0
+        
+        if (filtrosAplicados.valorMin && valor < parseFloat(filtrosAplicados.valorMin)) {
+          return false
+        }
+        
+        if (filtrosAplicados.valorMax && valor > parseFloat(filtrosAplicados.valorMax)) {
+          return false
+        }
+        
+        return true
+      })
+      console.log(`💰 [Filtro Valor] ${antesValor - resultado.length} licitações removidas. ${resultado.length} restantes. Intervalo: ${filtrosAplicados.valorMin || 'min'} - ${filtrosAplicados.valorMax || 'max'}`)
+    }
+
+    // Filtrar por documentos (deve ter documentos)
+    if (filtrosAplicados.comDocumentos) {
+      const antesDocs = resultado.length
+      resultado = resultado.filter(licitacao => {
+        const docs = getDocumentos(licitacao)
+        return docs && docs.length > 0
+      })
+      console.log(`📄 [Filtro Com Documentos] ${antesDocs - resultado.length} licitações removidas. ${resultado.length} restantes.`)
+    }
+
+    // Filtrar por itens (deve ter itens)
+    if (filtrosAplicados.comItens) {
+      const antesItens = resultado.length
+      resultado = resultado.filter(licitacao => {
+        return licitacao.itens && Array.isArray(licitacao.itens) && licitacao.itens.length > 0
+      })
+      console.log(`📦 [Filtro Com Itens] ${antesItens - resultado.length} licitações removidas. ${resultado.length} restantes.`)
+    }
+
+    // Filtrar por valor (deve ter valor)
+    if (filtrosAplicados.comValor) {
+      const antesComValor = resultado.length
+      resultado = resultado.filter(licitacao => {
+        const valor = licitacao.valor_total_estimado
+        return valor && valor > 0
+      })
+      console.log(`💵 [Filtro Com Valor] ${antesComValor - resultado.length} licitações removidas. ${resultado.length} restantes.`)
+    }
+
+    // Busca Rápida (INCLUIR) - FILTRO INTELIGENTE
+    // Busca exclusivamente nos dados do cache IndexedDB (não busca no banco)
+    // Busca em TODOS os campos relevantes do objeto do edital:
+    // - objeto_compra (principal)
+    // - orgao_razao_social, numero_controle_pncp, modalidade_nome
+    // - unidade_nome, municipio_nome, uf_sigla
+    // - dados_completos (objeto JSON com campos extras)
+    // - itens do edital (descrição, material, serviço, marca, especificação)
+    // 
+    // Características:
+    // - Case-insensitive (ignora maiúsculas/minúsculas)
+    // - Ignora acentos
+    // - Busca por similaridade (tolerante a erros de digitação)
+    // - Suporta múltiplas palavras separadas por vírgula (OR lógico)
+    // - Threshold 0.62: balanceado entre precisão e recall
+    // - Aplicado apenas ao clicar no botão "Aplicar" (melhor performance)
+    if (filtrosAplicados.buscaObjeto && filtrosAplicados.buscaObjeto.trim()) {
+      const antesBusca = resultado.length
+      resultado = filtrarLicitacoesPorBusca(resultado, filtrosAplicados.buscaObjeto, 0.62)
+      const encontradas = resultado.length
+      const termos = filtrosAplicados.buscaObjeto.split(',').map(t => t.trim()).filter(t => t)
+      console.log(`🔍 [Busca Rápida INCLUIR] "${filtrosAplicados.buscaObjeto}" → ${encontradas}/${antesBusca} licitações encontradas (${termos.length} termo${termos.length > 1 ? 's' : ''})`)
+    }
+
+    // Excluir Palavras (EXCLUIR) - FILTRO INTELIGENTE DE EXCLUSÃO
+    // Remove licitações do cache que contêm qualquer uma das palavras de exclusão
+    // Busca exclusivamente nos dados do cache IndexedDB (mesmos campos da busca rápida)
+    // 
+    // Lógica: Se uma licitação contém QUALQUER uma das palavras de exclusão em QUALQUER campo,
+    // ela é REMOVIDA do resultado
+    // 
+    // Características:
+    // - Case-insensitive (ignora maiúsculas/minúsculas)
+    // - Ignora acentos
+    // - Busca por similaridade (tolerante a erros de digitação)
+    // - Suporta múltiplas palavras separadas por vírgula
+    // - Threshold 0.72: mais restritivo para evitar exclusões indevidas (precisão > recall)
+    // - Busca nos mesmos campos da busca rápida (objeto, órgão, itens, etc)
+    // - Aplicado apenas ao clicar no botão "Aplicar" (melhor performance)
+    if (filtrosAplicados.excluirPalavras && filtrosAplicados.excluirPalavras.trim()) {
+      // Dividir por vírgula ou quebra de linha e limpar cada termo
+      const termosExclusao = filtrosAplicados.excluirPalavras
+        .split(/[,\n]/)
+        .map(termo => termo.trim())
+        .filter(termo => termo.length > 0)
+        .flatMap(termo => {
+          // Se termo tem espaços sem vírgula, manter como termo único
+          return termo.includes(' ') && !termo.includes(',') ? [termo] : termo.split(/\s+/).filter(w => w.length > 0)
+        })
         .filter(termo => termo.length > 0)
       
       if (termosExclusao.length > 0) {
+        const antesExclusao = resultado.length
         resultado = resultado.filter(licitacao => {
-          const objeto = (licitacao.objeto_compra || '').toLowerCase()
-          const orgao = (licitacao.orgao_razao_social || '').toLowerCase()
-          const numeroControle = (licitacao.numero_controle_pncp || '').toLowerCase()
-          const modalidade = (licitacao.modalidade_nome || '').toLowerCase()
-          
-          // Verificar se contém ALGUMA das palavras em QUALQUER campo
-          const contemAlgumaPalavra = termosExclusao.some(termo => 
-            objeto.includes(termo) || 
-            orgao.includes(termo) || 
-            numeroControle.includes(termo) || 
-            modalidade.includes(termo)
+          // Verificar se contém ALGUMA das palavras de exclusão em QUALQUER campo do objeto do edital
+          // Threshold 0.72: mais restritivo para evitar excluir incorretamente
+          const contemAlgumaPalavraExclusao = termosExclusao.some(termo => 
+            buscarEmLicitacao(licitacao, termo, 0.72)
           )
           
-          // Retornar apenas se NÃO contém nenhuma palavra
-          return !contemAlgumaPalavra
+          // Retornar apenas licitações que NÃO contêm nenhuma palavra de exclusão
+          return !contemAlgumaPalavraExclusao
         })
+        const excluidas = antesExclusao - resultado.length
+        const percentualExcluido = antesExclusao > 0 ? ((excluidas / antesExclusao) * 100).toFixed(1) : 0
+        console.log(`🚫 [Excluir Palavras EXCLUIR] "${filtrosAplicados.excluirPalavras}" → ${excluidas} excluídas (${percentualExcluido}%), ${resultado.length} licitações restantes`)
       }
     }
 
     // Filtros de exclusão removidos temporariamente - será repensado
+
+    // Filtro automático: Apenas licitações dos últimos 7 dias
+    // Trabalhando exclusivamente com dados do cache IndexedDB (não busca no banco)
+    const antesData = resultado.length
+    
+    // Função auxiliar para normalizar data (apenas data, sem hora)
+    // Aceita diferentes formatos: ISO string, timestamp, DD/MM/YYYY, YYYY-MM-DD, etc.
+    const normalizarData = (dataStr) => {
+      if (!dataStr) return null
+      try {
+        // Se já está no formato YYYY-MM-DD (apenas data), retornar direto
+        if (typeof dataStr === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dataStr.trim())) {
+          return dataStr.trim()
+        }
+        
+        // Tentar criar objeto Date (funciona com ISO, timestamp, etc)
+        let data = null
+        
+        // Tentar DD/MM/YYYY primeiro (formato brasileiro comum)
+        const matchDDMMYYYY = String(dataStr).match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+        if (matchDDMMYYYY) {
+          const [, dia, mes, ano] = matchDDMMYYYY
+          data = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia))
+          if (!isNaN(data.getTime())) {
+            const anoNorm = data.getFullYear()
+            const mesNorm = String(data.getMonth() + 1).padStart(2, '0')
+            const diaNorm = String(data.getDate()).padStart(2, '0')
+            return `${anoNorm}-${mesNorm}-${diaNorm}`
+          }
+        }
+        
+        // Tentar como Date normal (ISO, timestamp, etc)
+        data = new Date(dataStr)
+        if (isNaN(data.getTime())) {
+          return null
+        }
+        
+        // Retornar apenas YYYY-MM-DD para comparação precisa
+        // Usar UTC para evitar problemas de timezone
+        const ano = data.getUTCFullYear()
+        const mes = String(data.getUTCMonth() + 1).padStart(2, '0')
+        const dia = String(data.getUTCDate()).padStart(2, '0')
+        return `${ano}-${mes}-${dia}`
+      } catch (e) {
+        return null
+      }
+    }
+    
+    // Verificar se campos de data foram preenchidos manualmente
+    const temDataManual = filtrosAplicados.dataPublicacaoInicio || filtrosAplicados.dataPublicacaoFim
+    
+    let dataInicioNormalizada = null
+    let dataFimNormalizada = null
+    
+    if (temDataManual) {
+      // Usar datas do filtro manual
+      dataInicioNormalizada = filtrosAplicados.dataPublicacaoInicio 
+        ? normalizarData(filtrosAplicados.dataPublicacaoInicio)
+        : null
+      dataFimNormalizada = filtrosAplicados.dataPublicacaoFim
+        ? normalizarData(filtrosAplicados.dataPublicacaoFim)
+        : null
+        } else {
+      // Filtro automático: Apenas licitações dos últimos 7 dias
+      const hoje = new Date()
+      hoje.setHours(0, 0, 0, 0) // Resetar hora para comparar apenas data
+      const seteDiasAtras = new Date(hoje)
+      seteDiasAtras.setDate(hoje.getDate() - 7)
+      
+      // Normalizar data mínima para YYYY-MM-DD
+      dataInicioNormalizada = normalizarData(seteDiasAtras.toISOString().split('T')[0])
+      dataFimNormalizada = normalizarData(hoje.toISOString().split('T')[0])
+    }
+    
+    if (dataInicioNormalizada || dataFimNormalizada) {
+      // Debug: Log para entender o problema
+      console.log(`📅 [Filtro Data] Aplicando filtro:`, {
+        temDataManual,
+        dataInicioNormalizada,
+        dataFimNormalizada,
+        totalAntes: antesData
+      })
+      
+      // Debug: Verificar amostras de datas ANTES do filtro
+      const amostrasAntes = resultado.slice(0, Math.min(5, antesData))
+      console.log(`📅 [Filtro Data] Amostras ANTES:`, amostrasAntes.map(l => ({
+        numero: l.numero_controle_pncp?.substring(0, 30),
+        dataOriginal: l.data_publicacao_pncp,
+        dataNormalizada: normalizarData(l.data_publicacao_pncp),
+        tipo: typeof l.data_publicacao_pncp
+      })))
+      
+      resultado = resultado.filter(licitacao => {
+        if (!licitacao.data_publicacao_pncp) {
+          // Se não tem data, excluir
+          return false
+        }
+        
+        // Normalizar data da licitação
+        const dataPublicacaoNormalizada = normalizarData(licitacao.data_publicacao_pncp)
+        if (!dataPublicacaoNormalizada) {
+          // Se não conseguiu normalizar, excluir
+          return false
+        }
+        
+        // Verificar se está dentro do intervalo (inclusive)
+        let dentroIntervalo = true
+        
+        if (dataInicioNormalizada) {
+          // dataPublicacao >= dataInicio (inclusive)
+          if (dataPublicacaoNormalizada < dataInicioNormalizada) {
+            dentroIntervalo = false
+          }
+        }
+        
+        if (dataFimNormalizada && dentroIntervalo) {
+          // dataPublicacao <= dataFim (inclusive)
+          if (dataPublicacaoNormalizada > dataFimNormalizada) {
+            dentroIntervalo = false
+          }
+        }
+        
+        return dentroIntervalo
+      })
+      
+      const depoisData = resultado.length
+      const removidas = antesData - depoisData
+      const periodo = temDataManual 
+        ? `${filtrosAplicados.dataPublicacaoInicio || 'início'} a ${filtrosAplicados.dataPublicacaoFim || 'fim'}`
+        : `últimos 7 dias (${dataInicioNormalizada} a ${dataFimNormalizada})`
+      console.log(`📅 [Filtro Data] ${removidas} licitações removidas. ${depoisData} restantes. Período: ${periodo}`)
+      
+      // Debug: Verificar amostras DEPOIS do filtro
+      if (depoisData > 0) {
+        const amostrasDepois = resultado.slice(0, Math.min(3, depoisData))
+        console.log(`📅 [Filtro Data] Amostras DEPOIS:`, amostrasDepois.map(l => ({
+          numero: l.numero_controle_pncp?.substring(0, 30),
+          dataOriginal: l.data_publicacao_pncp,
+          dataNormalizada: normalizarData(l.data_publicacao_pncp)
+        })))
+      }
+    } else {
+      console.warn('⚠️ [Filtro Data] Datas não normalizadas, pulando filtro:', {
+        temDataManual,
+        dataInicioNormalizada,
+        dataFimNormalizada
+      })
+    }
 
     // Aplicar filtros finais
     if (processandoFiltro) {
       setMensagemProgresso('Aplicando filtros finais...')
     }
 
-    // Salvar no cache (com tratamento de quota)
-    const cacheKeyFinal = getCacheKey()
-    if (cacheKeyFinal) {
-      try {
-        // Limpar cache antigo se necessário (manter apenas últimos 3)
-        try {
-          const cacheKeys = Object.keys(localStorage).filter(key => key.startsWith('filtro_semantico_'))
-          if (cacheKeys.length > 3) {
-            // Ordenar por timestamp e remover os mais antigos
-            const caches = cacheKeys.map(key => {
-              try {
-                const data = JSON.parse(localStorage.getItem(key))
-                return { key, timestamp: data.timestamp || 0 }
-              } catch {
-                return { key, timestamp: 0 }
-              }
-            }).sort((a, b) => a.timestamp - b.timestamp)
-            
-            // Remover todos exceto os 3 mais recentes
-            caches.slice(0, -3).forEach(({ key }) => {
-              localStorage.removeItem(key)
-            })
-            console.log(`✅ [Cache] ${caches.length - 3} caches antigos removidos`)
-          }
-        } catch (e) {
-          console.warn('⚠️ Erro ao limpar cache antigo:', e)
-        }
-        
-        localStorage.setItem(cacheKeyFinal, JSON.stringify({
-          resultado,
-          timestamp: Date.now()
-        }))
-        console.log('✅ [Cache] Resultado salvo no cache')
-      } catch (e) {
-        if (e.name === 'QuotaExceededError' || e.message?.includes('quota')) {
-          // Se ainda assim exceder, limpar todo o cache de filtros
-          console.warn('⚠️ Quota excedida, limpando todo o cache de filtros...')
-          try {
-            const cacheKeys = Object.keys(localStorage).filter(key => key.startsWith('filtro_semantico_'))
-            cacheKeys.forEach(key => localStorage.removeItem(key))
-            console.log(`✅ [Cache] ${cacheKeys.length} caches removidos`)
-            
-            // Tentar salvar novamente após limpar
-            localStorage.setItem(cacheKeyFinal, JSON.stringify({
-              resultado,
-              timestamp: Date.now()
-            }))
-          } catch (e2) {
-            console.error('❌ Erro ao salvar cache mesmo após limpar:', e2)
-            // Se ainda falhar, não salvar cache (aplicação continua funcionando)
-          }
-        } else {
-          console.warn('⚠️ Erro ao salvar cache:', e)
-        }
-      }
-    }
+    // REMOVIDO: Cache final não é mais necessário
+    // Já temos cache semântico no IndexedDB que é suficiente
+    // O cache final estava causando problemas de quota no localStorage
+    // Todos os filtros agora funcionam diretamente no cache semântico do IndexedDB
 
     setLicitacoesFiltradas(resultado)
     
@@ -998,20 +1195,7 @@ function LicitacoesContent() {
     aplicarFiltros()
   }, [
     licitacoes, 
-    filtros.statusEdital, 
-    filtros.buscaObjeto, 
-    filtros.excluirPalavras,
-    filtros.uf,
-    filtros.modalidade,
-    filtros.dataPublicacaoInicio,
-    filtros.dataPublicacaoFim,
-    filtros.valorMin,
-    filtros.valorMax,
-    filtros.orgao,
-    filtros.numeroEdital,
-    filtros.comDocumentos,
-    filtros.comItens,
-    filtros.comValor,
+    filtrosAplicados, // Todos os filtros aplicados (campos texto só mudam ao clicar em "Aplicar", outros são imediatos)
     perfilUsuario, 
     mostrarTodasLicitacoes,
     sinonimosBanco,
@@ -1053,16 +1237,23 @@ function LicitacoesContent() {
         
   // Verificar se licitação é urgente (menos de 7 dias para abertura)
   const isUrgente = (licitacao) => {
-    // Tentar buscar de diferentes lugares na estrutura JSONB
-    const dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
+    // PRIORIDADE 1: Tentar buscar de diferentes lugares na estrutura JSONB
+    let dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
                         licitacao.dados_completos?.data_abertura_proposta ||
                         licitacao.dados_completos?.dataAberturaPropostaData
-    const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
+    let dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
                              licitacao.dados_completos?.data_encerramento_proposta ||
                              licitacao.dados_completos?.dataEncerramentoPropostaData
     
-    if (!dataAbertura && !dataEncerramento) {
-      return false
+    // PRIORIDADE 2: Se não encontrou no JSONB, usar data_publicacao_pncp como fallback
+    // Considerar urgente se foi publicada recentemente (últimos 3 dias)
+    if (!dataAbertura && !dataEncerramento && licitacao.data_publicacao_pncp) {
+      const hoje = new Date()
+      const publicacao = new Date(licitacao.data_publicacao_pncp)
+      const diasDesdePublicacao = Math.ceil((hoje - publicacao) / (1000 * 60 * 60 * 24))
+      
+      // Urgente se foi publicada nos últimos 3 dias
+      return diasDesdePublicacao >= 0 && diasDesdePublicacao <= 3
     }
         
     const dataReferencia = dataAbertura || dataEncerramento
@@ -1293,8 +1484,11 @@ function LicitacoesContent() {
 
 
   const limparFiltros = () => {
+    // IMPORTANTE: Apenas resetar filtros - NÃO buscar do banco
+    // O useEffect vai automaticamente reagir e aplicar no cache semântico
+    
     // Resetar todos os filtros
-    setFiltros({
+    const filtrosLimpos = {
       buscaObjeto: '',
       excluirPalavras: '',
       uf: '',
@@ -1304,8 +1498,6 @@ function LicitacoesContent() {
       dataPublicacaoFim: '',
       valorMin: '',
       valorMax: '',
-      orgao: '',
-      numeroEdital: '',
       comDocumentos: false,
       comItens: false,
       comValor: false,
@@ -1316,50 +1508,49 @@ function LicitacoesContent() {
       excluirUfs: [],
       excluirPalavrasObjeto: [],
       filtrosExclusaoAtivo: false
-    })
+    }
+    
+    setFiltros(filtrosLimpos)
+    // Também atualizar filtrosAplicados para aplicar imediatamente ao limpar
+    setFiltrosAplicados(filtrosLimpos)
     setDataFiltro('')
     setMostrarTodasLicitacoes(false) // Desativar modo "mostrar todas"
     
-    // Limpar cache de filtros
-    try {
-      const cacheKeys = Object.keys(localStorage).filter(key => key.startsWith('filtro_semantico_'))
-      cacheKeys.forEach(key => localStorage.removeItem(key))
-      console.log('✅ [Limpar Filtros] Cache limpo')
-    } catch (e) {
-      console.warn('⚠️ Erro ao limpar cache:', e)
-    }
+    // REMOVIDO: Não precisa limpar cache de filtros no localStorage
+    // O cache semântico está no IndexedDB e não precisa ser limpo ao limpar filtros
+    // Os filtros agora funcionam diretamente no cache semântico
     
-    // Invalidar query para recarregar dados
-    queryClient.invalidateQueries(['licitacoes'])
-    queryClient.invalidateQueries(['perfil-usuario'])
+    // NÃO invalidar queries - manter cache do banco
+    // NÃO fazer refetch - usar cache existente
     
-    // Resetar estado de licitações filtradas para forçar recálculo
-    setLicitacoesFiltradas([])
-    
-    // Forçar refetch dos dados para garantir que sejam recarregados
-    setTimeout(() => {
-      refetchLicitacoes()
-    }, 100)
+    // O useEffect vai automaticamente reagir aos filtros limpos
+    // e aplicar no cache semântico que já está carregado
     
     window.history.pushState({}, '', '/licitacoes')
-    console.log('✅ [Limpar Filtros] Filtros resetados e dados recarregados')
+    console.log('✅ [Limpar Filtros] Filtros resetados - aplicando no cache semântico (sem buscar do banco)')
   }
 
   const handleAplicarFiltros = () => {
     // Desativar modo "mostrar todas" quando aplicar filtros
     setMostrarTodasLicitacoes(false)
     
-    // Forçar atualização imediata dos filtros debounced para aplicar filtros na query
-    // Isso garante que os filtros sejam aplicados imediatamente sem esperar o debounce
-    setFiltrosDebounced(filtros)
+    // Aplicar TODOS os filtros (incluindo campos de texto) ao clicar no botão
+    // Isso melhora muito a performance, processando apenas quando o usuário quiser
+    setFiltrosAplicados(filtros)
     
-    // Forçar refetch imediato da query com os novos filtros
-    setTimeout(() => {
-    queryClient.invalidateQueries(['licitacoes'])
-      refetchLicitacoes()
-    }, 100)
+    // NÃO invalidar queries - trabalhar apenas com cache
+    // O useEffect vai automaticamente reagir e aplicar os filtros no cache
     
-    console.log('🔍 Filtros aplicados:', filtros)
+    console.log('🔍 [Aplicar Filtros] Aplicando filtros no cache (incluindo busca rápida e exclusão):', {
+      buscaObjeto: filtros.buscaObjeto,
+      excluirPalavras: filtros.excluirPalavras,
+      outrosFiltros: {
+        uf: filtros.uf,
+        modalidade: filtros.modalidade,
+        statusEdital: filtros.statusEdital,
+        // ... outros
+      }
+    })
   }
 
   const contarFiltrosAtivos = () => {
@@ -1371,8 +1562,6 @@ function LicitacoesContent() {
     if (filtros.statusEdital) count++
     if (filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim) count++
     if (filtros.valorMin || filtros.valorMax) count++
-    if (filtros.orgao) count++
-    if (filtros.numeroEdital) count++
     if (filtros.comDocumentos) count++
     if (filtros.comItens) count++
     if (filtros.comValor) count++
@@ -1380,21 +1569,6 @@ function LicitacoesContent() {
     return count
   }
 
-  const atalhoHoje = () => {
-    const hoje = new Date().toISOString().split('T')[0]
-    setFiltros({ ...filtros, dataPublicacaoInicio: hoje, dataPublicacaoFim: hoje })
-  }
-
-  const atalhoOntem = () => {
-    const ontem = new Date(Date.now() - 86400000).toISOString().split('T')[0]
-    setFiltros({ ...filtros, dataPublicacaoInicio: ontem, dataPublicacaoFim: ontem })
-  }
-
-  const atalhoUltimaSemana = () => {
-    const hoje = new Date().toISOString().split('T')[0]
-    const semanaAtras = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
-    setFiltros({ ...filtros, dataPublicacaoInicio: semanaAtras, dataPublicacaoFim: hoje })
-  }
 
     return (
     <AppLayout 
@@ -1466,21 +1640,11 @@ function LicitacoesContent() {
                   onCheckedChange={(checked) => {
                     setMostrarTodasLicitacoes(checked)
                     if (checked) {
-                      // Limpar cache quando ativar
-                      const cacheKey = getCacheKey()
-                      if (cacheKey) {
-                        localStorage.removeItem(cacheKey)
-                      }
-                      queryClient.invalidateQueries(['licitacoes'])
-                      console.log('📋 [Filtro] Modo "Mostrar Todas" ATIVADO')
+                      // NÃO invalidar queries - manter cache do banco
+                      console.log('[Filtro] Modo "Mostrar Todas" ATIVADO - usando cache do banco')
                     } else {
-                      // Limpar cache quando desativar para reaplicar filtro
-                      const cacheKey = getCacheKey()
-                      if (cacheKey) {
-                        localStorage.removeItem(cacheKey)
-                      }
-                      queryClient.invalidateQueries(['licitacoes'])
-                      console.log('📋 [Filtro] Modo "Mostrar Todas" DESATIVADO - voltando ao filtro semântico')
+                      // NÃO invalidar queries - usar cache semântico
+                      console.log('[Filtro] Modo "Mostrar Todas" DESATIVADO - voltando ao cache semântico')
                     }
                   }}
                   className="data-[state=checked]:bg-blue-400"
@@ -1569,11 +1733,9 @@ function LicitacoesContent() {
                         className="h-9 text-xs"
                       />
           </div>
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="sm" onClick={atalhoHoje} className="text-xs h-7 px-2 flex-1">Hoje</Button>
-                      <Button variant="ghost" size="sm" onClick={atalhoOntem} className="text-xs h-7 px-2 flex-1">Ontem</Button>
-                      <Button variant="ghost" size="sm" onClick={atalhoUltimaSemana} className="text-xs h-7 px-2 flex-1">7 dias</Button>
-      </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Deixe vazio para mostrar apenas os últimos 7 dias
+                    </p>
                 </div>
                 
                   {/* UF */}
@@ -1636,9 +1798,11 @@ function LicitacoesContent() {
                     </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="TODOS">Todos os Status</SelectItem>
+                        <SelectItem value="proximo">Próximo (Ainda não abriu)</SelectItem>
                         <SelectItem value="andamento">Em Andamento</SelectItem>
                         <SelectItem value="encerrando">Encerrando (≤ 3 dias)</SelectItem>
                         <SelectItem value="encerrado">Encerrado</SelectItem>
+                        <SelectItem value="urgente">Urgente (≤ 7 dias)</SelectItem>
                       </SelectContent>
                   </Select>
                 </div>
@@ -1666,34 +1830,6 @@ function LicitacoesContent() {
                   />
                 </div>
               </div>
-
-                  {/* Órgão */}
-                  <div>
-                    <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
-                      <Building2 className="w-4 h-4 text-gray-500" />
-                      Órgão
-                    </Label>
-                    <Input
-                      placeholder="Nome do órgão"
-                      value={filtros.orgao}
-                      onChange={(e) => setFiltros({ ...filtros, orgao: e.target.value })}
-                      className="h-9 text-xs"
-                    />
-            </div>
-                
-                  {/* N° Edital */}
-                  <div>
-                    <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-gray-500" />
-                      N° Edital
-                    </Label>
-                    <Input
-                      placeholder="Número do edital"
-                      value={filtros.numeroEdital}
-                      onChange={(e) => setFiltros({ ...filtros, numeroEdital: e.target.value })}
-                      className="h-9 text-xs"
-                    />
-          </div>
 
                   {/* Checkboxes */}
                   <div className="space-y-2">
@@ -1789,8 +1925,10 @@ function LicitacoesContent() {
                 {filtros.statusEdital && (
                   <Badge variant="secondary" className="gap-1">
                     Status: {
+                      filtros.statusEdital === 'proximo' ? 'Próximo' :
                       filtros.statusEdital === 'andamento' ? 'Em Andamento' :
                       filtros.statusEdital === 'encerrando' ? 'Encerrando' :
+                      filtros.statusEdital === 'urgente' ? 'Urgente' :
                       'Encerrado'
                     }
                     <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, statusEdital: '' })} />
@@ -1798,7 +1936,7 @@ function LicitacoesContent() {
                 )}
                 {(filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim) && (
                   <Badge variant="secondary" className="gap-1">
-                    Data: {filtros.dataPublicacaoInicio || '...'} - {filtros.dataPublicacaoFim || '...'}
+                    Data: {filtros.dataPublicacaoInicio ? formatarData(filtros.dataPublicacaoInicio) : '...'} - {filtros.dataPublicacaoFim ? formatarData(filtros.dataPublicacaoFim) : '...'}
                     <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, dataPublicacaoInicio: '', dataPublicacaoFim: '' })} />
                   </Badge>
                 )}
@@ -1806,12 +1944,6 @@ function LicitacoesContent() {
                   <Badge variant="secondary" className="gap-1">
                     Valor: R$ {filtros.valorMin || '0'} - {filtros.valorMax || '∞'}
                     <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, valorMin: '', valorMax: '' })} />
-                  </Badge>
-                )}
-                {filtros.orgao && (
-                  <Badge variant="secondary" className="gap-1">
-                    Órgão: {filtros.orgao}
-                    <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, orgao: '' })} />
                   </Badge>
                 )}
                 {dataFiltro && (
@@ -1865,7 +1997,7 @@ function LicitacoesContent() {
               </p>
               {(filtros.buscaObjeto || filtros.excluirPalavras || filtros.uf || filtros.modalidade || filtros.statusEdital || 
                 filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim || filtros.valorMin || 
-                filtros.valorMax || filtros.orgao || filtros.numeroEdital || filtros.comDocumentos || 
+                filtros.valorMax || filtros.comDocumentos || 
                 filtros.comItens || filtros.comValor || dataFiltro) && licitacoesFinais.length > 100 && (
                 <p className="text-xs text-orange-600 mt-1">
                   ⚠️ Muitos resultados encontrados ({licitacoesFinais.length}). Considere adicionar mais filtros para refinar a busca.
@@ -1933,16 +2065,37 @@ function LicitacoesContent() {
                       return (
                         <>
                           {documentos.length > 0 && (
-                          <Badge variant="outline" className="text-xs">
-                            <Download className="w-3 h-3 mr-1" />
-                              {documentos.length} doc{documentos.length > 1 ? 's' : ''}
-                          </Badge>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              baixarDocumentosComoZip(licitacao)
+                            }}
+                            disabled={baixandoDocumentos.has(licitacao.id || licitacao.numero_controle_pncp)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-xs font-medium text-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Baixar todos os documentos em ZIP"
+                          >
+                            {baixandoDocumentos.has(licitacao.id || licitacao.numero_controle_pncp) ? (
+                              <>
+                                <div className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                                Compactando...
+                              </>
+                            ) : (
+                              <>
+                                <Download className="w-3 h-3" />
+                                {documentos.length} doc{documentos.length > 1 ? 's' : ''}
+                              </>
+                            )}
+                          </button>
                         )}
                           {itens.length > 0 && (
-                          <Badge variant="outline" className="text-xs">
-                            <FileText className="w-3 h-3 mr-1" />
-                              {itens.length} {itens.length > 1 ? 'itens' : 'item'}
-                          </Badge>
+                          <button
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-xs font-medium text-gray-700 transition-colors"
+                            title={`${itens.length} ${itens.length > 1 ? 'itens' : 'item'}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <FileText className="w-3 h-3" />
+                            {itens.length} {itens.length > 1 ? 'itens' : 'item'}
+                          </button>
                         )}
                       </>
                       )
@@ -1960,14 +2113,28 @@ function LicitacoesContent() {
                     
                     {/* Badges de Data de Abertura e Encerramento */}
                     {(() => {
-                      // Tentar buscar de diferentes lugares na estrutura JSONB
-                      const dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
+                      // PRIORIDADE 1: Tentar buscar de diferentes lugares na estrutura JSONB
+                      let dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
                                           licitacao.dados_completos?.data_abertura_proposta ||
                                           licitacao.dados_completos?.dataAberturaPropostaData
-                      const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
+                      
+                      let dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
                                                licitacao.dados_completos?.data_encerramento_proposta ||
                                                licitacao.dados_completos?.dataEncerramentoPropostaData
                       
+                      // PRIORIDADE 2: Se não encontrou no JSONB, usar data_publicacao_pncp como fallback para mostrar algo
+                      // Usar data de publicação como referência quando não tem datas específicas
+                      if (!dataAbertura && !dataEncerramento && licitacao.data_publicacao_pncp) {
+                        // Se só tem data de publicação, usar ela como data de referência
+                        // Não criar badges de abertura/encerramento falsos, apenas mostrar data de publicação
+                        return (
+                          <Badge className="bg-blue-100 text-blue-700 border-blue-300 text-xs font-medium">
+                            📅 Publicado em: {formatarData(licitacao.data_publicacao_pncp)}
+                          </Badge>
+                        )
+                      }
+                      
+                      // Se encontrou pelo menos uma data específica, mostrar os badges
                       return (
                         <>
                           {dataAbertura && (
@@ -1980,56 +2147,79 @@ function LicitacoesContent() {
                               ⏰ Encerramento: {formatarData(dataEncerramento)}
                             </Badge>
                           )}
+                          {/* Se tem data de publicação mas não tem as outras datas, mostrar também */}
+                          {licitacao.data_publicacao_pncp && (!dataAbertura || !dataEncerramento) && (
+                            <Badge className="bg-blue-100 text-blue-700 border-blue-300 text-xs font-medium">
+                              📅 Publicado: {formatarData(licitacao.data_publicacao_pncp)}
+                            </Badge>
+                          )}
                         </>
                       )
                     })()}
                     
-                    {/* Badge de Status (Em Andamento / Encerrando / Encerrado) */}
+                    {/* Badge de Status (Próximo / Em Andamento / Encerrando / Encerrado) */}
                     {(() => {
-                      // Tentar buscar de diferentes lugares na estrutura JSONB
-                      const dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
-                                          licitacao.dados_completos?.data_abertura_proposta ||
-                                          licitacao.dados_completos?.dataAberturaPropostaData
+                      const status = getStatusEdital(licitacao)
+                      
+                      // Se não tem status específico mas tem data de publicação recente, mostrar como ativa
+                      if (!status && licitacao.data_publicacao_pncp) {
+                        const hoje = new Date()
+                        const publicacao = new Date(licitacao.data_publicacao_pncp)
+                        const diasDesdePublicacao = Math.ceil((hoje - publicacao) / (1000 * 60 * 60 * 24))
+                        
+                        if (diasDesdePublicacao <= 30 && diasDesdePublicacao >= 0) {
+                          return (
+                            <Badge className="bg-blue-500 text-white text-xs font-semibold">
+                              ✅ Ativa
+                            </Badge>
+                          )
+                        }
+                        return null
+                      }
+                      
+                      // Badge baseado no status retornado
+                      switch (status) {
+                        case 'proximo':
+                          return (
+                            <Badge className="bg-purple-500 text-white text-xs font-semibold">
+                              🔜 Próximo
+                            </Badge>
+                          )
+                        case 'andamento':
+                          return (
+                            <Badge className="bg-blue-500 text-white text-xs font-semibold">
+                              ✅ Em Andamento
+                            </Badge>
+                          )
+                        case 'encerrando':
+                          // Calcular dias restantes para mostrar no badge
                       const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
                                                licitacao.dados_completos?.data_encerramento_proposta ||
                                                licitacao.dados_completos?.dataEncerramentoPropostaData
-                      
                       if (dataEncerramento) {
                         const hoje = new Date()
                         const encerramento = new Date(dataEncerramento)
                         const diasRestantes = Math.ceil((encerramento - hoje) / (1000 * 60 * 60 * 24))
-                        
-                        // Encerrado
-                        if (diasRestantes < 0) {
                           return (
-                            <Badge className="bg-red-500 text-white text-xs font-semibold">
-                              ❌ Encerrado
+                              <Badge className="bg-yellow-500 text-white text-xs font-semibold animate-pulse">
+                                ⚠️ Encerrando em {diasRestantes}d
                             </Badge>
                           )
                         }
-                        
-                        // Encerrando em breve (menos de 3 dias)
-                        if (diasRestantes <= 3 && diasRestantes > 0) {
                           return (
                             <Badge className="bg-yellow-500 text-white text-xs font-semibold animate-pulse">
-                              ⚠️ Encerrando em {diasRestantes}d
+                              ⚠️ Encerrando
                             </Badge>
                           )
-                        }
-                        
-                        // Em andamento
-                        if (dataAbertura) {
-                          const abertura = new Date(dataAbertura)
-                          if (hoje >= abertura && hoje <= encerramento) {
+                        case 'encerrado':
                             return (
-                              <Badge className="bg-blue-500 text-white text-xs font-semibold">
-                                ✅ Em Andamento
+                            <Badge className="bg-red-500 text-white text-xs font-semibold">
+                              ❌ Encerrado
                               </Badge>
                             )
-                          }
-                        }
-                      }
+                        default:
                       return null
+                      }
                     })()}
                         </div>
                         </div>
@@ -2513,7 +2703,7 @@ function LicitacoesContent() {
           {!isLoading && !error && !processandoFiltro && licitacoesFinais.length >= limitePagina && 
            !(filtros.buscaObjeto || filtros.excluirPalavras || filtros.uf || filtros.modalidade || filtros.statusEdital || 
              filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim || filtros.valorMin || 
-             filtros.valorMax || filtros.orgao || filtros.numeroEdital || filtros.comDocumentos || 
+             filtros.valorMax || filtros.comDocumentos || 
              filtros.comItens || filtros.comValor || dataFiltro) && (
             <div className="text-center mt-8">
               <Button

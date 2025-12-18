@@ -644,58 +644,35 @@ export function correspondeAtividades(
       }
     }
     
-    // PRECISÃO: Exigir pontuação mínima para aceitar (evita falsos positivos)
-    // Pontuação >= 3: Aceita (encontrou correspondências relevantes)
-    // Isso mantém precisão enquanto aumenta abrangência
-    if (pontuacaoCorrespondencia >= 3) {
+    // PRECISÃO: Exigir pontuação mínima MAIOR para aceitar (evita falsos positivos)
+    // Pontuação >= 5: Aceita apenas correspondências mais específicas
+    // Isso garante que apenas licitações realmente relacionadas aos subsetores sejam aceitas
+    // Exemplo: precisa encontrar pelo menos 1 subsetor completo (5 pontos) OU múltiplas correspondências específicas
+    if (pontuacaoCorrespondencia >= 5) {
       return true
     }
   }
   
-  // FALLBACK: Se não encontrou correspondência específica, usar lógica anterior
+  // FALLBACK: Se não encontrou correspondência específica (pontuação < 5), usar lógica mais restritiva
+  // IMPORTANTE: Exigir correspondência com vocabulário do setor OU múltiplas palavras-chave principais
   let temCorrespondenciaPrincipal = false
   if (palavrasPrincipais.length > 0) {
     
     const palavrasGenericas = ['servico', 'servicos', 'manutencao', 'manutenção', 'prestacao', 'prestação', 'fornecimento', 'fornecer']
     
+    // PRIMEIRA VERIFICAÇÃO: Deve corresponder ao vocabulário do setor
     const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
     
-   
+    // Se não corresponde ao vocabulário E tem vocabulário definido, NÃO ACEITAR
     if (!correspondeVocabulario && vocabularioSetor.size > 0) {
-      
-      const temPrincipal = palavrasPrincipais.some(palavra => {
-        const palavraNormalizada = normalizarTexto(palavra)
-        return objetoNormalizado.includes(palavraNormalizada)
-      })
-      
-      
-      if (!temPrincipal) {
-        const temPrincipalComContexto = palavrasPrincipais.some(palavra => {
-          const palavraNormalizada = normalizarTexto(palavra)
-          if (!objetoNormalizado.includes(palavraNormalizada)) {
-            return false
-          }
-          
-          // Exigir contexto próximo apenas se não tem palavra principal direta
-          return palavrasContexto.some(pc => {
-            const pcNormalizado = normalizarTexto(pc)
-            const indicePalavra = objetoNormalizado.indexOf(palavraNormalizada)
-            const indiceContexto = objetoNormalizado.indexOf(pcNormalizado)
-            
-            if (indiceContexto === -1) return false
-            const distancia = Math.abs(indicePalavra - indiceContexto)
-            return distancia <= 200 // Aumentado para 200 caracteres (menos restritivo)
-          })
-        })
-        
-        if (!temPrincipalComContexto) {
-          return false
-        }
-      }
+      // Não corresponder ao vocabulário do setor é um sinal claro de que não é relevante
+      return false
     }
     
-    // Verificar correspondência principal com palavras-chave
-    // MELHORADO: Usa correspondência parcial e por raiz para melhor abrangência
+    // SEGUNDA VERIFICAÇÃO: Verificar correspondência com palavras-chave principais
+    // Exigir múltiplas correspondências para aumentar precisão
+    let correspondenciasEncontradas = 0
+    
     temCorrespondenciaPrincipal = palavrasPrincipais.some(palavra => {
       const palavraNormalizada = normalizarTexto(palavra)
       
@@ -709,7 +686,7 @@ export function correspondeAtividades(
           return false
         }
         
-        // Se está, DEVE ter contexto próximo (obrigatório)
+        // Se está, DEVE ter contexto próximo (obrigatório) - distância reduzida para maior precisão
         const temContextoProximo = palavrasContexto.some(pc => {
           const pcNormalizado = normalizarTexto(pc)
           const indicePalavra = objetoNormalizado.indexOf(palavraNormalizada)
@@ -717,44 +694,38 @@ export function correspondeAtividades(
           
           if (indiceContexto === -1) return false
           
-          // Contexto deve estar próximo (150 caracteres - aumentado para melhor abrangência)
+          // Contexto deve estar próximo (100 caracteres - mais restritivo)
           const distancia = Math.abs(indicePalavra - indiceContexto)
-          return distancia <= 150
+          return distancia <= 100
         })
         
-        return temContextoProximo
+        if (temContextoProximo) {
+          correspondenciasEncontradas++
+          return true
+        }
+        return false
       }
       
-      // Para palavras específicas, verificar correspondência contextual
+      // Para palavras específicas, verificar correspondência contextual (mais restritiva)
       if (correspondeContextual(objetoNormalizado, palavra, palavrasContexto)) {
+        correspondenciasEncontradas++
         return true
       }
       
-      // Verificar correspondência exata
+      // Verificar correspondência exata (mais precisa)
       if (objetoNormalizado.includes(palavraNormalizada)) {
+        correspondenciasEncontradas++
         return true
       }
       
-      // Verificar correspondência parcial (mais abrangente)
-      const temCorrespondenciaParcial = palavrasObjeto.some(po => {
-        return correspondeParcial(palavraNormalizada, po)
-      })
-      
-      if (temCorrespondenciaParcial) {
-        return true
-      }
-      
-      // Verificar também palavras secundárias (menos restritivo ainda)
-      // Se alguma palavra secundária está no objeto, aceitar
-      if (palavrasSecundarias.length > 0) {
-        const temSecundaria = palavrasSecundarias.some(sec => {
-          const secNormalizada = normalizarTexto(sec)
-          // Correspondência exata
-          if (objetoNormalizado.includes(secNormalizada)) return true
-          // Correspondência parcial
-          return palavrasObjeto.some(po => correspondeParcial(secNormalizada, po))
+      // Correspondência parcial apenas se palavra é longa o suficiente (mais específica)
+      if (palavraNormalizada.length >= 6) {
+        const temCorrespondenciaParcial = palavrasObjeto.some(po => {
+          return correspondeParcial(palavraNormalizada, po)
         })
-        if (temSecundaria) {
+        
+        if (temCorrespondenciaParcial) {
+          correspondenciasEncontradas++
           return true
         }
       }
@@ -762,37 +733,26 @@ export function correspondeAtividades(
       return false
     })
     
-    // Se tem palavras principais mas nenhuma corresponde, NÃO MOSTRAR
-    if (!temCorrespondenciaPrincipal) {
+    // Exigir pelo menos 1 correspondência clara OU correspondência com vocabulário do setor
+    if (!temCorrespondenciaPrincipal && !correspondeVocabulario) {
       return false
     }
   }
   
-  // REGRA FINAL MENOS RESTRITIVA:
-  // Se tem palavras principais, verificar correspondência principal
-  // MAS também aceitar se tem palavras secundárias correspondentes
+  // REGRA FINAL: Se tem palavras principais, deve ter correspondência principal E vocabulário
   if (palavrasPrincipais.length > 0) {
-    // Se tem correspondência principal, aceitar
+    // Se tem correspondência principal E corresponde ao vocabulário do setor, aceitar
     if (temCorrespondenciaPrincipal) {
-      return true
-    }
-    
-    // MENOS RESTRITIVO: Se não tem principal, verificar se tem secundárias
-    // MELHORADO: Usa correspondência parcial para melhor abrangência
-    if (palavrasSecundarias.length > 0) {
-      const temSecundaria = palavrasSecundarias.some(sec => {
-        const secNormalizada = normalizarTexto(sec)
-        // Correspondência exata
-        if (objetoNormalizado.includes(secNormalizada)) return true
-        // Correspondência parcial
-        return palavrasObjeto.some(po => correspondeParcial(secNormalizada, po))
-      })
-      if (temSecundaria) {
+      // Verificar também se corresponde ao vocabulário do setor (dupla validação)
+      const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
+      if (correspondeVocabulario || vocabularioSetor.size === 0) {
         return true
       }
+      // Se não corresponde ao vocabulário, não aceitar mesmo tendo palavra principal
+      return false
     }
     
-    // Se não tem nem principal nem secundária, não mostrar
+    // Se não tem correspondência principal, não aceitar
     return false
   }
   

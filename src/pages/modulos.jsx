@@ -1,6 +1,19 @@
+import { useState } from 'react'
 import { useLocation } from 'wouter'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { useUserStore } from '@/store/userStore'
 import { 
   FileText, 
@@ -10,12 +23,18 @@ import {
   User, 
   Search,
   Target,
-  Users
+  Users,
+  MessageSquare,
+  Loader2
 } from 'lucide-react'
 
 function ModulosContent() {
   const { user } = useUserStore()
   const [, setLocation] = useLocation()
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [email, setEmail] = useState('')
+  const [mensagem, setMensagem] = useState('')
+  const [enviando, setEnviando] = useState(false)
 
   const modulos = [
     {
@@ -80,6 +99,65 @@ function ModulosContent() {
 
   const handleCardClick = (rota) => {
     setLocation(rota)
+  }
+
+  const handleEnviarFeedback = async () => {
+    if (!email.trim() || !mensagem.trim()) {
+      alert('Por favor, preencha o email e a mensagem.')
+      return
+    }
+
+    setEnviando(true)
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      if (!supabaseUrl) {
+        throw new Error('VITE_SUPABASE_URL não configurado')
+      }
+
+      // Obter token de autenticação
+      const { supabase } = await import('@/lib/supabase')
+      const { data: session } = await supabase.auth.getSession()
+      const token = session?.session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY
+
+      // Chamar Edge Function para contornar CORS
+      const response = await fetch(
+        `${supabaseUrl}/functions/v1/enviar-feedback`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '',
+          },
+          body: JSON.stringify({
+            email,
+            mensagem,
+            usuario: user?.email || user?.razao_social || 'Usuário não identificado',
+          }),
+        }
+      )
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Erro desconhecido' }))
+        throw new Error(errorData.error || `Erro ${response.status}: ${response.statusText}`)
+      }
+
+      const result = await response.json()
+
+      if (!result.success) {
+        throw new Error(result.error || 'Erro ao enviar feedback')
+      }
+
+      alert('Obrigado pelo seu feedback! Sua opinião é muito importante para nós.')
+      setEmail('')
+      setMensagem('')
+      setFeedbackOpen(false)
+    } catch (error) {
+      console.error('Erro ao enviar feedback:', error)
+      alert(`Erro ao enviar feedback: ${error.message}. Por favor, tente novamente.`)
+    } finally {
+      setEnviando(false)
+    }
   }
 
   return (
@@ -153,6 +231,82 @@ function ModulosContent() {
           </p>
         </div>
       </div>
+
+      {/* Badge Flutuante - Nos ajude a melhorar */}
+      <button
+        onClick={() => {
+          setEmail(user?.email || '')
+          setFeedbackOpen(true)
+        }}
+        className="fixed bottom-6 right-6 bg-orange-500 hover:bg-orange-600 text-white px-4 py-3 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 z-50"
+        title="Nos ajude a melhorar"
+      >
+        <MessageSquare className="w-5 h-5" />
+        <span className="font-medium">Nos ajude a melhorar</span>
+      </button>
+
+      {/* Dialog de Feedback */}
+      <Dialog open={feedbackOpen} onOpenChange={setFeedbackOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Nos ajude a melhorar</DialogTitle>
+            <DialogDescription>
+              Sua opinião é muito importante para nós. Compartilhe suas sugestões, críticas ou elogios.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="seu@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={enviando}
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="mensagem">Mensagem</Label>
+              <Textarea
+                id="mensagem"
+                placeholder="Digite sua mensagem aqui..."
+                value={mensagem}
+                onChange={(e) => setMensagem(e.target.value)}
+                disabled={enviando}
+                rows={6}
+                className="resize-none"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setFeedbackOpen(false)}
+              disabled={enviando}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleEnviarFeedback}
+              disabled={enviando || !email.trim() || !mensagem.trim()}
+              className="bg-orange-500 hover:bg-orange-600"
+            >
+              {enviando ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Enviando...
+                </>
+              ) : (
+                'Enviar'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
