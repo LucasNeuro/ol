@@ -1,25 +1,46 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useUserStore } from '@/store/userStore'
 import { signUp as authSignUp, signIn as authSignIn, getSession, saveSession, isSessionValid } from '@/lib/auth'
 
+// Flag global para garantir verificação única da sessão (reset no logout)
+let sessionCheckInitialized = false
+let sessionCheckPromise = null
+
 export function useAuth() {
   const { user, isAuthenticated, isLoading, setUser, clearUser, setLoading, logout } = useUserStore()
+  const hasRunRef = useRef(false)
 
   useEffect(() => {
-    // Verificar sessão salva apenas uma vez no mount
-    const checkSession = () => {
+    // Se já executou nesta instância do hook, não fazer nada
+    if (hasRunRef.current) {
+      return
+    }
+    
+    // Se já foi verificado globalmente, marcar como executado e retornar
+    if (sessionCheckInitialized) {
+      hasRunRef.current = true
+      return
+    }
+    
+    // Se já está verificando (promise pendente), aguardar
+    if (sessionCheckPromise) {
+      return
+    }
+    
+    // Marcar esta instância como executada
+    hasRunRef.current = true
+    sessionCheckInitialized = true
+    
+    // Criar promise única para verificação
+    sessionCheckPromise = (async () => {
       setLoading(true)
       
       try {
         const session = getSession()
-        console.log('🔍 [useAuth] Verificando sessão:', session ? 'Sessão encontrada' : 'Nenhuma sessão')
         
         if (session && session.user && isSessionValid()) {
-          console.log('✅ [useAuth] Sessão válida encontrada, restaurando usuário')
           setUser(session.user)
         } else {
-          console.log('❌ [useAuth] Sessão inválida ou não encontrada, limpando estado')
-          // Sessão expirada ou inválida - limpar
           clearUser()
         }
       } catch (error) {
@@ -27,11 +48,12 @@ export function useAuth() {
         clearUser()
       } finally {
         setLoading(false)
+        sessionCheckPromise = null
       }
-    }
+    })()
     
-    checkSession()
-  }, [setUser, clearUser, setLoading]) // Dependências corretas
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Array vazio - executar apenas uma vez. Funções do Zustand são estáveis
 
   async function signUp(email, password, profileData) {
     setLoading(true)
@@ -83,6 +105,10 @@ export function useAuth() {
 
   async function signOut() {
     try {
+      // Resetar flag global para permitir nova verificação no próximo login
+      sessionCheckInitialized = false
+      sessionCheckPromise = null
+      
       // Usar a função logout do store que já faz tudo (agora é async)
       await logout()
     } catch (error) {
