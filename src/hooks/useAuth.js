@@ -7,20 +7,30 @@ export function useAuth() {
 
   useEffect(() => {
     // Verificar sessão salva apenas uma vez no mount
-    const session = getSession()
-    
-    console.log('🔍 useAuth - Verificando sessão:', session)
-    
-    if (session && session.user && isSessionValid()) {
-      console.log('✅ Sessão válida encontrada')
-      setUser(session.user)
-    } else {
-      console.log('❌ Sessão inválida ou não encontrada')
-      // Sessão expirada ou inválida - limpar
-      clearUser()
+    const checkSession = () => {
+      setLoading(true)
+      
+      try {
+        const session = getSession()
+        console.log('🔍 [useAuth] Verificando sessão:', session ? 'Sessão encontrada' : 'Nenhuma sessão')
+        
+        if (session && session.user && isSessionValid()) {
+          console.log('✅ [useAuth] Sessão válida encontrada, restaurando usuário')
+          setUser(session.user)
+        } else {
+          console.log('❌ [useAuth] Sessão inválida ou não encontrada, limpando estado')
+          // Sessão expirada ou inválida - limpar
+          clearUser()
+        }
+      } catch (error) {
+        console.error('❌ [useAuth] Erro ao verificar sessão:', error)
+        clearUser()
+      } finally {
+        setLoading(false)
+      }
     }
     
-    setLoading(false)
+    checkSession()
   }, [setUser, clearUser, setLoading]) // Dependências corretas
 
   async function signUp(email, password, profileData) {

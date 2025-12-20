@@ -21,7 +21,6 @@ import {
   Bell, 
   BarChart3, 
   User, 
-  Search,
   Target,
   Users,
   MessageSquare,
@@ -75,14 +74,6 @@ function ModulosContent() {
       descricao: 'Configure seu perfil e preferências',
       icone: User,
       rota: '/perfil',
-      disponivel: true
-    },
-    {
-      id: 'busca',
-      titulo: 'Busca Avançada',
-      descricao: 'Filtros e busca semântica',
-      icone: Search,
-      rota: '/licitacoes?aba=filtros',
       disponivel: true
     },
     {
@@ -179,8 +170,8 @@ function ModulosContent() {
           </p>
         </div>
 
-        {/* Grid de Cards - 4 por linha */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+        {/* Grid de Cards - 3 por coluna */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
           {modulosDisponiveis.map((modulo) => {
             const Icone = modulo.icone
 

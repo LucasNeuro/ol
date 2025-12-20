@@ -54,7 +54,8 @@ import { obterNomeAtividadeCnae, obterListaCompletaCnaes, resumirNomeAtividade }
 import { 
   extrairPalavrasChaveDosSetores, 
   correspondeAtividades,
-  obterObjetoCompleto
+  obterObjetoCompleto,
+  normalizarTexto
 } from '@/lib/filtroSemantico'
 import { filtrarLicitacoesPorBusca, buscarEmLicitacao } from '@/lib/buscaFuzzy'
 import { useFiltroContext } from '@/contexts/FiltroContext'
@@ -773,10 +774,10 @@ function LicitacoesContent() {
         const totalLotes = Math.ceil(resultado.length / TAMANHO_LOTE)
         
         // Processar lotes de forma assíncrona para não bloquear navegação
-        await new Promise((resolve) => {
+        await new Promise(async (resolve) => {
           let indiceAtual = 0
           
-          const processarProximoLote = () => {
+          const processarProximoLote = async () => {
             // Verificar se ainda há lotes para processar
             if (indiceAtual >= resultado.length) {
               resolve()
@@ -796,40 +797,106 @@ function LicitacoesContent() {
           )
           
             // Processar lote atual
-          const resultadosLote = lote.map((licitacao) => {
-            // Usar APENAS filtro semântico (sem IA)
-            // Mais rápido e eficiente, sem necessidade de API externa
-            const corresponde = correspondeAtividades(
-              licitacao,
-              palavrasChave,
-              sinonimosPersonalizados, // Sinônimos personalizados
-              sinonimosBancoFormatados, // Sinônimos do banco (AGORA USANDO!)
-              setoresAtividades // Setores para contexto
-            )
-            
-            // Log detalhado para debug (apenas 1% para não poluir console)
-            if (!corresponde && licitacao.objeto_compra && Math.random() < 0.01) {
-              console.log(`🚫 [Filtro] Licitação filtrada:`, {
-                objeto: licitacao.objeto_compra.substring(0, 100),
-                palavrasPrincipais: palavrasChave.principais.slice(0, 3)
-              })
-            }
-            
-            return corresponde ? licitacao : null
-          }).filter(Boolean)
+          const resultadosLote = await Promise.all(
+            lote.map(async (licitacao) => {
+              // Usar filtro semântico primeiro (rápido)
+              const correspondeSemantico = correspondeAtividades(
+                licitacao,
+                palavrasChave,
+                sinonimosPersonalizados, // Sinônimos personalizados
+                sinonimosBancoFormatados, // Sinônimos do banco
+                setoresAtividades // Setores para contexto
+              )
+              
+              // Se filtro semântico aceitou, usar diretamente
+              if (correspondeSemantico === true) {
+                return licitacao
+              }
+              
+              // Se filtro semântico rejeitou, tentar validar com IA APENAS para casos duvidosos
+              // MELHORADO: Não chamar IA para casos claramente irrelevantes (reduz custo e falsos positivos)
+              if (correspondeSemantico === false) {
+                // Verificar se objeto tem palavras-chave relevantes antes de chamar IA
+                // Se não tem nenhuma palavra-chave, não vale a pena chamar IA
+                const objetoCompleto = obterObjetoCompleto(licitacao)
+                if (objetoCompleto && setoresAtividades && setoresAtividades.length > 0) {
+                  const objetoNormalizado = normalizarTexto(objetoCompleto)
+                  
+                  // Verificar se tem palavra-chave principal OU correspondência parcial (expande cobertura)
+                  const temPalavraChave = palavrasChave.principais.some(palavra => {
+                    const palavraNormalizada = normalizarTexto(palavra)
+                    // Verificar correspondência exata
+                    if (objetoNormalizado.includes(palavraNormalizada)) {
+                      return true
+                    }
+                    // Verificar correspondência parcial (ex: "informática" em "informatização")
+                    // Aceitar se pelo menos 5 caracteres iniciais coincidem
+                    if (palavraNormalizada.length >= 5) {
+                      const prefixo = palavraNormalizada.substring(0, 5)
+                      if (objetoNormalizado.includes(prefixo)) {
+                        return true
+                      }
+                    }
+                    return false
+                  })
+                  
+                  // MELHORADO: Chamar IA para casos com palavra-chave exata OU correspondência parcial
+                  // Isso aumenta a cobertura capturando mais casos relevantes
+                  if (temPalavraChave) {
+                    try {
+                      const { validarCorrespondenciaIAEdgeFunction } = await import('@/lib/validacaoIA')
+                      
+                      // Validar com IA apenas para casos duvidosos (tem palavra-chave mas foi rejeitado)
+                      const validacaoIA = await validarCorrespondenciaIAEdgeFunction(
+                        objetoCompleto,
+                        setoresAtividades,
+                        user?.id
+                      )
+                      
+                      // Se IA confirmou, aceitar mesmo que filtro semântico tenha rejeitado
+                      if (validacaoIA === true) {
+                        console.log('✅ [IA] Licitação aceita por IA (caso duvidoso):', {
+                          objeto: objetoCompleto.substring(0, 100)
+                        })
+                        return licitacao
+                      }
+                    } catch (error) {
+                      // Se erro na IA, usar resultado do filtro semântico
+                      console.warn('⚠️ [IA] Erro ao validar com IA, usando filtro semântico:', error)
+                    }
+                  }
+                }
+              }
+              
+              // Log detalhado para debug (apenas 1% para não poluir console)
+              if (!correspondeSemantico && licitacao.objeto_compra && Math.random() < 0.01) {
+                console.log(`🚫 [Filtro] Licitação filtrada:`, {
+                  objeto: licitacao.objeto_compra.substring(0, 100),
+                  palavrasPrincipais: palavrasChave.principais.slice(0, 3)
+                })
+              }
+              
+              return null
+            })
+          )
           
-          resultadosFiltrados.push(...resultadosLote)
+          // Filtrar nulls
+          const resultadosFiltradosLote = resultadosLote.filter(Boolean)
+          
+          resultadosFiltrados.push(...resultadosFiltradosLote)
             
             // Avançar para o próximo lote
             indiceAtual += TAMANHO_LOTE
             
             // Usar setTimeout para permitir que o navegador processe outros eventos
             // Isso evita travar a navegação durante o processamento
-            setTimeout(processarProximoLote, 0)
+            setTimeout(async () => {
+              await processarProximoLote()
+            }, 0)
           }
           
           // Iniciar processamento
-          processarProximoLote()
+          await processarProximoLote()
         })
         
         resultado = resultadosFiltrados
@@ -1829,7 +1896,7 @@ function LicitacoesContent() {
                         className="h-9 text-xs"
                   />
                 </div>
-              </div>
+          </div>
 
                   {/* Checkboxes */}
                   <div className="space-y-2">
@@ -2082,7 +2149,7 @@ function LicitacoesContent() {
                             ) : (
                               <>
                                 <Download className="w-3 h-3" />
-                                {documentos.length} doc{documentos.length > 1 ? 's' : ''}
+                              {documentos.length} doc{documentos.length > 1 ? 's' : ''}
                               </>
                             )}
                           </button>
@@ -2094,7 +2161,7 @@ function LicitacoesContent() {
                             onClick={(e) => e.stopPropagation()}
                           >
                             <FileText className="w-3 h-3" />
-                            {itens.length} {itens.length > 1 ? 'itens' : 'item'}
+                              {itens.length} {itens.length > 1 ? 'itens' : 'item'}
                           </button>
                         )}
                       </>
@@ -2235,7 +2302,7 @@ function LicitacoesContent() {
                 <hr className="my-4" />
 
                 {/* Detalhes em 3 colunas */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 px-2 py-2">
                   {/* Campo 1: Data de Publicação */}
                               <div className="flex items-start gap-2">
                     <Calendar className="w-4 h-4 text-gray-500 mt-1 flex-shrink-0" />
@@ -2265,7 +2332,20 @@ function LicitacoesContent() {
                     </div>
                   </div>
 
-                  {/* Campo 4: Órgão */}
+                  {/* Campo 4: Valor Estimado */}
+                  {licitacao.valor_total_estimado && (
+                    <div className="flex items-start gap-2">
+                      <DollarSign className="w-5 h-5 text-green-600 mt-1 flex-shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Valor Estimado:</p>
+                        <p className="text-lg font-bold text-green-600">
+                          {formatarValor(licitacao.valor_total_estimado)}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Campo 5: Órgão */}
                   <div className="flex items-start gap-2 md:col-span-2">
                     <Building2 className="w-4 h-4 text-blue-500 mt-1 flex-shrink-0" />
                     <div>
@@ -2275,38 +2355,14 @@ function LicitacoesContent() {
                       </p>
                     </div>
                   </div>
-
-                  {/* Campo 5: Edital */}
-                  <div className="flex items-start gap-2">
-                    <FileText className="w-4 h-4 text-gray-500 mt-1 flex-shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">Edital:</p>
-                      <p className="text-sm text-gray-600 font-mono text-xs">
-                        {licitacao.numero_controle_pncp}
-                      </p>
-                    </div>
-                  </div>
                 </div>
-
-                <hr className="my-4" />
-
-                {/* Valor */}
-                {licitacao.valor_total_estimado && (
-                  <div className="flex items-center gap-2 mb-4">
-                    <DollarSign className="w-5 h-5 text-green-600" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">Valor Estimado:</p>
-                      <p className="text-lg font-bold text-green-600">
-                        {formatarValor(licitacao.valor_total_estimado)}
-                      </p>
-                            </div>
-                                </div>
-                              )}
 
                 {/* Footer */}
                 <div className="flex items-center justify-between pt-4 border-t">
                   <div className="flex items-center gap-2 text-sm text-gray-500">
-                    <span>Nº Licitação: {licitacao.numero_controle_pncp}</span>
+                    {licitacao.data_inclusao && (
+                      <span>Incluída em: {formatarData(licitacao.data_inclusao)}</span>
+                    )}
                             </div>
                   <div className="text-sm text-gray-500">
                     Atualizada em: {formatarData(licitacao.data_atualizacao)}

@@ -116,12 +116,15 @@ serve(async (req) => {
     if (licitacao.anexos && Array.isArray(licitacao.anexos)) {
       licitacao.anexos.forEach((anexo: any) => {
         const url = anexo.url || anexo.urlDocumento || anexo.linkDocumento || anexo.link
-        const nome = anexo.nomeArquivo || anexo.nome || anexo.nomeDocumento
+        const nome = anexo.nomeArquivo || anexo.nome || anexo.nomeDocumento || anexo.tipoDocumentoNome
         if (url) {
-          documentos.push({
-            urlDocumento: url,
-            nomeArquivo: nome || 'Documento.pdf'
-          })
+          // Evitar duplicatas baseado na URL
+          if (!documentos.some(d => d.urlDocumento === url)) {
+            documentos.push({
+              urlDocumento: url,
+              nomeArquivo: nome || 'Documento.pdf'
+            })
+          }
         }
       })
       console.log(`📎 ${licitacao.anexos.length} anexos encontrados no campo anexos`)
@@ -182,7 +185,8 @@ serve(async (req) => {
       )
     }
 
-    console.log(`📦 Total de ${documentos.length} documentos únicos encontrados`)
+    console.log(`📦 Total de ${documentos.length} documentos únicos encontrados após remover duplicatas`)
+    console.log(`📋 Lista de documentos:`, documentos.map((d, i) => `${i + 1}. ${d.nomeArquivo} (${d.urlDocumento?.substring(0, 50)}...)`))
 
     // Criar ZIP
     // JSZip pode vir como default export ou named export dependendo do esm.sh
@@ -199,12 +203,13 @@ serve(async (req) => {
     const zip = new JSZipClass()
     let sucesso = 0
     let erros = 0
+    const nomesUsados = new Map<string, number>() // Para rastrear nomes duplicados
 
     // Baixar cada documento e adicionar ao ZIP
     for (let i = 0; i < documentos.length; i++) {
       const doc = documentos[i]
       const url = doc.urlDocumento || doc.url || doc.linkDocumento || doc.link
-      const nome = doc.nomeArquivo || doc.nome || `Documento_${i + 1}.pdf`
+      let nome = doc.nomeArquivo || doc.nome || `Documento_${i + 1}.pdf`
 
       if (!url) {
         console.warn(`⚠️ Documento ${i + 1} sem URL, pulando...`)
@@ -212,8 +217,25 @@ serve(async (req) => {
         continue
       }
 
+      // Garantir nome único no ZIP (evitar sobrescrita)
+      const nomeBase = nome.replace(/[<>:"/\\|?*]/g, '_')
+      const extIndex = nomeBase.lastIndexOf('.')
+      const nomeSemExt = extIndex > 0 ? nomeBase.substring(0, extIndex) : nomeBase
+      const extensao = extIndex > 0 ? nomeBase.substring(extIndex) : '.pdf'
+      
+      let nomeFinal = nomeBase
+      if (nomesUsados.has(nomeBase)) {
+        // Se já existe, incrementar contador e renomear
+        const contador = nomesUsados.get(nomeBase)! + 1
+        nomesUsados.set(nomeBase, contador)
+        nomeFinal = `${nomeSemExt}_${contador}${extensao}`
+      } else {
+        // Primeira ocorrência, marcar como usado
+        nomesUsados.set(nomeBase, 0)
+      }
+
       try {
-        console.log(`📥 Baixando documento ${i + 1}/${documentos.length}: ${nome}`)
+        console.log(`📥 Baixando documento ${i + 1}/${documentos.length}: ${nome} -> ${nomeFinal}`)
 
         // Tentar baixar com timeout e retry
         let downloadResponse
@@ -262,13 +284,12 @@ serve(async (req) => {
         // Obter blob do documento
         const blob = await downloadResponse.arrayBuffer()
         
-        // Adicionar ao ZIP (sanitizar nome do arquivo)
-        const nomeSanitizado = nome.replace(/[<>:"/\\|?*]/g, '_')
-        zip.file(nomeSanitizado, blob)
+        // Adicionar ao ZIP (já tem nome sanitizado e único)
+        zip.file(nomeFinal, blob)
         sucesso++
-        console.log(`✅ Documento ${i + 1} adicionado ao ZIP: ${nomeSanitizado}`)
+        console.log(`✅ Documento ${i + 1}/${documentos.length} adicionado ao ZIP: ${nomeFinal}`)
       } catch (error) {
-        console.error(`❌ Erro ao baixar documento ${i + 1} (${nome}):`, error)
+        console.error(`❌ Erro ao baixar documento ${i + 1}/${documentos.length} (${nome}):`, error)
         erros++
       }
     }

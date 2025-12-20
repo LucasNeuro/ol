@@ -172,3 +172,5 @@ export function useLicitacoesCache({ perfilUsuario, filtros, filtroSemantico }) 
   }
 }
 
+
+

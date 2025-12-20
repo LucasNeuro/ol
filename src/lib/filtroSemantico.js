@@ -6,7 +6,7 @@
 /**
  * Remove acentos e normaliza texto para comparação
  */
-function normalizarTexto(texto) {
+export function normalizarTexto(texto) {
   if (!texto) return ''
   return texto
     .toLowerCase()
@@ -547,12 +547,53 @@ export function correspondeAtividades(
   const palavrasContexto = extrairPalavrasContexto(setoresAtividades)
   const vocabularioSetor = construirVocabularioSetor(setoresAtividades)
   
+  // VERIFICAÇÃO PRÉVIA: Palavras de exclusão por setor (rejeitar imediatamente se incompatível)
+  // Isso evita processar licitações claramente incompatíveis (ex: "material escolar" para empresa de TI)
+  const palavrasIncompatibilidade = {
+    'informatica': ['escolar', 'escolares', 'material', 'materiais', 'kit', 'kits', 'alimento', 'comida', 'vestuario', 'vestuário', 'roupa', 'uniforme'],
+    'informática': ['escolar', 'escolares', 'material', 'materiais', 'kit', 'kits', 'alimento', 'comida', 'vestuario', 'vestuário', 'roupa', 'uniforme'],
+    'servicos': ['material', 'materiais', 'equipamento', 'hardware', 'veiculo', 'veículo', 'automovel', 'automóvel'],
+    'serviços': ['material', 'materiais', 'equipamento', 'hardware', 'veiculo', 'veículo', 'automovel', 'automóvel']
+  }
+  
+  // Verificar incompatibilidades antes de processar
+  if (setoresAtividades && setoresAtividades.length > 0) {
+    for (const setor of setoresAtividades) {
+      if (setor.setor) {
+        const setorNormalizado = normalizarTexto(setor.setor)
+        for (const [setorChave, palavrasIncompativeis] of Object.entries(palavrasIncompatibilidade)) {
+          if (setorNormalizado.includes(setorChave)) {
+            const temIncompativel = palavrasIncompativeis.some(palavra => 
+              objetoNormalizado.includes(normalizarTexto(palavra))
+            )
+            if (temIncompativel) {
+              console.log(`🚫 [Filtro] Licitação rejeitada por incompatibilidade:`, {
+                setor: setor.setor,
+                palavraIncompativel: palavrasIncompativeis.find(p => objetoNormalizado.includes(normalizarTexto(p))),
+                objeto: objetoCompleto.substring(0, 100)
+              })
+              return false  // Rejeitar imediatamente
+            }
+          }
+        }
+      }
+    }
+  }
+  
   // NOVA ABORDAGEM: Buscar por CADA atividade (subsetor) cadastrada individualmente
   // Isso aumenta muito a abrangência porque busca por termos específicos de cada atividade
   // MELHORADO: Sistema de pontuação para manter precisão e abrangência
   if (setoresAtividades && setoresAtividades.length > 0) {
     let pontuacaoCorrespondencia = 0
-    const palavrasGenericas = ['servico', 'servicos', 'manutencao', 'manutenção', 'prestacao', 'prestação', 'fornecimento', 'fornecer']
+    const palavrasUnicasEncontradas = new Set()  // Rastrear palavras únicas encontradas
+    // EXPANDIDO: Mais palavras genéricas para reduzir falsos positivos
+    const palavrasGenericas = [
+      'servico', 'servicos', 'manutencao', 'manutenção', 'prestacao', 'prestação', 
+      'fornecimento', 'fornecer', 'material', 'materiais', 'escolar', 'escolares',
+      'kit', 'kits', 'aquisição', 'aquisicao', 'compra', 'adquirir', 
+      'contratacao', 'contratação', 'publico', 'publica', 'municipal', 
+      'estadual', 'federal', 'governo', 'orgao', 'órgão'
+    ]
     
     // Iterar sobre cada setor e seus subsetores
     for (const setor of setoresAtividades) {
@@ -561,10 +602,12 @@ export function correspondeAtividades(
         const setorNormalizado = normalizarTexto(setor.setor)
         // Correspondência exata do setor completo (peso 3)
         if (objetoNormalizado.includes(setorNormalizado)) {
+          palavrasUnicasEncontradas.add(setorNormalizado)  // Rastrear palavra única
           pontuacaoCorrespondencia += 3
         } else {
           // Correspondência parcial (peso 1)
           if (palavrasObjeto.some(po => correspondeParcial(setorNormalizado, po))) {
+            palavrasUnicasEncontradas.add(setorNormalizado)  // Rastrear palavra única
             pontuacaoCorrespondencia += 1
           }
         }
@@ -579,6 +622,7 @@ export function correspondeAtividades(
           
           // Correspondência exata do subsetor completo (peso 5 - muito específico)
           if (objetoNormalizado.includes(subsetorNormalizado)) {
+            palavrasUnicasEncontradas.add(subsetorNormalizado)  // Rastrear palavra única
             pontuacaoCorrespondencia += 5
             continue // Subsetor completo encontrado, não precisa verificar palavras individuais
           }
@@ -600,10 +644,11 @@ export function correspondeAtividades(
                 const indiceContexto = objetoNormalizado.indexOf(pcNormalizado)
                 if (indiceContexto === -1) return false
                 const distancia = Math.abs(indicePalavra - indiceContexto)
-                return distancia <= 150
+                return distancia <= 100  // Reduzido de 150 para 100 para maior precisão
               })
               if (temContexto) {
                 palavrasEncontradas++
+                palavrasUnicasEncontradas.add(palavraNormalizada)  // Rastrear palavra única
                 pontuacaoCorrespondencia += 2
               }
               continue
@@ -612,6 +657,7 @@ export function correspondeAtividades(
             // Correspondência exata (peso 2)
             if (objetoNormalizado.includes(palavraNormalizada)) {
               palavrasEncontradas++
+              palavrasUnicasEncontradas.add(palavraNormalizada)  // Rastrear palavra única
               pontuacaoCorrespondencia += 2
               continue
             }
@@ -619,6 +665,7 @@ export function correspondeAtividades(
             // Correspondência parcial (peso 1)
             if (palavrasObjeto.some(po => correspondeParcial(palavraNormalizada, po))) {
               palavrasEncontradas++
+              palavrasUnicasEncontradas.add(palavraNormalizada)  // Rastrear palavra única
               pontuacaoCorrespondencia += 1
               continue
             }
@@ -631,6 +678,7 @@ export function correspondeAtividades(
                 return raizSubsetor === raizObjeto
               })) {
                 palavrasEncontradas++
+                palavrasUnicasEncontradas.add(palavraNormalizada)  // Rastrear palavra única
                 pontuacaoCorrespondencia += 1
               }
             }
@@ -644,12 +692,61 @@ export function correspondeAtividades(
       }
     }
     
-    // PRECISÃO: Exigir pontuação mínima MAIOR para aceitar (evita falsos positivos)
-    // Pontuação >= 5: Aceita apenas correspondências mais específicas
-    // Isso garante que apenas licitações realmente relacionadas aos subsetores sejam aceitas
-    // Exemplo: precisa encontrar pelo menos 1 subsetor completo (5 pontos) OU múltiplas correspondências específicas
-    if (pontuacaoCorrespondencia >= 5) {
-      return true
+    // PRECISÃO: Sistema de pontuação flexível para balancear precisão e cobertura
+    // Estratégia: Aceitar casos com pontuação alta OU múltiplas palavras-chave
+    // Isso aumenta a cobertura sem perder muita precisão
+    
+    // CASO 1: Pontuação muito alta (7+) = aceitar diretamente (alta confiança)
+    if (pontuacaoCorrespondencia >= 7) {
+      // Verificar também se corresponde ao vocabulário do setor (dupla validação)
+      const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
+      if (correspondeVocabulario || vocabularioSetor.size === 0) {
+        return true
+      }
+    }
+    
+    // CASO 2: Pontuação média-alta (4-6) + múltiplas palavras-chave (2+) = aceitar
+    // MELHORADO: Reduzido threshold de 5 para 4 para aumentar cobertura (ainda mantém 2 palavras-chave)
+    // 4 pontos ainda é seguro porque exige 2 palavras-chave diferentes (não apenas repetições)
+    if (pontuacaoCorrespondencia >= 4 && palavrasUnicasEncontradas.size >= 2) {
+      const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
+      if (correspondeVocabulario || vocabularioSetor.size === 0) {
+        return true
+      }
+    }
+    
+    // CASO 3: Pontuação média-alta (6+) + múltiplas palavras-chave (2+) = aceitar
+    // CORRIGIDO: Aumentado threshold para reduzir falsos positivos
+    // Antes: 4 pontos + 1 palavra-chave (muito permissivo)
+    // Depois: 6 pontos + 2 palavras-chave (mais restritivo)
+    if (pontuacaoCorrespondencia >= 6 && palavrasUnicasEncontradas.size >= 2) {
+      const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
+      // SEMPRE exigir vocabulário se disponível (não aceitar se vazio)
+      if (vocabularioSetor.size > 0) {
+        if (correspondeVocabulario) {
+          return true
+        }
+        // Se não corresponde ao vocabulário, rejeitar mesmo com pontuação alta
+        return false
+      }
+      // Se vocabulário vazio, aceitar apenas se tem subsetor completo (5+ pontos)
+      const temSubsetorCompleto = pontuacaoCorrespondencia >= 5
+      if (temSubsetorCompleto) {
+        return true
+      }
+    }
+    
+    // CASO 4: Subsetor completo encontrado (5 pontos) = aceitar mesmo com apenas 1 palavra-chave
+    // MELHORADO: Aumenta cobertura aceitando subsetores específicos (alta confiança)
+    // Subsetor completo é muito específico, então mesmo com 1 palavra é relevante
+    if (pontuacaoCorrespondencia >= 5 && palavrasUnicasEncontradas.size >= 1) {
+      // Verificar se é subsetor completo (5 pontos indica subsetor completo encontrado)
+      // Subsetor completo é encontrado quando: objetoNormalizado.includes(subsetorNormalizado)
+      // Isso já adiciona 5 pontos, então se pontuacao >= 5 e tem palavra única, provavelmente é subsetor completo
+      const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
+      if (correspondeVocabulario || vocabularioSetor.size === 0) {
+        return true  // ✅ Aceitar subsetor completo mesmo com 1 palavra-chave
+      }
     }
   }
   
@@ -694,9 +791,9 @@ export function correspondeAtividades(
           
           if (indiceContexto === -1) return false
           
-          // Contexto deve estar próximo (100 caracteres - mais restritivo)
+          // Contexto deve estar próximo (80 caracteres - mais restritivo ainda)
           const distancia = Math.abs(indicePalavra - indiceContexto)
-          return distancia <= 100
+          return distancia <= 80  // Reduzido de 100 para 80 para maior precisão
         })
         
         if (temContextoProximo) {

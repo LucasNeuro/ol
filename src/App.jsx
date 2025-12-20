@@ -7,6 +7,7 @@ import { ConfirmDialogProvider } from '@/components/ui/confirm-dialog'
 import { FiltroProvider } from '@/contexts/FiltroContext'
 import { useVerificarAlertas } from '@/hooks/useVerificarAlertas'
 import { useAuth } from '@/hooks/useAuth'
+import { ProtectedRoute } from '@/components/ProtectedRoute'
 
 // Páginas públicas
 import { LandingPage } from '@/pages/landing'
@@ -80,27 +81,29 @@ function AppContent() {
 
   return (
     <Switch>
+      {/* Rotas Públicas */}
       <Route path="/" component={LandingPage} />
       <Route path="/login" component={LoginPage} />
       <Route path="/cadastro" component={CadastroPage} />
       <Route path="/recuperar-senha" component={RecuperarSenhaPage} />
       <Route path="/redefinir-senha/:token" component={RedefinirSenhaPage} />
       
-      <Route path="/modulos" component={ModulosPage} />
-      <Route path="/dashboard" component={DashboardPage} />
-      <Route path="/perfil" component={PerfilPage} />
-      <Route path="/boletim" component={BoletimPage} />
-      <Route path="/licitacoes" component={BoletimDiaPage} />
-      <Route path="/favoritos" component={FavoritosPage} />
-      <Route path="/alertas" component={AlertasPage} />
-      <Route path="/edital/:numeroControle" component={EditalPage} />
+      {/* Rotas Protegidas - Exigem Autenticação */}
+      <Route path="/modulos" component={() => <ProtectedRoute><ModulosPage /></ProtectedRoute>} />
+      <Route path="/dashboard" component={() => <ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+      <Route path="/perfil" component={() => <ProtectedRoute><PerfilPage /></ProtectedRoute>} />
+      <Route path="/boletim" component={() => <ProtectedRoute><BoletimPage /></ProtectedRoute>} />
+      <Route path="/licitacoes" component={() => <ProtectedRoute><BoletimDiaPage /></ProtectedRoute>} />
+      <Route path="/favoritos" component={() => <ProtectedRoute><FavoritosPage /></ProtectedRoute>} />
+      <Route path="/alertas" component={() => <ProtectedRoute><AlertasPage /></ProtectedRoute>} />
+      <Route path="/edital/:numeroControle" component={() => <ProtectedRoute><EditalPage /></ProtectedRoute>} />
       
-      {/* Rotas Administrativas */}
-      <Route path="/admin/usuarios" component={AdminUsuariosPage} />
+      {/* Rotas Administrativas - Exigem Autenticação */}
+      <Route path="/admin/usuarios" component={() => <ProtectedRoute><AdminUsuariosPage /></ProtectedRoute>} />
       
-      {/* Rotas não encontradas - redirecionar para licitações se autenticado, senão para login */}
+      {/* Rota não encontrada - redirecionar para landing page */}
       <Route>
-        <Redirect to="/licitacoes" />
+        <Redirect to="/" />
       </Route>
     </Switch>
   )
