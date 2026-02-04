@@ -14,7 +14,6 @@ import {
   ChevronRight,
   Calendar,
   Filter,
-  Target,
   Users,
   ClipboardList
 } from 'lucide-react'
@@ -68,10 +67,8 @@ export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
           {/* Logo */}
           <Link href="/licitacoes">
             <a className="flex items-center gap-2.5 shrink-0">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
-                <Target className="h-5 w-5 text-primary" />
-              </div>
-              <span className="text-lg font-semibold text-gray-900 tracking-tight hidden sm:inline">
+              <img src="/logo/logo_licita.png" alt="Sistema Licitação" className="h-16 w-16 object-contain flex-shrink-0" />
+              <span className="text-xl font-semibold text-gray-900 tracking-tight hidden sm:inline">
                 Sistema Licitação
               </span>
             </a>

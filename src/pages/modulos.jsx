@@ -21,7 +21,6 @@ import {
   Bell, 
   BarChart3, 
   User, 
-  Target,
   Users,
   MessageSquare,
   Loader2

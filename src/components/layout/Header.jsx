@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/hooks/useAuth'
 import { useQuery } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import { User, LogOut, ChevronDown, Target, ArrowLeft } from 'lucide-react'
+import { User, LogOut, ChevronDown } from 'lucide-react'
 import { supabase } from '@/lib/supabase' 
 
 export function Header() {
@@ -124,25 +124,14 @@ export function Header() {
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex h-14 items-center justify-between">
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setLocation('/modulos')}
-              className="flex items-center justify-center w-9 h-9 rounded-xl hover:bg-gray-100 transition-colors text-muted-foreground hover:text-primary"
-              title="Voltar para Módulos"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <button
-              onClick={() => setLocation('/modulos')}
-              className="flex items-center gap-2.5"
-              title="Voltar para Módulos"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
-                <Target className="h-5 w-5 text-primary" />
-              </div>
-              <span className="text-lg font-semibold text-foreground tracking-tight hidden sm:inline">
-                Sistema Licitação
-              </span>
-            </button>
+            <Link href="/modulos">
+              <a className="flex items-center">
+              <img src="/logo/logo_licita.png" alt="Sistema Licitação" className="h-16 w-16 object-contain flex-shrink-0" />
+                <span className="text-xl font-semibold text-foreground tracking-tight hidden sm:inline">
+                  Sistema Licitação
+                </span>
+              </a>
+            </Link>
           </div>
 
           <nav className="flex items-center gap-3">

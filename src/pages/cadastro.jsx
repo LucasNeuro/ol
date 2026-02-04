@@ -14,7 +14,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { validarCNPJ, formatarCNPJ } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 import { syncPalavrasFortesFromSetores } from '@/lib/palavrasFortes'
-import { Search, Building2, Loader2, CheckCircle, Plus } from 'lucide-react'
+import { Search, Building2, Loader2, CheckCircle, Plus, ChevronRight, ChevronLeft } from 'lucide-react'
 import { SelecionarSetores } from '@/components/SelecionarSetores'
 import { SelecionarEstados } from '@/components/SelecionarEstados'
 import { Badge } from '@/components/ui/badge'
@@ -177,6 +177,8 @@ export function CadastroPage() {
   const [modalEstadosAberto, setModalEstadosAberto] = useState(false)
   const [setoresSelecionados, setSetoresSelecionados] = useState([])
   const [estadosSelecionados, setEstadosSelecionados] = useState([])
+  const [step, setStep] = useState(1)
+  const TOTAL_STEPS = 5
 
   const {
     register,
@@ -375,13 +377,33 @@ export function CadastroPage() {
 
   return (
     <PublicRoute>
-      <AuthLayout title="Criar Conta" subtitle="Comece gratuitamente hoje mesmo">
-      <form onSubmit={handleSubmit(onSubmit)} className="bg-white shadow-2xl rounded-2xl p-8 md:p-10 border border-gray-100 space-y-6">
-        {/* Seção: Dados da Empresa - PRIMEIRO */}
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 pb-2 border-b">Dados da Empresa</h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="space-y-2 md:col-span-2">
+      <AuthLayout subtitle="Comece gratuitamente hoje mesmo" contentClassName="w-full max-w-4xl">
+      <form onSubmit={handleSubmit(onSubmit)} className="bg-white shadow-xl rounded-2xl border border-border overflow-hidden">
+        {/* Indicador de etapas */}
+        <div className="px-8 pt-6 pb-4 border-b border-border bg-muted/30">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-sm font-medium text-muted-foreground">Etapa {step} de {TOTAL_STEPS}</span>
+            <span className="text-sm font-medium text-primary">{Math.round((step / TOTAL_STEPS) * 100)}%</span>
+          </div>
+          <div className="h-2 bg-muted rounded-full overflow-hidden">
+            <div className="h-full bg-primary rounded-full transition-all duration-300" style={{ width: `${(step / TOTAL_STEPS) * 100}%` }} />
+          </div>
+          <div className="flex justify-between mt-2">
+            {['Empresa', 'Acesso', 'Endereço', 'Configuração', 'Perfil'].map((label, i) => (
+              <span key={label} className={`text-xs font-medium ${i + 1 <= step ? 'text-primary' : 'text-muted-foreground'}`}>
+                {label}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="p-8 md:p-10 space-y-6">
+        {/* Step 1: Dados da Empresa */}
+        {step === 1 && (
+        <div>
+          <h3 className="text-lg font-semibold text-foreground mb-4 pb-2 border-b border-border">Dados da Empresa</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
                   <Label htmlFor="cnpj" className="text-sm font-medium text-gray-700">
                     CNPJ *
                   </Label>
@@ -415,7 +437,7 @@ export function CadastroPage() {
                   )}
                 </div>
 
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-2">
                   <Label htmlFor="razaoSocial" className="text-sm font-medium text-gray-700">
                     Razão Social *
                   </Label>
@@ -430,7 +452,7 @@ export function CadastroPage() {
                   {errors.razaoSocial && <p className="text-red-600 text-xs mt-1">{errors.razaoSocial.message}</p>}
                 </div>
 
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-2">
                   <Label htmlFor="nomeFantasia" className="text-sm font-medium text-gray-700">
                     Nome Fantasia
                   </Label>
@@ -444,7 +466,7 @@ export function CadastroPage() {
                   />
                 </div>
 
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-2">
                   <Label htmlFor="telefone" className="text-sm font-medium text-gray-700">
                     Telefone
                   </Label>
@@ -458,12 +480,14 @@ export function CadastroPage() {
                 </div>
           </div>
         </div>
+        )}
 
-        {/* Seção: Dados de Acesso - DEPOIS */}
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 pb-2 border-b">Dados de Acesso</h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="space-y-2 md:col-span-2">
+        {/* Step 2: Dados de Acesso */}
+        {step === 2 && (
+        <div>
+          <h3 className="text-lg font-semibold text-foreground mb-4 pb-2 border-b border-border">Dados de Acesso</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
                   <Label htmlFor="email" className="text-sm font-medium text-gray-700">
                     Email *
                   </Label>
@@ -477,7 +501,7 @@ export function CadastroPage() {
                   {errors.email && <p className="text-red-600 text-xs mt-1">{errors.email.message}</p>}
                 </div>
 
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-2">
                   <Label htmlFor="cargo" className="text-sm font-medium text-gray-700">
                     Cargo *
                   </Label>
@@ -510,7 +534,7 @@ export function CadastroPage() {
                   {errors.cargo && <p className="text-red-600 text-xs mt-1">{errors.cargo.message}</p>}
                 </div>
 
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-2">
                   <Label htmlFor="password" className="text-sm font-medium text-gray-700">
                     Senha *
                   </Label>
@@ -523,7 +547,7 @@ export function CadastroPage() {
                   {errors.password && <p className="text-red-600 text-xs mt-1">{errors.password.message}</p>}
                 </div>
 
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-2">
                   <Label htmlFor="confirmPassword" className="text-sm font-medium text-gray-700">
                     Confirmar Senha *
                   </Label>
@@ -537,11 +561,13 @@ export function CadastroPage() {
                 </div>
           </div>
         </div>
+        )}
 
-        {/* Seção: Endereço */}
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 pb-2 border-b">Endereço</h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {/* Step 3: Endereço */}
+        {step === 3 && (
+        <div>
+          <h3 className="text-lg font-semibold text-foreground mb-4 pb-2 border-b border-border">Endereço</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="cep" className="text-sm font-medium text-gray-700">
                     CEP
@@ -557,7 +583,7 @@ export function CadastroPage() {
                   />
                 </div>
 
-                <div className="space-y-2 md:col-span-3">
+                <div className="space-y-2">
                   <Label htmlFor="logradouro" className="text-sm font-medium text-gray-700">
                     Logradouro
                   </Label>
@@ -585,7 +611,7 @@ export function CadastroPage() {
                   />
                 </div>
 
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-2">
                   <Label htmlFor="complemento" className="text-sm font-medium text-gray-700">
                     Complemento
                   </Label>
@@ -612,7 +638,7 @@ export function CadastroPage() {
                   />
                 </div>
 
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-2">
                   <Label htmlFor="municipio" className="text-sm font-medium text-gray-700">
                     Município
                   </Label>
@@ -642,10 +668,12 @@ export function CadastroPage() {
                 </div>
           </div>
         </div>
+        )}
 
-        {/* Seção: Configuração do serviço */}
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 pb-2 border-b">Configuração do serviço</h3>
+        {/* Step 4: Configuração do serviço */}
+        {step === 4 && (
+        <div>
+          <h3 className="text-lg font-semibold text-foreground mb-4 pb-2 border-b border-border">Configuração do serviço</h3>
           <div className="space-y-4">
             {/* Atividades de interesse */}
             <div className="space-y-2">
@@ -725,11 +753,13 @@ export function CadastroPage() {
             </div>
           </div>
         </div>
+        )}
 
-        {/* Seção: Informações do Perfil */}
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 pb-2 border-b">Informações do Perfil</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Step 5: Informações do Perfil */}
+        {step === 5 && (
+        <div>
+          <h3 className="text-lg font-semibold text-foreground mb-4 pb-2 border-b border-border">Informações do Perfil</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label htmlFor="comoConheceu" className="text-sm font-medium text-gray-700">
                 Como conheceu o Sitema Licitação?
@@ -829,6 +859,65 @@ export function CadastroPage() {
             </div>
           </div>
         </div>
+        )}
+
+        {/* Navegação entre etapas */}
+        <div className="flex flex-col sm:flex-row gap-3 pt-6 border-t border-border">
+          {step > 1 ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setStep((s) => s - 1)}
+              className="order-2 sm:order-1"
+            >
+              <ChevronLeft className="w-4 h-4 mr-2" />
+              Voltar
+            </Button>
+          ) : (
+            <div className="order-2 sm:order-1" />
+          )}
+          <div className="flex-1" />
+          {step < TOTAL_STEPS ? (
+            <Button
+              type="button"
+              onClick={() => setStep((s) => s + 1)}
+              className="order-1 sm:order-2"
+            >
+              Próximo
+              <ChevronRight className="w-4 h-4 ml-2" />
+            </Button>
+          ) : (
+            <div className="order-1 sm:order-2 flex flex-col gap-3 w-full sm:w-auto">
+              {error && (
+                <div className="bg-red-50 border-l-4 border-red-500 rounded-lg p-4">
+                  <p className="text-red-700 text-sm font-medium">{error}</p>
+                </div>
+              )}
+              <Button
+                type="submit"
+                className="w-full sm:w-auto h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-base"
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="animate-spin w-5 h-5 mr-2" />
+                    Criando conta...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-5 h-5 mr-2" />
+                    Criar Conta Grátis
+                  </>
+                )}
+              </Button>
+              <p className="text-center text-xs text-muted-foreground">
+                Sem cartão de crédito • Sem compromisso
+              </p>
+            </div>
+          )}
+        </div>
+
+        </div>
 
         {/* Modais */}
         <SelecionarSetores
@@ -851,50 +940,11 @@ export function CadastroPage() {
           }}
         />
 
-        {error && (
-                <div className="bg-red-50 border-l-4 border-red-500 rounded-lg p-4">
-                  <div className="flex items-start gap-3">
-                    <svg className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                    </svg>
-                    <p className="text-red-700 text-sm font-medium">{error}</p>
-                  </div>
-                </div>
-              )}
-
-              <div className="pt-2">
-                <Button 
-                  type="submit" 
-                  className="w-full h-12 bg-orange-500 hover:bg-orange-600 text-white font-semibold text-base shadow-lg" 
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <>
-                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      Criando conta...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
-                      Criar Conta Grátis
-                    </>
-                  )}
-                </Button>
-                <p className="text-center text-xs text-gray-500 mt-3">
-                  Sem cartão de crédito • Sem compromisso
-                </p>
-              </div>
-
-        <div className="mt-8 pt-6 border-t border-gray-200 text-center">
+        <div className="mt-8 pt-6 border-t border-border text-center">
           <p className="text-sm text-gray-600">
             Já tem uma conta?{' '}
             <Link href="/login">
-              <a className="text-orange-600 hover:text-orange-700 font-semibold hover:underline cursor-pointer">
+              <a className="text-primary hover:underline font-semibold cursor-pointer">
                 Faça login aqui
               </a>
             </Link>
