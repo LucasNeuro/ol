@@ -152,60 +152,43 @@ function ModulosContent() {
   }
 
   return (
-    <div className="min-h-screen bg-white py-12 px-4 md:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-full bg-surface py-8 sm:py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-6xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-12">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <Target className="w-10 h-10 text-orange-500" />
-            <h1 className="text-4xl md:text-5xl font-bold text-gray-900">
-              <strong>Sistema Licitação</strong>
-            </h1>
-          </div>
-          <p className="text-xl text-gray-600 mt-2">
+        <div className="text-center mb-10">
+          <h1 className="text-3xl sm:text-4xl font-bold text-foreground tracking-tight">
+            Sistema Licitação
+          </h1>
+          <p className="text-muted-foreground mt-2 text-base sm:text-lg">
             Selecione o módulo que deseja acessar
           </p>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             Escolha uma das opções abaixo para começar
           </p>
         </div>
 
-        {/* Grid de Cards - 3 por coluna */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+        {/* Grid de Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {modulosDisponiveis.map((modulo) => {
             const Icone = modulo.icone
-
             return (
               <Card
                 key={modulo.id}
-                className="
-                  bg-white border border-gray-200
-                  cursor-pointer transition-all duration-300
-                  hover:border-orange-500 hover:shadow-md
-                  h-full
-                "
+                className="cursor-pointer h-full hover:border-primary/40 hover:shadow-md active:scale-[0.99] transition-all duration-200"
                 onClick={() => handleCardClick(modulo.rota)}
               >
                 <CardContent className="p-6 flex flex-col items-center text-center h-full">
-                  <div className="
-                    w-16 h-16 rounded-lg 
-                    flex items-center justify-center 
-                    mb-4
-                    bg-orange-50
-                  ">
-                    <Icone className="w-8 h-8 text-orange-500" />
+                  <div className="w-14 h-14 rounded-xl flex items-center justify-center mb-4 bg-primary/10">
+                    <Icone className="w-7 h-7 text-primary" />
                   </div>
-                  
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  <h3 className="text-base font-semibold text-foreground mb-1.5">
                     {modulo.titulo}
                   </h3>
-                  
-                  <p className="text-gray-600 text-sm leading-relaxed mb-4">
+                  <p className="text-sm text-muted-foreground leading-relaxed mb-4 flex-1">
                     {modulo.descricao}
                   </p>
-
-                  <div className="mt-auto pt-4 border-t border-gray-200 w-full">
-                    <span className="text-xs font-medium text-orange-500 uppercase tracking-wide">
+                  <div className="pt-4 border-t border-border w-full">
+                    <span className="text-xs font-medium text-primary uppercase tracking-wide">
                       Acessar →
                     </span>
                   </div>
@@ -215,25 +198,22 @@ function ModulosContent() {
           })}
         </div>
 
-        {/* Footer Info */}
-        <div className="mt-12 text-center">
-          <p className="text-sm text-gray-500">
-            Bem-vindo, <strong>{user?.razao_social || user?.email || 'Usuário'}</strong>
-          </p>
-        </div>
+        <p className="mt-10 text-center text-sm text-muted-foreground">
+          Bem-vindo, <span className="font-medium text-foreground">{user?.razao_social || user?.email || 'Usuário'}</span>
+        </p>
       </div>
 
-      {/* Badge Flutuante - Nos ajude a melhorar */}
+      {/* Botão feedback */}
       <button
         onClick={() => {
           setEmail(user?.email || '')
           setFeedbackOpen(true)
         }}
-        className="fixed bottom-6 right-6 bg-orange-500 hover:bg-orange-600 text-white px-4 py-3 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 z-50"
+        className="fixed bottom-6 right-6 bg-primary text-primary-foreground px-4 py-3 rounded-xl shadow-lg hover:shadow-md hover:opacity-95 transition-all duration-200 flex items-center gap-2 z-50 font-medium text-sm"
         title="Nos ajude a melhorar"
       >
         <MessageSquare className="w-5 h-5" />
-        <span className="font-medium">Nos ajude a melhorar</span>
+        Nos ajude a melhorar
       </button>
 
       {/* Dialog de Feedback */}
@@ -284,7 +264,6 @@ function ModulosContent() {
             <Button
               onClick={handleEnviarFeedback}
               disabled={enviando || !email.trim() || !mensagem.trim()}
-              className="bg-orange-500 hover:bg-orange-600"
             >
               {enviando ? (
                 <>

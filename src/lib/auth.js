@@ -1,367 +1,189 @@
-// Sistema de Autenticação Personalizado usando apenas a tabela profiles
-import { supabase } from './supabase'
+/**
+ * Autenticação via Supabase Auth (login, cadastro, logout).
+ * Reset de senha: somente fluxo nativo Supabase (recuperar + redefinir).
+ * https://supabase.com/docs/guides/auth/passwords
+ * - Etapa 1: resetPasswordForEmail(email, { redirectTo }) → e-mail com link.
+ * - Etapa 2: usuário abre o link → /redefinir-senha → updateUser({ password }) → signOut.
+ * Perfis em `profiles` (id = auth.users.id).
+ */
+import { supabase, SUPABASE_NAO_CONFIGURADO_MSG } from './supabase'
 
-// Criar usuário (cadastro) - APENAS tabela profiles
+async function getProfileByUserId(userId) {
+  if (!supabase || !userId) return null
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .eq('ativo', true)
+    .maybeSingle()
+  if (error || !data) return null
+  const { password_hash, ...profile } = data
+  return profile
+}
+
+/** Cadastro: cria usuário no Auth + perfil em `profiles` */
 export async function signUp(email, password, profileData) {
-  if (!supabase) throw new Error('Supabase não configurado.')
+  if (!supabase) throw new Error(SUPABASE_NAO_CONFIGURADO_MSG)
 
-  console.log('📝 Criando novo usuário...')
-  
   try {
-    // Verificar se email já existe
-    const { data: existingUser } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('email', email.toLowerCase())
-      .maybeSingle()
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: email.toLowerCase(),
+      password,
+      options: { emailRedirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/modulos` },
+    })
 
-    if (existingUser) {
-      throw new Error('Email já cadastrado.')
+    if (authError) {
+      if (authError.message?.toLowerCase().includes('already registered')) {
+        throw new Error('Email já cadastrado.')
+      }
+      throw authError
     }
 
-    console.log('✅ Email disponível')
+    const user = authData?.user
+    if (!user) throw new Error('Erro ao criar usuário.')
 
-    // Hash da senha (SHA-256)
-    const encoder = new TextEncoder()
-    const data = encoder.encode(password)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-    const hashArray = Array.from(new Uint8Array(hashBuffer))
-    const passwordHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-
-    console.log('🔐 Senha hashada')
-
-    // Criar perfil
-    const { data: newUser, error: insertError } = await supabase
-      .from('profiles')
-      .insert({
-        email: email.toLowerCase(),
-        password_hash: passwordHash,
-        ...profileData,
-      })
-      .select()
-      .single()
+    const { error: insertError } = await supabase.from('profiles').insert({
+      ...profileData,
+      id: user.id,
+      user_id: user.id,
+      email: user.email,
+      ativo: true,
+    })
 
     if (insertError) {
-      console.error('❌ Erro ao inserir:', insertError)
+      if (insertError.code === '23505') throw new Error('Email já cadastrado.')
       throw insertError
     }
 
-    console.log('✅ Usuário criado com sucesso!')
-
-    const { password_hash, ...userData } = newUser
-    return { data: userData, error: null }
-  } catch (error) {
-    console.error('❌ Erro no cadastro:', error)
-    throw error
+    const profile = await getProfileByUserId(user.id)
+    return { data: profile || { id: user.id, email: user.email, ...profileData }, error: null }
+  } catch (e) {
+    throw e
   }
 }
 
-// Login - APENAS tabela profiles
+/** Login via Supabase Auth; retorna perfil de `profiles` */
 export async function signIn(email, password) {
-  if (!supabase) throw new Error('Supabase não configurado.')
+  if (!supabase) throw new Error(SUPABASE_NAO_CONFIGURADO_MSG)
 
-  console.log('🔐 Iniciando login...')
-  
-  try {
-    // Buscar usuário
-    const { data: user, error: fetchError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('email', email.toLowerCase())
-      .eq('ativo', true)
-      .maybeSingle()
+  const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+    email: email.toLowerCase(),
+    password,
+  })
 
-    if (fetchError) {
-      console.error('❌ Erro ao buscar usuário:', fetchError)
-      throw new Error('Erro ao fazer login. Tente novamente.')
-    }
-
-    if (!user) {
-      console.log('❌ Usuário não encontrado')
+  if (authError) {
+    const msg = authError.message || 'Erro ao fazer login.'
+    if (/invalid login credentials|invalid_credentials/i.test(msg)) {
       throw new Error('Email ou senha incorretos.')
     }
-
-    console.log('✅ Usuário encontrado:', user.email)
-
-    // Hash da senha para comparação
-    const encoder = new TextEncoder()
-    const data = encoder.encode(password)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-    const hashArray = Array.from(new Uint8Array(hashBuffer))
-    const passwordHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-
-    console.log('🔐 Verificando senha...')
-
-    // Verificar senha
-    if (passwordHash !== user.password_hash) {
-      console.log('❌ Senha incorreta')
-      throw new Error('Email ou senha incorretos.')
-    }
-
-    console.log('✅ Senha correta!')
-
-    // Atualizar último login
-    try {
-      await supabase
-        .from('profiles')
-        .update({ ultimo_login: new Date().toISOString() })
-        .eq('id', user.id)
-    } catch (err) {
-      console.warn('⚠️ Erro ao atualizar último login:', err)
-    }
-
-    // Remover password_hash antes de retornar
-    const { password_hash, ...userWithoutPassword } = user
-
-    console.log('✅ Login bem-sucedido!')
-
-    return { 
-      data: { user: userWithoutPassword }, 
-      error: null 
-    }
-  } catch (error) {
-    console.error('❌ Erro no login:', error)
-    throw error
+    throw new Error(msg)
   }
+
+  const user = authData?.user
+  if (!user) throw new Error('Email ou senha incorretos.')
+
+  const profile = await getProfileByUserId(user.id)
+  if (!profile) throw new Error('Perfil não encontrado. Entre em contato com o suporte.')
+
+  try {
+    await supabase
+      .from('profiles')
+      .update({ ultimo_login: new Date().toISOString() })
+      .eq('id', user.id)
+  } catch (_) {}
+
+  return { data: { user: profile }, error: null }
 }
 
-// Logout (agora apenas limpa, redirecionamento é feito pelo store)
-export function signOut() {
-  // Limpar sessão do localStorage
-  localStorage.removeItem('user')
-  localStorage.removeItem('session')
+/** Logout Supabase + limpeza local */
+export async function signOut() {
+  if (supabase) await supabase.auth.signOut()
+  try {
+    localStorage.removeItem('user')
+    localStorage.removeItem('session')
+  } catch (_) {}
   return { error: null }
 }
 
-// Verificar sessão atual
-export function getSession() {
-  try {
-    const userStr = localStorage.getItem('user')
-    if (!userStr) return null
-    
-    const user = JSON.parse(userStr)
-    return { user }
-  } catch {
-    return null
-  }
+/** Sessão atual (Supabase). Retorna `{ user }` com perfil ou null. */
+export async function getSession() {
+  if (!supabase) return null
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session?.user) return null
+  const profile = await getProfileByUserId(session.user.id)
+  return profile ? { user: profile } : null
 }
 
-// Salvar sessão
-export function saveSession(user) {
-  localStorage.setItem('user', JSON.stringify(user))
-  localStorage.setItem('session', JSON.stringify({ 
-    expires_at: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 dias
-  }))
+export function saveSession(_user) {
+  // Sessão é gerida pelo Supabase; nada a persistir manualmente aqui.
 }
 
-// Verificar se sessão expirou
 export function isSessionValid() {
-  try {
-    const sessionStr = localStorage.getItem('session')
-    if (!sessionStr) return false
-    
-    const session = JSON.parse(sessionStr)
-    return Date.now() < session.expires_at
-  } catch {
-    return false
+  return true // Validação real feita via getSession() assíncrono
+}
+
+/**
+ * Retorna a URL base do app (para links de email). Em produção pode usar VITE_APP_URL.
+ * RedirectTo deve ser URL absoluta e estar em Authentication → URL Configuration → Redirect URLs no Supabase.
+ */
+function getAppOrigin() {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin
   }
+  const envUrl = typeof import.meta !== 'undefined' && import.meta.env?.VITE_APP_URL
+  if (envUrl) return envUrl.replace(/\/$/, '')
+  return ''
 }
 
-// Função auxiliar para codificar em base64 URL-safe
-function base64UrlEncode(str) {
-  return btoa(str)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '')
-}
-
-// Função auxiliar para decodificar base64 URL-safe
-function base64UrlDecode(str) {
-  // Adicionar padding se necessário
-  str = str.replace(/-/g, '+').replace(/_/g, '/')
-  while (str.length % 4) {
-    str += '='
-  }
-  return atob(str)
-}
-
-// Gerar hash seguro para recuperação de senha (baseado em email + timestamp)
-async function gerarHashRecuperacao(email, timestamp) {
-  const secret = 'sistema-licitacao-reset-2024' // Chave secreta (em produção, usar variável de ambiente)
-  const data = `${email.toLowerCase()}:${timestamp}:${secret}`
-  const encoder = new TextEncoder()
-  const dataBuffer = encoder.encode(data)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-  // Codificar em base64 URL-safe
-  return base64UrlEncode(`${timestamp}:${hash}`)
-}
-
-// Validar hash de recuperação
-async function validarHashRecuperacao(email, hash) {
-  try {
-    // Decodificar base64
-    const decoded = base64UrlDecode(hash)
-    const [timestamp, hashValue] = decoded.split(':')
-    
-    if (!timestamp || !hashValue) return false
-    
-    // Verificar se expirou (24 horas)
-    const timestampNum = parseInt(timestamp, 10)
-    if (isNaN(timestampNum)) return false
-    
-    const expiresAt = timestampNum + (24 * 60 * 60 * 1000)
-    if (Date.now() > expiresAt) {
-      console.log('❌ Hash expirado')
-      return false
-    }
-    
-    // Gerar hash esperado e comparar
-    const expectedHash = await gerarHashRecuperacao(email, timestampNum)
-    return hash === expectedHash
-  } catch (error) {
-    console.error('❌ Erro ao validar hash:', error)
-    return false
-  }
-}
-
-// Solicitar recuperação de senha
+/**
+ * Etapa 1 do reset (doc Supabase: "Redefinir uma senha").
+ * 100% Supabase: o Supabase envia o email com o link; redirectTo deve estar em Redirect URLs no dashboard.
+ */
 export async function solicitarRecuperacaoSenha(email) {
-  if (!supabase) throw new Error('Supabase não configurado.')
+  if (!supabase) throw new Error(SUPABASE_NAO_CONFIGURADO_MSG)
 
-  console.log('🔐 Solicitando recuperação de senha para:', email)
-  
-  try {
-    // Verificar se email existe na tabela profiles
-    const { data: user, error: fetchError } = await supabase
-      .from('profiles')
-      .select('id, email')
-      .eq('email', email.toLowerCase())
-      .eq('ativo', true)
-      .maybeSingle()
+  const emailNorm = (email || '').toLowerCase().trim()
+  if (!emailNorm) throw new Error('Informe o e-mail.')
 
-    if (fetchError) {
-      console.error('❌ Erro ao buscar usuário:', fetchError)
-      throw new Error('Erro ao verificar email. Tente novamente.')
-    }
+  const origin = getAppOrigin()
+  if (!origin) throw new Error('Não foi possível determinar a URL do app. Configure VITE_APP_URL no .env em produção.')
 
-    // Por segurança, sempre retornar sucesso mesmo se email não existir
-    // Isso evita que alguém descubra quais emails estão cadastrados
-    if (!user) {
-      console.log('⚠️ Email não encontrado, mas retornando sucesso por segurança')
-      return { success: true }
-    }
+  const redirectTo = `${origin}/redefinir-senha`
 
-    console.log('✅ Email encontrado, gerando hash...')
+  const { error } = await supabase.auth.resetPasswordForEmail(emailNorm, { redirectTo })
 
-    // Gerar hash seguro baseado em email + timestamp
-    const timestamp = Date.now()
-    const hash = await gerarHashRecuperacao(user.email, timestamp)
+  if (error) throw new Error(error.message || 'Erro ao enviar e-mail de recuperação.')
 
-    console.log('✅ Hash gerado, enviando email...')
-
-    // Construir URL de recuperação
-    const baseUrl = window.location.origin
-    const resetUrl = `${baseUrl}/redefinir-senha/${hash}?email=${encodeURIComponent(user.email)}`
-
-    // Chamar Edge Function para enviar email
-    const { data: functionData, error: functionError } = await supabase.functions.invoke('enviar-email-recuperacao', {
-      body: {
-        email: user.email,
-        resetUrl: resetUrl
-      }
-    })
-
-    if (functionError) {
-      console.error('❌ Erro ao enviar email:', functionError)
-      // Não falhar se o email não for enviado, apenas logar
-      console.warn('⚠️ Email não foi enviado')
-    }
-
-    console.log('✅ Solicitação de recuperação processada com sucesso!')
-    return { success: true }
-  } catch (error) {
-    console.error('❌ Erro na recuperação de senha:', error)
-    throw error
-  }
+  return { success: true }
 }
 
-// Validar hash de recuperação
-export async function validarTokenRecuperacao(hash, email) {
-  if (!hash || !email) {
-    console.log('❌ Hash ou email não fornecido')
-    return false
+/**
+ * Verifica se há sessão de recuperação (usuário veio do link do e-mail).
+ * Faz algumas tentativas com delay porque o cliente pode demorar a processar o hash da URL.
+ */
+export async function hasRecoverySession() {
+  if (!supabase) return false
+  const delays = [0, 400, 1000]
+  for (const ms of delays) {
+    if (ms > 0) await new Promise((r) => setTimeout(r, ms))
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.user) return true
   }
-
-  console.log('🔍 Validando hash de recuperação...')
-  
-  try {
-    const isValid = await validarHashRecuperacao(email, hash)
-    
-    if (isValid) {
-      console.log('✅ Hash válido!')
-    } else {
-      console.log('❌ Hash inválido ou expirado')
-    }
-    
-    return isValid
-  } catch (error) {
-    console.error('❌ Erro ao validar hash:', error)
-    return false
-  }
+  return false
 }
 
-// Redefinir senha usando hash
-export async function redefinirSenha(hash, email, newPassword) {
-  if (!supabase) throw new Error('Supabase não configurado.')
+/**
+ * Etapa 2 do reset (doc Supabase: "Criar página para alterar a senha").
+ * Página no URL do redirectTo (acessível só a quem veio do link).
+ * updateUser({ password }) → depois signOut e redireciona para login.
+ */
+export async function redefinirSenhaViaSupabase(newPassword) {
+  if (!supabase) throw new Error(SUPABASE_NAO_CONFIGURADO_MSG)
 
-  console.log('🔐 Redefinindo senha...')
-  
-  try {
-    // Validar hash primeiro
-    const isValid = await validarHashRecuperacao(email, hash)
-    if (!isValid) {
-      throw new Error('Link inválido ou expirado. Solicite um novo link de recuperação.')
-    }
+  const { error } = await supabase.auth.updateUser({ password: newPassword })
 
-    // Buscar usuário pelo email
-    const { data: user, error: userError } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('email', email.toLowerCase())
-      .eq('ativo', true)
-      .maybeSingle()
+  if (error) throw new Error(error.message || 'Erro ao redefinir senha.')
 
-    if (userError || !user) {
-      throw new Error('Usuário não encontrado.')
-    }
-
-    // Hash da nova senha (SHA-256)
-    const encoder = new TextEncoder()
-    const data = encoder.encode(newPassword)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-    const hashArray = Array.from(new Uint8Array(hashBuffer))
-    const passwordHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-
-    console.log('🔐 Senha hashada, atualizando...')
-
-    // Atualizar senha do usuário
-    const { error: updateError } = await supabase
-      .from('profiles')
-      .update({ password_hash: passwordHash })
-      .eq('id', user.id)
-
-    if (updateError) {
-      console.error('❌ Erro ao atualizar senha:', updateError)
-      throw new Error('Erro ao atualizar senha. Tente novamente.')
-    }
-
-    console.log('✅ Senha redefinida com sucesso!')
-    return { success: true }
-  } catch (error) {
-    console.error('❌ Erro ao redefinir senha:', error)
-    throw error
-  }
+  await supabase.auth.signOut()
+  return { success: true }
 }
-

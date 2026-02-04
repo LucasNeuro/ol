@@ -3,9 +3,21 @@ import { supabase } from './supabase'
 import { buscarContratacoesPorData, formatarDataParaPNCP, buscarTodasPaginas, buscarDetalhesContratacao } from './pncp'
 
 /**
- * Sincroniza licitações do PNCP para o Supabase
+ * Sincroniza licitações do PNCP para o Supabase (usa cliente global)
  */
 export async function sincronizarLicitacoes(dataInicial, dataFinal, modalidade = null) {
+  return sincronizarLicitacoesComCliente(supabase, dataInicial, dataFinal, modalidade)
+}
+
+/**
+ * Sincroniza licitações do PNCP para o Supabase usando o cliente informado.
+ * Útil para scripts Node (ex.: npm run sincronizar-licitacoes) com dotenv.
+ * @param {import('@supabase/supabase-js').SupabaseClient} supabaseClient
+ */
+export async function sincronizarLicitacoesComCliente(supabaseClient, dataInicial, dataFinal, modalidade = null) {
+  if (!supabaseClient) {
+    throw new Error('Cliente Supabase não informado')
+  }
   try {
     const params = {
       dataInicial: typeof dataInicial === 'string' ? dataInicial : formatarDataParaPNCP(dataInicial),
@@ -23,7 +35,7 @@ export async function sincronizarLicitacoes(dataInicial, dataFinal, modalidade =
 
     for (const licitacao of licitacoes) {
       // Verificar se já existe
-      const { data: existente } = await supabase
+      const { data: existente } = await supabaseClient
         .from('licitacoes')
         .select('id, data_atualizacao')
         .eq('numero_controle_pncp', licitacao.numeroControlePNCP)
@@ -63,7 +75,7 @@ export async function sincronizarLicitacoes(dataInicial, dataFinal, modalidade =
 
       if (existente) {
         // Atualizar
-        const { error } = await supabase
+        const { error } = await supabaseClient
           .from('licitacoes')
           .update(dadosLicitacao)
           .eq('id', existente.id)
@@ -71,7 +83,7 @@ export async function sincronizarLicitacoes(dataInicial, dataFinal, modalidade =
         if (!error) atualizadas++
       } else {
         // Inserir
-        const { error } = await supabase
+        const { error } = await supabaseClient
           .from('licitacoes')
           .insert(dadosLicitacao)
 

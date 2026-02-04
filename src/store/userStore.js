@@ -150,14 +150,19 @@ export const useUserStore = create(
       // Logout completo - limpar TUDO do IndexedDB e sessão
       logout: async () => {
         try {
-          // Limpar TODOS os caches do IndexedDB (limpeza completa)
+          // 1) Cache de licitações (session + semântico + timestamp)
           const { limparCacheLicitacoes } = await import('@/lib/collections/licitacoesStore')
-          await limparCacheLicitacoes() // Limpar todos os caches (sem userId = limpa tudo)
-          
-          // Limpar TODO o IndexedDB de licitações (garantir limpeza total)
+          await limparCacheLicitacoes() // sem userId = limpa todos os usuários
+
+          // 2) Store principal (licitacoes_cache)
           const { clearAll } = await import('@/lib/indexedDB')
           await clearAll()
-          console.log('✅ [Logout] IndexedDB completamente limpo')
+
+          // 3) Cache de validação IA (validacao-ia-cache) — evita dados de outro usuário e libera espaço
+          const { limparCacheValidacaoIA } = await import('@/lib/validacaoIA')
+          await limparCacheValidacaoIA()
+
+          console.log('✅ [Logout] IndexedDB completamente limpo (licitações + IA)')
         } catch (e) {
           console.warn('⚠️ Erro ao limpar IndexedDB no logout:', e)
         }

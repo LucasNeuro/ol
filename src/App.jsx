@@ -86,7 +86,7 @@ function AppContent() {
       <Route path="/login" component={LoginPage} />
       <Route path="/cadastro" component={CadastroPage} />
       <Route path="/recuperar-senha" component={RecuperarSenhaPage} />
-      <Route path="/redefinir-senha/:token" component={RedefinirSenhaPage} />
+      <Route path="/redefinir-senha" component={RedefinirSenhaPage} />
       
       {/* Rotas Protegidas - Exigem Autenticação */}
       <Route path="/modulos" component={() => <ProtectedRoute><ModulosPage /></ProtectedRoute>} />

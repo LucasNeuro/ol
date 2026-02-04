@@ -96,17 +96,6 @@ export function Header() {
   // Email para exibir
   const emailUsuario = perfilCompleto?.email || userAuth?.email || ''
   
-  console.log('🔍 [Header] Debug:', { 
-    userId,
-    userAuthId: userAuth?.id,
-    userAuthRazao: userAuth?.razao_social,
-    perfilCompletoRazao: perfilCompleto?.razao_social,
-    perfilCompletoNomeFantasia: perfilCompleto?.nome_fantasia,
-    nomeEmpresaFinal: nomeEmpresa,
-    loadingPerfil,
-    isAuthenticated
-  })
-
   const handleSignOut = async () => {
     try {
       await signOut()
@@ -131,28 +120,28 @@ export function Header() {
   }
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-white shadow-sm">
-      <div className="container mx-auto px-6 md:px-8 lg:px-12">
-        <div className="flex h-16 items-center justify-between">
-          <div className="flex items-center gap-4">
-            {/* Botão Voltar para Módulos */}
+    <header className="sticky top-0 z-50 w-full border-b border-border bg-white shadow-sm">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex h-14 items-center justify-between">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => setLocation('/modulos')}
-              className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-gray-100 transition-colors text-gray-600 hover:text-orange-500"
+              className="flex items-center justify-center w-9 h-9 rounded-xl hover:bg-gray-100 transition-colors text-muted-foreground hover:text-primary"
               title="Voltar para Módulos"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            
             <button
               onClick={() => setLocation('/modulos')}
-              className="cursor-pointer flex items-center gap-2 hover:opacity-80 transition-opacity"
+              className="flex items-center gap-2.5"
               title="Voltar para Módulos"
             >
-              <Target className="w-6 h-6 text-orange-500" />
-              <h1 className="text-xl font-bold text-gray-900">
-                <strong>Sistema Licitação</strong>
-              </h1>
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
+                <Target className="h-5 w-5 text-primary" />
+              </div>
+              <span className="text-lg font-semibold text-foreground tracking-tight hidden sm:inline">
+                Sistema Licitação
+              </span>
             </button>
           </div>
 
@@ -163,7 +152,7 @@ export function Header() {
                 {user?.is_adm && (
                   <Link href="/dashboard">
                     <a>
-                      <Button variant="ghost" className="text-gray-600 hover:text-orange-500">
+                      <Button variant="ghost" className="text-muted-foreground hover:text-primary">
                         Dashboard Admin
                       </Button>
                     </a>
@@ -180,14 +169,14 @@ export function Header() {
                         e.stopPropagation()
                         setLocation('/modulos')
                       }}
-                      className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
+                      className="flex items-center gap-2 rounded-xl p-0.5 pr-2 hover:bg-gray-100 transition-colors"
                       title="Voltar para Módulos"
                     >
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center text-white font-semibold shadow-lg">
+                      <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm">
                         {getInitials()}
                       </div>
                       {nomeEmpresa && nomeEmpresa !== 'Usuário' && (
-                        <span className="text-sm font-medium text-gray-700 hidden sm:block">
+                        <span className="text-sm font-medium text-foreground hidden sm:block max-w-[140px] truncate">
                           {nomeEmpresa}
                         </span>
                       )}
@@ -216,11 +205,11 @@ export function Header() {
                         onClick={() => setDropdownOpen(false)}
                       />
                       
-                      <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-2xl border border-gray-200 py-2 z-50">
+                      <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-lg border border-border py-2 z-50">
                         {/* Informações do usuário */}
-                        <div className="px-4 py-3 border-b border-gray-100">
+                        <div className="px-4 py-3 border-b border-border">
                           {loadingPerfil && !perfilCompleto ? (
-                            <p className="text-sm font-semibold text-gray-900">Carregando...</p>
+                            <p className="text-sm font-semibold text-foreground">Carregando...</p>
                           ) : (
                             <>
                               <button
@@ -230,13 +219,13 @@ export function Header() {
                                   setDropdownOpen(false)
                                   setLocation('/modulos')
                                 }}
-                                className="text-sm font-semibold text-gray-900 hover:text-orange-500 transition-colors cursor-pointer w-full text-left"
+                                className="text-sm font-semibold text-foreground hover:text-primary transition-colors cursor-pointer w-full text-left"
                                 title="Voltar para Módulos"
                               >
                                 {nomeEmpresa}
                               </button>
                               {emailUsuario && (
-                                <p className="text-xs text-gray-500 truncate mt-1">
+                                <p className="text-xs text-muted-foreground truncate mt-0.5">
                                   {emailUsuario}
                                 </p>
                               )}
@@ -248,17 +237,17 @@ export function Header() {
                         <div className="py-1">
                           <Link href="/perfil">
                             <a
-                              className="flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                              className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground hover:bg-muted cursor-pointer rounded-lg mx-1 transition-colors"
                               onClick={() => setDropdownOpen(false)}
                             >
-                              <User className="w-4 h-4 text-gray-500" />
+                              <User className="w-4 h-4 text-muted-foreground" />
                               Minha Conta
                             </a>
                           </Link>
 
                           <button
                             onClick={handleSignOut}
-                            className="flex items-center gap-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer w-full text-left"
+                            className="flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 cursor-pointer w-full text-left rounded-lg mx-1 transition-colors"
                           >
                             <LogOut className="w-4 h-4" />
                             Sair
@@ -273,14 +262,14 @@ export function Header() {
               <>
                 <Link href="/login">
                   <a>
-                    <Button variant="ghost" className="text-gray-700 hover:text-orange-500 font-medium">
+                    <Button variant="ghost" className="text-muted-foreground hover:text-primary font-medium">
                       Acessar
                     </Button>
                   </a>
                 </Link>
                 <Link href="/cadastro">
                   <a>
-                    <Button className="bg-orange-500 hover:bg-orange-600 text-white font-semibold px-6">
+                    <Button className="font-semibold px-6">
                       Cadastre-se
                     </Button>
                   </a>

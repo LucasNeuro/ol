@@ -9,20 +9,20 @@ import { useAuth } from '@/hooks/useAuth'
 
 export function PublicRoute({ children }) {
   const { user, loading } = useAuth()
-  const [, setLocation] = useLocation()
+  const [location, setLocation] = useLocation()
 
   useEffect(() => {
+    // Não redirecionar em /redefinir-senha: usuário pode ter sessão de recuperação (veio do link do e-mail)
+    if (location === '/redefinir-senha') return
     // Se usuário estiver autenticado, redirecionar para licitações (ou admin se for admin)
     if (!loading && user) {
       if (user.is_adm) {
-        console.log('✅ Admin autenticado, redirecionando para admin')
         setLocation('/admin/usuarios')
       } else {
-        console.log('✅ Usuário autenticado, redirecionando para licitações')
         setLocation('/licitacoes')
       }
     }
-  }, [user, loading, setLocation])
+  }, [user, loading, setLocation, location])
 
   // Mostrar loading enquanto verifica autenticação
   if (loading) {
@@ -36,12 +36,15 @@ export function PublicRoute({ children }) {
     )
   }
 
-  // Se usuário estiver autenticado, não renderizar (já redirecionou)
+  // Em /redefinir-senha sempre mostrar o conteúdo (sessão de recuperação = "user" setado)
+  if (location === '/redefinir-senha') {
+    return <>{children}</>
+  }
+  // Se usuário estiver autenticado em outras rotas públicas, não renderizar (já redirecionou)
   if (user) {
     return null
   }
 
-  // Usuário não autenticado - mostrar conteúdo público
   return <>{children}</>
 }
 

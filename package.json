@@ -12,6 +12,11 @@
     "start": "node server/verificar-alertas.js",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "buscar-edital": "node scripts/buscar-edital-completo.js",
+    "sincronizar-licitacoes": "node scripts/sincronizar-licitacoes.js",
+    "testar-validacao-ia": "node scripts/testar-validacao-ia.js",
+    "testar-filtro-semantico": "node scripts/testar-filtro-semantico.js",
+    "certificar-filtros": "node scripts/testar-filtro-semantico.js",
+    "testar-filtro-por-cadastro-id": "node scripts/testar-filtro-por-cadastro-id.js",
     "verificar-alertas": "node server/verificar-alertas.js"
   },
   "dependencies": {

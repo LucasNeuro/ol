@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useLocation, Link } from 'wouter'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -12,6 +12,8 @@ import { AuthLayout } from '@/components/layout/AuthLayout'
 import { PublicRoute } from '@/components/PublicRoute'
 import { useAuth } from '@/hooks/useAuth'
 import { validarCNPJ, formatarCNPJ } from '@/lib/utils'
+import { supabase } from '@/lib/supabase'
+import { syncPalavrasFortesFromSetores } from '@/lib/palavrasFortes'
 import { Search, Building2, Loader2, CheckCircle, Plus } from 'lucide-react'
 import { SelecionarSetores } from '@/components/SelecionarSetores'
 import { SelecionarEstados } from '@/components/SelecionarEstados'
@@ -193,11 +195,11 @@ export function CadastroPage() {
   const faturamentoAnual = watch('faturamentoAnual')
   const comoPretendeUsar = watch('comoPretendeUsar')
 
-  // Redirecionar se já estiver logado
-  if (user) {
-    setLocation('/modulos')
-    return null
-  }
+  // Redirecionar se já estiver logado (em useEffect para não atualizar outro componente durante o render)
+  useEffect(() => {
+    if (user) setLocation('/modulos')
+  }, [user, setLocation])
+  if (user) return null
 
   const handleCnpjChange = async (e) => {
     const value = e.target.value.replace(/\D/g, '')
@@ -350,6 +352,12 @@ export function CadastroPage() {
       console.log('📝 Dados a serem salvos:', dadosCompletos)
       
       await signUp(data.email, data.password, dadosCompletos)
+      // Popular tabela de palavras fortes com setores/subsetores escolhidos (filtro dinâmico)
+      if (setoresSelecionados?.length > 0) {
+        syncPalavrasFortesFromSetores(setoresSelecionados, supabase).then(({ ok, inseridas }) => {
+          if (ok && inseridas) console.log(`✅ [palavrasFortes] ${inseridas} termo(s) sincronizado(s) a partir do cadastro`)
+        })
+      }
       setLocation('/modulos')
     } catch (err) {
       console.error('❌ Erro ao criar conta:', err)

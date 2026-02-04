@@ -1,8 +1,12 @@
 import { useEffect, useRef } from 'react'
 import { useUserStore } from '@/store/userStore'
-import { signUp as authSignUp, signIn as authSignIn, getSession, saveSession, isSessionValid } from '@/lib/auth'
+import {
+  signUp as authSignUp,
+  signIn as authSignIn,
+  signOut as authSignOut,
+  getSession,
+} from '@/lib/auth'
 
-// Flag global para garantir verificação única da sessão (reset no logout)
 let sessionCheckInitialized = false
 let sessionCheckPromise = null
 
@@ -11,68 +15,45 @@ export function useAuth() {
   const hasRunRef = useRef(false)
 
   useEffect(() => {
-    // Se já executou nesta instância do hook, não fazer nada
-    if (hasRunRef.current) {
-      return
-    }
-    
-    // Se já foi verificado globalmente, marcar como executado e retornar
+    if (hasRunRef.current) return
     if (sessionCheckInitialized) {
       hasRunRef.current = true
       return
     }
-    
-    // Se já está verificando (promise pendente), aguardar
-    if (sessionCheckPromise) {
-      return
-    }
-    
-    // Marcar esta instância como executada
+    if (sessionCheckPromise) return
+
     hasRunRef.current = true
     sessionCheckInitialized = true
-    
-    // Criar promise única para verificação
+
     sessionCheckPromise = (async () => {
       setLoading(true)
-      
       try {
-        const session = getSession()
-        
-        if (session && session.user && isSessionValid()) {
+        const session = await getSession()
+        if (session?.user) {
           setUser(session.user)
         } else {
           clearUser()
         }
-      } catch (error) {
-        console.error('❌ [useAuth] Erro ao verificar sessão:', error)
+      } catch (e) {
+        console.error('❌ [useAuth] Erro ao verificar sessão:', e)
         clearUser()
       } finally {
         setLoading(false)
         sessionCheckPromise = null
       }
     })()
-    
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // Array vazio - executar apenas uma vez. Funções do Zustand são estáveis
+  }, [setUser, clearUser, setLoading])
 
   async function signUp(email, password, profileData) {
     setLoading(true)
     try {
       const { data, error } = await authSignUp(email, password, profileData)
-      
       if (error) throw error
-
-      if (data) {
-        // Remover password_hash antes de salvar
-        const { password_hash, ...userData } = data
-        saveSession(userData)
-        setUser(userData)
-      }
-
+      if (data) setUser(data)
       return { data, error }
-    } catch (error) {
+    } catch (e) {
       setLoading(false)
-      throw error
+      throw e
     } finally {
       setLoading(false)
     }
@@ -81,23 +62,13 @@ export function useAuth() {
   async function signIn(email, password) {
     setLoading(true)
     try {
-      console.log('🔐 Tentando fazer login...')
       const { data, error } = await authSignIn(email, password)
-      
       if (error) throw error
-
-      if (data && data.user) {
-        console.log('✅ Login bem-sucedido, salvando sessão')
-        saveSession(data.user)
-        setUser(data.user)
-        console.log('✅ Usuário salvo no store:', data.user)
-      }
-
+      if (data?.user) setUser(data.user)
       return { data, error }
-    } catch (error) {
-      console.error('❌ Erro no login:', error)
+    } catch (e) {
       setLoading(false)
-      throw error
+      throw e
     } finally {
       setLoading(false)
     }
@@ -105,21 +76,19 @@ export function useAuth() {
 
   async function signOut() {
     try {
-      // Resetar flag global para permitir nova verificação no próximo login
       sessionCheckInitialized = false
       sessionCheckPromise = null
-      
-      // Usar a função logout do store que já faz tudo (agora é async)
+      await authSignOut()
       await logout()
-    } catch (error) {
-      console.error('Erro ao fazer logout:', error)
-      throw error
+    } catch (e) {
+      console.error('Erro ao fazer logout:', e)
+      throw e
     }
   }
 
   return {
     user,
-    profile: user, // Manter compatibilidade
+    profile: user,
     loading: isLoading,
     isAuthenticated,
     signUp,
@@ -127,4 +96,3 @@ export function useAuth() {
     signOut,
   }
 }
-

@@ -519,13 +519,15 @@ function correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor) {
  * @param {Object} sinonimosPersonalizados 
  * @param {Object} sinonimosBanco 
  * @param {Array} setoresAtividades 
+ * @param {Object} [palavrasFortesPorSetor] - Palavras fortes por setor do banco (dinâmico). Formato: { setor_nome: [palavra1, ...] }
  */
 export function correspondeAtividades(
   licitacao, 
   palavrasChave, 
   sinonimosPersonalizados = {},
   sinonimosBanco = {},
-  setoresAtividades = []
+  setoresAtividades = [],
+  palavrasFortesPorSetor = {}
 ) {
  
   const palavrasChaveFormatadas = palavrasChave.todas || palavrasChave.principais || (Array.isArray(palavrasChave) ? palavrasChave : [])
@@ -549,11 +551,28 @@ export function correspondeAtividades(
   
   // VERIFICAÇÃO PRÉVIA: Palavras de exclusão por setor (rejeitar imediatamente se incompatível)
   // Isso evita processar licitações claramente incompatíveis (ex: "material escolar" para empresa de TI)
+  // e licitações de CONSTRUÇÃO aparecendo para empresas de SAÚDE (e vice-versa)
   const palavrasIncompatibilidade = {
     'informatica': ['escolar', 'escolares', 'material', 'materiais', 'kit', 'kits', 'alimento', 'comida', 'vestuario', 'vestuário', 'roupa', 'uniforme'],
     'informática': ['escolar', 'escolares', 'material', 'materiais', 'kit', 'kits', 'alimento', 'comida', 'vestuario', 'vestuário', 'roupa', 'uniforme'],
     'servicos': ['material', 'materiais', 'equipamento', 'hardware', 'veiculo', 'veículo', 'automovel', 'automóvel'],
-    'serviços': ['material', 'materiais', 'equipamento', 'hardware', 'veiculo', 'veículo', 'automovel', 'automóvel']
+    'serviços': ['material', 'materiais', 'equipamento', 'hardware', 'veiculo', 'veículo', 'automovel', 'automóvel'],
+    // Saúde: rejeitar licitações claramente de construção/engenharia civil e de manutenção de veículos
+    // (objeto deve ser sobre medicamentos, material hospitalar, serviços médicos etc., não "revisão de veículo da Secretaria de Saúde")
+    'saude': [
+      'construção', 'construcao', 'construcoes', 'obra', 'obras', 'edificação', 'edificacao', 'edificacoes',
+      'pavimentação', 'pavimentacao', 'pavimentacoes', 'terraplanagem', 'demolição', 'demolicao', 'demolicoes',
+      'asfáltico', 'asfaltico', 'asfalticos', 'concreto', 'drenagem', 'viaduto', 'viadutos', 'tunel', 'tuneis',
+      'passarela', 'passarelas', 'contenção', 'contencao', 'arrimo', 'saneamento', 'esgoto', 'rede de agua',
+      'rede de gas', 'reformas', 'obras de arte', 'sinalização viária', 'construção civil', 'obras civis',
+      'revisão preventiva', 'revisao preventiva', 'revisão de veículo', 'revisao de veiculo', 'manutenção de veículo',
+      'manutencao de veiculo', 'manutenção veicular', 'veículo', 'veiculos', 'veiculo', 'automóvel', 'automovel',
+      'frota de veículos', 'placa ', 'mecânica automotiva', 'mecanica automotiva', 'oficina mecânica'
+    ],
+    // Engenharia / Construção: rejeitar licitações claramente só de saúde (medicamento, hospitalar)
+    'engenharia': ['medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'radiológico', 'dieta enteral', 'parenteral'],
+    'construção': ['medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'radiológico', 'dieta enteral', 'parenteral'],
+    'construcao': ['medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'radiológico', 'dieta enteral', 'parenteral']
   }
   
   // Verificar incompatibilidades antes de processar
@@ -576,8 +595,106 @@ export function correspondeAtividades(
             }
           }
         }
+        // Saúde: rejeitar "equipamento de áudio/som/informática" (não é equipamento médico/hospitalar)
+        if (setorNormalizado.includes('saude')) {
+          const temEquipamento = /\b(equipamento|equipamentos|peca|pecas)\b/.test(objetoNormalizado)
+          const temNaoSaude = /\b(audio|som|informatica|informatico)\b/.test(objetoNormalizado)
+          if (temEquipamento && temNaoSaude) {
+            console.log(`🚫 [Filtro] Licitação rejeitada (equipamento não médico para Saúde):`, {
+              setor: setor.setor,
+              objeto: objetoCompleto.substring(0, 100)
+            })
+            return false
+          }
+          // Rejeitar manutenção/revisão de veículo (objeto é sobre veículo, não sobre produtos/serviços de saúde)
+          const temaVeiculo = /\b(revisao|revisão|manutencao|manutenção)\s+(preventiva|de\s+veiculo|veicular|automotiva)\b/i.test(objetoCompleto) ||
+            (/\b(veiculo|veículo|automovel|automóvel|frota|placa\s+[a-z]{3}\d{4})\b/i.test(objetoCompleto) && /\b(revisao|revisão|manutencao|manutenção|mecânica|mecanica)\b/i.test(objetoCompleto))
+          if (temaVeiculo) {
+            console.log(`🚫 [Filtro] Licitação rejeitada (manutenção/revisão de veículo para setor Saúde):`, {
+              setor: setor.setor,
+              objeto: objetoCompleto.substring(0, 120)
+            })
+            return false
+          }
+        }
       }
     }
+  }
+
+  /**
+   * Palavras que sozinhas NÃO bastam para aceitar um edital (genéricas demais).
+   * Se a licitação só bateu nisso, exige pelo menos uma "palavra forte" do setor cadastrado.
+   */
+  const PALAVRAS_GENERICAS_SOZINHAS = [
+    'material', 'materiais', 'servico', 'servicos', 'equipamento', 'equipamentos',
+    'fornecimento', 'fornecer', 'prestacao', 'prestação', 'produto', 'produtos',
+    'aquisição', 'aquisicao', 'compra', 'adquirir', 'contratacao', 'contratação'
+  ]
+
+  /**
+   * Por setor: palavras que provam que o edital é daquele setor (específicas).
+   * Fallback fixo no código; o banco (palavrasFortesPorSetor) sobrescreve/estende quando disponível.
+   */
+  const PALAVRAS_FORTES_FALLBACK = {
+    saude: ['medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'medico', 'saude', 'hospital', 'laboratorio', 'radiologico', 'raio-x', 'dieta', 'enteral', 'parenteral', 'utensilio', 'vacina', 'vacinas', 'exame medico', 'analise laboratorial'],
+    alimentacao: ['alimentacao', 'alimento', 'cesta basica', 'refeicao', 'copa', 'buffet', 'bebida', 'bebidas', 'generos alimenticios'],
+    informatica: ['informatica', 'computador', 'software', 'hardware', 'sistema de informacao', 'ti', 'tecnologia'],
+    engenharia: ['construcao', 'obra', 'edificacao', 'pavimentacao', 'reforma', 'saneamento', 'drenagem', 'asfalto', 'concreto', 'terraplanagem', 'demolicao', 'viaduto', 'tunel', 'passarela'],
+    transporte: ['veiculo', 'transporte', 'frota', 'onibus', 'caminhao', 'ambulancia', 'motocicleta', 'locacao de veiculos'],
+    seguranca: ['seguranca', 'protecao', 'epi', 'armamento', 'vigilancia', 'protecao individual']
+  }
+  // Dinâmico: banco sobrescreve/estende o fallback (permite gerenciar sem deploy)
+  const palavrasFortesMescladas = {}
+  Object.keys(PALAVRAS_FORTES_FALLBACK).forEach(k => {
+    palavrasFortesMescladas[k] = [...(PALAVRAS_FORTES_FALLBACK[k] || [])]
+  })
+  if (palavrasFortesPorSetor && typeof palavrasFortesPorSetor === 'object') {
+    Object.entries(palavrasFortesPorSetor).forEach(([setorNome, palavras]) => {
+      const chave = (setorNome || '').toLowerCase().trim()
+      if (!chave || !Array.isArray(palavras)) return
+      palavrasFortesMescladas[chave] = (palavrasFortesMescladas[chave] || []).concat(
+        palavras.map(p => (p || '').toLowerCase().trim()).filter(Boolean)
+      )
+      palavrasFortesMescladas[chave] = [...new Set(palavrasFortesMescladas[chave])]
+    })
+  }
+
+  /**
+   * REGRA RESTRITIVA: Só aceita o edital se o OBJETO contiver pelo menos uma palavra forte do setor cadastrado.
+   * Assim editais que não têm a ver com os setores da empresa não aparecem (ex.: Construção para quem é Saúde).
+   * Usa (1) mapa fallback+banco e (2) nome do setor + subsetores do perfil.
+   */
+  function exigePalavraForteDoSetor(objetoNorm, palavrasEncontradas, setores, palavrasFortesMap) {
+    if (!setores || setores.length === 0) return true
+    const palavrasFortesSetor = new Set()
+    const map = palavrasFortesMap || palavrasFortesMescladas
+    for (const setor of setores) {
+      if (!setor.setor) continue
+      const nomeNorm = normalizarTexto(setor.setor)
+      // 1) Lista fixa/banco (quando existe chave que bate no nome do setor)
+      for (const [chave, palavras] of Object.entries(map)) {
+        if (nomeNorm.includes(chave) && Array.isArray(palavras)) {
+          palavras.forEach(p => palavrasFortesSetor.add(normalizarTexto(p)))
+        }
+      }
+      // 2) COBERTURA TOTAL: sempre usar nome do setor + subsetores do perfil como palavras fortes
+      palavrasFortesSetor.add(nomeNorm)
+      if (setor.subsetores && Array.isArray(setor.subsetores)) {
+        for (const subsetor of setor.subsetores) {
+          if (!subsetor) continue
+          const subNorm = normalizarTexto(subsetor)
+          if (subNorm.length >= 3) palavrasFortesSetor.add(subNorm)
+          // Palavras-chave do subsetor (exceto genéricas) para maior cobertura
+          const palavrasSub = extrairPalavrasChave(subsetor).filter(
+            p => !PALAVRAS_GENERICAS_SOZINHAS.includes(normalizarTexto(p))
+          )
+          palavrasSub.forEach(p => palavrasFortesSetor.add(normalizarTexto(p)))
+        }
+      }
+    }
+    if (palavrasFortesSetor.size === 0) return true
+    const temForte = Array.from(palavrasFortesSetor).some(p => p && objetoNorm.includes(p))
+    return temForte
   }
   
   // NOVA ABORDAGEM: Buscar por CADA atividade (subsetor) cadastrada individualmente
@@ -698,54 +815,46 @@ export function correspondeAtividades(
     
     // CASO 1: Pontuação muito alta (7+) = aceitar diretamente (alta confiança)
     if (pontuacaoCorrespondencia >= 7) {
-      // Verificar também se corresponde ao vocabulário do setor (dupla validação)
       const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
       if (correspondeVocabulario || vocabularioSetor.size === 0) {
-        return true
+        if (exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)) {
+          return true
+        }
       }
     }
     
     // CASO 2: Pontuação média-alta (4-6) + múltiplas palavras-chave (2+) = aceitar
-    // MELHORADO: Reduzido threshold de 5 para 4 para aumentar cobertura (ainda mantém 2 palavras-chave)
-    // 4 pontos ainda é seguro porque exige 2 palavras-chave diferentes (não apenas repetições)
     if (pontuacaoCorrespondencia >= 4 && palavrasUnicasEncontradas.size >= 2) {
       const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
       if (correspondeVocabulario || vocabularioSetor.size === 0) {
-        return true
+        if (exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)) {
+          return true
+        }
       }
     }
     
     // CASO 3: Pontuação média-alta (6+) + múltiplas palavras-chave (2+) = aceitar
-    // CORRIGIDO: Aumentado threshold para reduzir falsos positivos
-    // Antes: 4 pontos + 1 palavra-chave (muito permissivo)
-    // Depois: 6 pontos + 2 palavras-chave (mais restritivo)
     if (pontuacaoCorrespondencia >= 6 && palavrasUnicasEncontradas.size >= 2) {
       const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
-      // SEMPRE exigir vocabulário se disponível (não aceitar se vazio)
       if (vocabularioSetor.size > 0) {
-        if (correspondeVocabulario) {
+        if (correspondeVocabulario && exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)) {
           return true
         }
-        // Se não corresponde ao vocabulário, rejeitar mesmo com pontuação alta
         return false
       }
-      // Se vocabulário vazio, aceitar apenas se tem subsetor completo (5+ pontos)
       const temSubsetorCompleto = pontuacaoCorrespondencia >= 5
-      if (temSubsetorCompleto) {
+      if (temSubsetorCompleto && exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)) {
         return true
       }
     }
     
     // CASO 4: Subsetor completo encontrado (5 pontos) = aceitar mesmo com apenas 1 palavra-chave
-    // MELHORADO: Aumenta cobertura aceitando subsetores específicos (alta confiança)
-    // Subsetor completo é muito específico, então mesmo com 1 palavra é relevante
     if (pontuacaoCorrespondencia >= 5 && palavrasUnicasEncontradas.size >= 1) {
-      // Verificar se é subsetor completo (5 pontos indica subsetor completo encontrado)
-      // Subsetor completo é encontrado quando: objetoNormalizado.includes(subsetorNormalizado)
-      // Isso já adiciona 5 pontos, então se pontuacao >= 5 e tem palavra única, provavelmente é subsetor completo
       const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
       if (correspondeVocabulario || vocabularioSetor.size === 0) {
-        return true  // ✅ Aceitar subsetor completo mesmo com 1 palavra-chave
+        if (exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)) {
+          return true
+        }
       }
     }
   }
@@ -836,31 +945,28 @@ export function correspondeAtividades(
     }
   }
   
-  // REGRA FINAL: Se tem palavras principais, deve ter correspondência principal E vocabulário
+  // REGRA FINAL: Se tem palavras principais, deve ter correspondência principal E vocabulário E palavra forte do setor
   if (palavrasPrincipais.length > 0) {
-    // Se tem correspondência principal E corresponde ao vocabulário do setor, aceitar
     if (temCorrespondenciaPrincipal) {
-      // Verificar também se corresponde ao vocabulário do setor (dupla validação)
       const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
       if (correspondeVocabulario || vocabularioSetor.size === 0) {
-        return true
+        // Só aceitar se o objeto tiver pelo menos uma palavra forte do setor (evita editais fora do setor)
+        if (exigePalavraForteDoSetor(objetoNormalizado, new Set(palavrasPrincipais), setoresAtividades, palavrasFortesMescladas)) {
+          return true
+        }
       }
-      // Se não corresponde ao vocabulário, não aceitar mesmo tendo palavra principal
       return false
     }
-    
-    // Se não tem correspondência principal, não aceitar
     return false
   }
   
-  // Se só tem palavras secundárias (caso raro, mas possível)
-  // REGRA RESTRITIVA: Exigir correspondência com vocabulário do setor OU contexto
+  // Se só tem palavras secundárias: exige vocabulário E palavra forte do setor
   if (palavrasSecundarias.length > 0) {
-    // Primeiro verificar se corresponde ao vocabulário do setor
     const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
-    
     if (correspondeVocabulario) {
-      return true
+      if (exigePalavraForteDoSetor(objetoNormalizado, new Set(palavrasSecundarias), setoresAtividades, palavrasFortesMescladas)) {
+        return true
+      }
     }
     
     // Se não corresponde ao vocabulário, exigir correspondência contextual
@@ -892,7 +998,8 @@ export function correspondeAtividades(
       return false
     }
     
-    return temCorrespondenciaSecundaria
+    // Só aceitar se o objeto tiver pelo menos uma palavra forte do setor
+    return exigePalavraForteDoSetor(objetoNormalizado, new Set(palavrasSecundarias), setoresAtividades, palavrasFortesMescladas)
   }
   
   // Verificar correspondência com sinônimos (banco + personalizados) apenas se não encontrou correspondência direta
@@ -903,11 +1010,14 @@ export function correspondeAtividades(
   const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
   
   if (correspondeVocabulario) {
-    // Se corresponde ao vocabulário, verificar se tem sinônimo correspondente
     const temCorrespondenciaSinonimo = palavrasExpandidas.some(palavra => {
       return objetoNormalizado.includes(normalizarTexto(palavra))
     })
-    return temCorrespondenciaSinonimo
+    if (!temCorrespondenciaSinonimo) return false
+    if (setoresAtividades?.length > 0) {
+      return exigePalavraForteDoSetor(objetoNormalizado, new Set(palavrasExpandidas), setoresAtividades, palavrasFortesMescladas)
+    }
+    return true
   }
   
   // Se não corresponde ao vocabulário, exigir correspondência contextual para sinônimos

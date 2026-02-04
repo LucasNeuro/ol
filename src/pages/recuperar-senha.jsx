@@ -54,8 +54,8 @@ export function RecuperarSenhaPage() {
               </div>
               <h3 className="text-xl font-semibold text-gray-800">Email enviado!</h3>
               <p className="text-gray-600">
-                Enviamos um link de recuperação de senha para o seu email.
-                Verifique sua caixa de entrada e siga as instruções.
+                Se o seu email estiver cadastrado, você receberá um link de recuperação.
+                Verifique a caixa de entrada e a pasta de spam.
               </p>
               <div className="pt-4">
                 <Link href="/login">

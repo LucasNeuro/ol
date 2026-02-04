@@ -9,6 +9,7 @@ import { Calendar, Filter, Bell, Star, Loader2, FileText, Plus, TrendingUp, MapP
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { useUserStore } from '@/store/userStore'
+import { usePalavrasFortes } from '@/hooks/usePalavrasFortes'
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, getDay } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
@@ -66,6 +67,9 @@ function DashboardContent() {
     enabled: !!user?.id,
     staleTime: 1000 * 60 * 60,
   })
+
+  // Palavras fortes por setor (dinâmico, do banco) para filtro de preferência
+  const { data: palavrasFortesPorSetor = {} } = usePalavrasFortes()
 
   // Buscar licitações usando a mesma lógica da página de licitações
   // Buscar mais licitações quando tem perfil configurado (igual à página de licitações)
@@ -163,7 +167,8 @@ function DashboardContent() {
             palavrasChave,
             sinonimosPersonalizados,
             {}, // sem sinonimosBanco
-            setoresAtividades
+            setoresAtividades,
+            palavrasFortesPorSetor // Palavras fortes dinâmicas (banco)
           )
         })
         
@@ -178,7 +183,7 @@ function DashboardContent() {
     }
 
     return resultado
-  }, [todasLicitacoes, perfilUsuario])
+  }, [todasLicitacoes, perfilUsuario, palavrasFortesPorSetor])
 
   const loadingLicitacoes = loadingTodasLicitacoes
 

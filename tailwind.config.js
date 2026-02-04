@@ -41,14 +41,24 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        surface: "hsl(var(--surface))",
       },
       borderRadius: {
-        lg: "9px",
+        lg: "var(--radius)",
+        xl: "var(--radius-lg)",
         md: "6px",
         sm: "3px",
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+      },
+      keyframes: {
+        shimmer: {
+          '100%': { transform: 'translateX(100%)' },
+        },
+      },
+      animation: {
+        shimmer: 'shimmer 1.5s ease-in-out infinite',
       },
     },
   },

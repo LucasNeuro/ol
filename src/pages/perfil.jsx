@@ -6,12 +6,12 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { PasswordInput } from '@/components/ui/password-input'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/hooks/useAuth'
 import { useNotifications } from '@/hooks/useNotifications'
 import { supabase } from '@/lib/supabase'
-import { Building2, MapPin, Phone, FileText, Edit2, Save, X, Key, Settings, Plus, CheckCircle2 } from 'lucide-react'
+import { syncPalavrasFortesFromSetores } from '@/lib/palavrasFortes'
+import { Building2, MapPin, Phone, FileText, Edit2, Save, X, Settings, Plus, CheckCircle2 } from 'lucide-react'
 import { SelecionarSetores } from '@/components/SelecionarSetores'
 import { SelecionarEstados } from '@/components/SelecionarEstados'
 import { useUserStore } from '@/store/userStore'
@@ -22,7 +22,6 @@ function PerfilContent() {
   const queryClient = useQueryClient()
   const { success: showSuccess, error: showError } = useNotifications()
   const [editMode, setEditMode] = useState(false)
-  const [changePassword, setChangePassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -63,9 +62,6 @@ function PerfilContent() {
   const [formData, setFormData] = useState({
     telefone: '',
     complemento: '',
-    senha_atual: '',
-    senha_nova: '',
-    confirmar_senha: '',
   })
 
   // Atualizar formData quando o perfil for carregado
@@ -74,9 +70,6 @@ function PerfilContent() {
       setFormData({
         telefone: user.telefone || '',
         complemento: user.complemento || '',
-        senha_atual: '',
-        senha_nova: '',
-        confirmar_senha: '',
       })
       
       // Carregar setores e estados
@@ -140,32 +133,6 @@ function PerfilContent() {
 
       if (updateError) throw updateError
 
-      // Se tiver mudança de senha
-      if (changePassword && formData.senha_nova) {
-        if (formData.senha_nova !== formData.confirmar_senha) {
-          throw new Error('As senhas não coincidem')
-        }
-        if (formData.senha_nova.length < 6) {
-          throw new Error('A nova senha deve ter no mínimo 6 caracteres')
-        }
-
-        // Hash da nova senha
-        const encoder = new TextEncoder()
-        const hashData = encoder.encode(formData.senha_nova)
-        const hashBuffer = await crypto.subtle.digest('SHA-256', hashData)
-        const hashArray = Array.from(new Uint8Array(hashBuffer))
-        const passwordHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-
-        // Atualizar senha
-        await supabase
-          .from('profiles')
-          .update({ password_hash: passwordHash })
-          .eq('id', user.id)
-
-        setChangePassword(false)
-        setFormData({ ...formData, senha_atual: '', senha_nova: '', confirmar_senha: '' })
-      }
-
       // Atualizar o store do usuário
       const { password_hash, ...userData } = data
       setUser(userData)
@@ -188,13 +155,9 @@ function PerfilContent() {
 
   const handleCancel = () => {
     setEditMode(false)
-    setChangePassword(false)
     setFormData({
       telefone: user?.telefone || '',
       complemento: user?.complemento || '',
-      senha_atual: '',
-      senha_nova: '',
-      confirmar_senha: '',
     })
     setError('')
     setSuccess('')
@@ -230,6 +193,14 @@ function PerfilContent() {
       queryClient.invalidateQueries(['perfil-completo', user.id])
       queryClient.invalidateQueries(['perfil-usuario', user.id])
       queryClient.invalidateQueries(['licitacoes']) // Recarregar licitações com novos filtros
+      queryClient.invalidateQueries(['palavras-fortes-setor']) // Atualizar palavras fortes do filtro
+
+      // Popular tabela de palavras fortes com setores/subsetores (filtro dinâmico)
+      if (setoresSelecionados?.length > 0) {
+        syncPalavrasFortesFromSetores(setoresSelecionados, supabase).then(({ ok, inseridas }) => {
+          if (ok && inseridas) console.log(`✅ [palavrasFortes] ${inseridas} termo(s) sincronizado(s) a partir do perfil`)
+        })
+      }
 
       // Mostrar notificação de sucesso
       showSuccess('Configuração salva com sucesso! As licitações serão filtradas automaticamente.')
@@ -689,60 +660,6 @@ function PerfilContent() {
               </CardContent>
             </Card>
 
-            {/* Card: Trocar Senha (quando em modo de edição) */}
-            {editMode && (
-              <Card className="lg:col-span-2">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Key className="w-5 h-5 text-orange-500" />
-                    Segurança
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {!changePassword ? (
-                    <Button
-                      onClick={() => setChangePassword(true)}
-                      variant="outline"
-                      className="w-full border-2 border-orange-500 text-orange-600 hover:bg-orange-50"
-                    >
-                      <Key className="w-4 h-4 mr-2" />
-                      Alterar Senha
-                    </Button>
-                  ) : (
-                    <div className="space-y-4">
-                      <div>
-                        <Label className="text-sm font-medium text-gray-700">Nova Senha *</Label>
-                        <PasswordInput
-                          value={formData.senha_nova}
-                          onChange={(e) => setFormData({ ...formData, senha_nova: e.target.value })}
-                          placeholder="Mínimo 6 caracteres"
-                          className="mt-1 h-11"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-sm font-medium text-gray-700">Confirmar Nova Senha *</Label>
-                        <PasswordInput
-                          value={formData.confirmar_senha}
-                          onChange={(e) => setFormData({ ...formData, confirmar_senha: e.target.value })}
-                          placeholder="Digite a senha novamente"
-                          className="mt-1 h-11"
-                        />
-                      </div>
-                      <Button
-                        onClick={() => {
-                          setChangePassword(false)
-                          setFormData({ ...formData, senha_nova: '', confirmar_senha: '' })
-                        }}
-                        variant="ghost"
-                        className="text-sm text-gray-600"
-                      >
-                        Cancelar alteração de senha
-                      </Button>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
           </div>
         </div>
       </div>

@@ -1,15 +1,15 @@
 import { useState, useEffect } from 'react'
-import { useLocation, Link, useRoute } from 'wouter'
+import { useLocation, Link } from 'wouter'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Label } from '@/components/ui/label'
 import { AuthLayout } from '@/components/layout/AuthLayout'
 import { PublicRoute } from '@/components/PublicRoute'
-import { validarTokenRecuperacao, redefinirSenha } from '@/lib/auth'
+import { supabase } from '@/lib/supabase'
+import { hasRecoverySession, redefinirSenhaViaSupabase } from '@/lib/auth'
 import { Lock, ArrowLeft, CheckCircle2, AlertCircle } from 'lucide-react'
 
 const redefinirSchema = z.object({
@@ -21,13 +21,12 @@ const redefinirSchema = z.object({
 })
 
 export function RedefinirSenhaPage() {
-  const [, params] = useRoute('/redefinir-senha/:token')
   const [, setLocation] = useLocation()
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [validatingToken, setValidatingToken] = useState(true)
-  const [tokenValido, setTokenValido] = useState(false)
+  const [checking, setChecking] = useState(true)
+  const [temSessaoRecuperacao, setTemSessaoRecuperacao] = useState(false)
 
   const {
     register,
@@ -37,63 +36,43 @@ export function RedefinirSenhaPage() {
     resolver: zodResolver(redefinirSchema),
   })
 
-  // Obter email da query string
-  const [email, setEmail] = useState('')
-
-  // Validar token ao carregar a página
   useEffect(() => {
-    const validarToken = async () => {
-      if (!params?.token) {
-        setError('Link inválido ou não fornecido.')
-        setValidatingToken(false)
-        return
-      }
+    let cancelled = false
 
-      // Obter email da query string
-      const urlParams = new URLSearchParams(window.location.search)
-      const emailParam = urlParams.get('email')
-      
-      if (!emailParam) {
-        setError('Email não fornecido no link.')
-        setValidatingToken(false)
-        return
-      }
-
-      setEmail(emailParam)
-
+    const check = async () => {
       try {
-        const valido = await validarTokenRecuperacao(params.token, emailParam)
-        setTokenValido(valido)
-        if (!valido) {
-          setError('Link inválido ou expirado. Solicite um novo link de recuperação.')
-        }
-      } catch (err) {
-        setError(err.message || 'Erro ao validar link.')
-        setTokenValido(false)
+        const ok = await hasRecoverySession()
+        if (!cancelled) setTemSessaoRecuperacao(ok)
+      } catch (_) {
+        if (!cancelled) setTemSessaoRecuperacao(false)
       } finally {
-        setValidatingToken(false)
+        if (!cancelled) setChecking(false)
       }
     }
 
-    validarToken()
-  }, [params?.token])
+    const { data: sub } = supabase?.auth?.onAuthStateChange?.((event, session) => {
+      if (cancelled) return
+      if ((event === 'SIGNED_IN' || event === 'PASSWORD_RECOVERY') && session?.user) {
+        setTemSessaoRecuperacao(true)
+        setChecking(false)
+      }
+    }) || {}
+
+    check()
+    return () => {
+      cancelled = true
+      sub?.unsubscribe?.()
+    }
+  }, [])
 
   const onSubmit = async (data) => {
-    if (!params?.token || !email) {
-      setError('Link inválido.')
-      return
-    }
-
     setError('')
     setSuccess(false)
     setLoading(true)
     try {
-      await redefinirSenha(params.token, email, data.password)
+      await redefinirSenhaViaSupabase(data.password)
       setSuccess(true)
-      // Redirecionar para login após 3 segundos
-      setTimeout(() => {
-        setLocation('/login')
-      }, 3000)
+      setTimeout(() => setLocation('/login'), 3000)
     } catch (err) {
       setError(err.message || 'Erro ao redefinir senha. Tente novamente.')
     } finally {
@@ -101,38 +80,36 @@ export function RedefinirSenhaPage() {
     }
   }
 
-  if (validatingToken) {
+  if (checking) {
     return (
       <PublicRoute>
-        <AuthLayout title="Validando..." subtitle="Verificando token de recuperação">
+        <AuthLayout title="Validando..." subtitle="Verificando link de recuperação">
           <div className="bg-white shadow-2xl rounded-2xl p-8 md:p-10 border border-gray-100 max-w-md mx-auto text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Validando token...</p>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto" />
+            <p className="mt-4 text-gray-600">Validando...</p>
           </div>
         </AuthLayout>
       </PublicRoute>
     )
   }
 
-  if (!tokenValido) {
+  if (!temSessaoRecuperacao) {
     return (
       <PublicRoute>
-        <AuthLayout title="Token Inválido" subtitle="O link de recuperação não é válido">
+        <AuthLayout title="Link inválido" subtitle="Acesse pelo link enviado no e-mail">
           <div className="bg-white shadow-2xl rounded-2xl p-8 md:p-10 border border-gray-100 max-w-md mx-auto">
             <div className="text-center space-y-4">
               <div className="flex justify-center">
-                <AlertCircle className="w-16 h-16 text-red-500" />
+                <AlertCircle className="w-16 h-16 text-amber-500" />
               </div>
-              <h3 className="text-xl font-semibold text-gray-800">Token inválido ou expirado</h3>
+              <h3 className="text-xl font-semibold text-gray-800">Acesse pelo link do e-mail</h3>
               <p className="text-gray-600">
-                O link de recuperação não é válido ou já expirou. 
-                Solicite um novo link de recuperação.
+                Use o link que enviamos para o seu e-mail para redefinir a senha.
+                Se não recebeu, solicite novamente.
               </p>
               <div className="pt-4 space-y-2">
                 <Link href="/recuperar-senha">
-                  <Button className="w-full">
-                    Solicitar novo link
-                  </Button>
+                  <Button className="w-full">Solicitar novo link</Button>
                 </Link>
                 <Link href="/login">
                   <Button variant="outline" className="w-full">
@@ -177,7 +154,6 @@ export function RedefinirSenhaPage() {
                     <p className="text-red-600 text-sm mt-1">{errors.password.message}</p>
                   )}
                 </div>
-
                 <div>
                   <Label htmlFor="confirmPassword">Confirmar Nova Senha</Label>
                   <PasswordInput
@@ -190,13 +166,11 @@ export function RedefinirSenhaPage() {
                     <p className="text-red-600 text-sm mt-1">{errors.confirmPassword.message}</p>
                   )}
                 </div>
-
                 {error && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                     <p className="text-red-600 text-sm">{error}</p>
                   </div>
                 )}
-
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? 'Redefinindo...' : (
                     <>
@@ -206,7 +180,6 @@ export function RedefinirSenhaPage() {
                   )}
                 </Button>
               </form>
-
               <div className="mt-6 pt-6 border-t border-gray-200 text-center">
                 <Link href="/login">
                   <a className="text-sm text-orange-600 hover:text-orange-700 font-medium hover:underline cursor-pointer flex items-center justify-center gap-2">
@@ -222,4 +195,3 @@ export function RedefinirSenhaPage() {
     </PublicRoute>
   )
 }
-

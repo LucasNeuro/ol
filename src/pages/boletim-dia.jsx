@@ -50,6 +50,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { VisualizadorDocumento } from '@/components/VisualizadorDocumento'
 import { useNotifications } from '@/hooks/useNotifications'
+import { usePalavrasFortes } from '@/hooks/usePalavrasFortes'
 import { obterNomeAtividadeCnae, obterListaCompletaCnaes, resumirNomeAtividade } from '@/lib/cnae'
 import { 
   extrairPalavrasChaveDosSetores, 
@@ -60,6 +61,7 @@ import {
 import { filtrarLicitacoesPorBusca, buscarEmLicitacao } from '@/lib/buscaFuzzy'
 import { useFiltroContext } from '@/contexts/FiltroContext'
 import { isZipFile, descompactarZip, limparBlobUrls } from '@/lib/zipService'
+import { LicitacaoCardSkeletonList } from '@/components/LicitacaoCardSkeleton'
 
 // Função auxiliar para normalizar código CNAE (remover hífens e barras)
 function normalizarCodigoCnae(codigo) {
@@ -85,7 +87,9 @@ function LicitacoesContent() {
     setProcessandoFiltro, 
     mensagemProgresso, 
     setMensagemProgresso,
-    setProgressoPercentual
+    progressoPercentual,
+    setProgressoPercentual,
+    addLogFiltro
   } = useFiltroContext()
   
   // Cache key baseado em licitações + perfil
@@ -114,9 +118,9 @@ function LicitacoesContent() {
         .eq('id', user.id)
           .maybeSingle()
 
-      // Se erro for coluna não existe (42703), tentar sem sinônimos personalizados
-      if (error && error.code === '42703') {
-        console.log('ℹ️ Coluna sinonimos_personalizados não existe, buscando sem ela...')
+      // Se a primeira query falhou (ex.: coluna sinonimos_personalizados não existe), tentar sem ela
+      if (error) {
+        console.log('ℹ️ Buscando perfil sem sinonimos_personalizados...', error.code || error.message)
         const { data: dataSemSinonimos, error: errorSemSinonimos } = await supabase
           .from('profiles')
           .select('setores_atividades, estados_interesse')
@@ -128,13 +132,7 @@ function LicitacoesContent() {
           return null
         }
         
-        // Adicionar sinonimos_personalizados como objeto vazio
-        return { ...dataSemSinonimos, sinonimos_personalizados: {} }
-      }
-      
-      if (error) {
-        console.warn('⚠️ Erro ao buscar perfil:', error)
-        return null
+        return dataSemSinonimos ? { ...dataSemSinonimos, sinonimos_personalizados: {} } : null
       }
       
       // Garantir que sinonimos_personalizados existe (mesmo que vazio)
@@ -214,6 +212,9 @@ function LicitacoesContent() {
     enabled: !!perfilUsuario?.setores_atividades && perfilUsuario.setores_atividades.length > 0,
     staleTime: 1000 * 60 * 60, // Cache por 1 hora
   })
+
+  // Palavras fortes por setor (dinâmico, do banco) para filtro de preferência
+  const { data: palavrasFortesPorSetor = {} } = usePalavrasFortes()
 
   // Estados dos Filtros
   const [filtros, setFiltros] = useState({
@@ -562,75 +563,54 @@ function LicitacoesContent() {
     enabled: !!user?.id
   })
 
-  // Estado para rastrear último userId (para detectar mudança de usuário)
   const [ultimoUserId, setUltimoUserId] = useState(null)
   
-  // IMPORTANTE: Buscar TODAS as licitações UMA VEZ ao iniciar sessão
-  // QueryKey inclui userId - garante cache separado por usuário
-  // Todos os filtros serão aplicados no cliente depois
   const { data: licitacoes = [], isLoading, error } = useQuery({
-    queryKey: ['licitacoes-sessao-completa', user?.id], // Incluir userId para cache específico
+    queryKey: ['licitacoes-sessao-completa', user?.id],
     queryFn: async () => {
-      if (!user?.id) {
-        console.warn('⚠️ [Sessão] Usuário não autenticado, não carregando licitações')
-        return []
-      }
-      
-      // IMPORTANTE: Se mudou de usuário, limpar cache antigo e buscar do banco
+      if (!user?.id) return []
+      const { buscarLicitacoesDoBanco, salvarCacheLicitacoes, carregarCacheLicitacoes, limparCacheLicitacoes, limparCacheSemantico } = await import('@/lib/collections/licitacoesStore')
       const mudouUsuario = ultimoUserId && ultimoUserId !== user.id
       if (mudouUsuario) {
-        console.log(`🔄 [Sessão] Usuário mudou (${ultimoUserId} → ${user.id}), limpando cache e buscando do banco...`)
-        const { limparCacheLicitacoes } = await import('@/lib/collections/licitacoesStore')
-        await limparCacheLicitacoes(ultimoUserId) // Limpar cache do usuário anterior
-        // Continuar para buscar do banco (não usar cache do usuário anterior)
-      }
-      
-      // Atualizar último userId
-      setUltimoUserId(user.id)
-      
-      // IMPORTANTE: Sempre buscar do banco ao logar (não usar cache)
-      // O filtro semântico será aplicado depois, garantindo dados corretos para o usuário
-      const { buscarLicitacoesDoBanco, salvarCacheLicitacoes, limparCacheLicitacoes } = await import('@/lib/collections/licitacoesStore')
-      
-      // Se mudou de usuário, limpar cache do usuário anterior
-      if (mudouUsuario) {
         await limparCacheLicitacoes(ultimoUserId)
-        console.log(`🔄 [Sessão] Cache do usuário anterior limpo`)
       }
-      
-      // Limpar TODOS os caches do usuário atual (incluindo cache semântico) para garantir dados frescos
-      await limparCacheLicitacoes(user.id)
-      console.log(`🔄 [Sessão] Todos os caches limpos, buscando dados frescos do banco para usuário: ${user.id}`)
-      
-      // Buscar do banco (SEM FILTROS - busca tudo)
-      console.log(`📡 [Sessão] Buscando TODAS as licitações do banco (usuário: ${user.id})...`)
-      const todasLicitacoes = await buscarLicitacoesDoBanco()
-      
-      // Salvar no cache com userId (IndexedDB) - será usado como base para o filtro semântico
+      setUltimoUserId(user.id)
+      const cached = await carregarCacheLicitacoes(user.id)
+      if (cached?.length) {
+        const LIMITE_RECENTES = 15000
+        const licitacoesLimitadas = cached.length > LIMITE_RECENTES ? cached.slice(0, LIMITE_RECENTES) : cached
+        if (licitacoesLimitadas.length < cached.length) {
+          addLogFiltro(`Cache reutilizado: ${licitacoesLimitadas.length} licitações (limite dos 15 mil mais recentes)`)
+        } else {
+          addLogFiltro(`Cache reutilizado: ${licitacoesLimitadas.length} licitações (sem novo carregamento)`)
+        }
+        return licitacoesLimitadas
+      }
+      setProcessandoFiltro(true)
+      setMensagemProgresso('Carregando licitações do banco...')
+      addLogFiltro('Carregando licitações do banco...')
+      let ultimoLogBanco = 0
+      const todasLicitacoes = await buscarLicitacoesDoBanco(
+        (buscados, total) => {
+          setMensagemProgresso(`Carregando do banco: ${buscados.toLocaleString()} licitações...`)
+          if (buscados - ultimoLogBanco >= 5000 || buscados === total) {
+            addLogFiltro(`Carregando do banco: ${buscados.toLocaleString()} licitações...`)
+            ultimoLogBanco = buscados
+          }
+        }
+      )
+      addLogFiltro(`✅ ${todasLicitacoes.length.toLocaleString()} licitações carregadas do banco`)
       await salvarCacheLicitacoes(todasLicitacoes, user.id)
-      
-      console.log(`✅ [Sessão] ${todasLicitacoes.length} licitações carregadas do banco e salvas no cache`)
-      console.log(`🔄 [Sessão] Cache semântico foi limpo - filtro semântico será aplicado na próxima renderização`)
-      
+      await limparCacheSemantico(user.id)
       return todasLicitacoes
     },
-    enabled: !!user?.id, // Só executar se tiver usuário autenticado
-    staleTime: Infinity, // Nunca considera stale - cache permanente na sessão
-    gcTime: 1000 * 60 * 60 * 24, // Mantém cache por 24 horas
-    refetchOnWindowFocus: false, // Não refaz busca ao focar na janela
-    refetchOnMount: false, // Não refaz busca ao montar componente novamente
-    refetchOnReconnect: false, // Não refaz busca ao reconectar
+    enabled: !!user?.id,
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60 * 24,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
   })
-  
-  // Limpar cache semântico quando mudar de usuário
-  useEffect(() => {
-    if (ultimoUserId && ultimoUserId !== user?.id && user?.id) {
-      console.log(`🔄 [Sessão] Limpando cache semântico do usuário anterior: ${ultimoUserId}`)
-      import('@/lib/collections/licitacoesStore').then(async ({ limparCacheLicitacoes }) => {
-        await limparCacheLicitacoes(ultimoUserId)
-      })
-    }
-  }, [user?.id, ultimoUserId])
 
   // Estado para licitações filtradas (filtro semântico síncrono)
   const [licitacoesFiltradas, setLicitacoesFiltradas] = useState([])
@@ -653,31 +633,38 @@ function LicitacoesContent() {
   // Filtrar por status do edital, perfil da empresa e exclusões (assíncrono para IA)
   useEffect(() => {
     const aplicarFiltros = async () => {
-      // Se não tem licitações, não processar
       if (!licitacoes || licitacoes.length === 0) {
         setLicitacoesFiltradas([])
         setProcessandoFiltro(false)
         setProgressoPercentual(0)
         return
       }
+
+      // Reusar cache semântico ao voltar de outra aba (evita reprocessar tudo)
+      if (!mostrarTodasLicitacoes && user?.id) {
+        try {
+          const { carregarCacheSemantico } = await import('@/lib/collections/licitacoesStore')
+          const cached = await carregarCacheSemantico(user.id)
+          if (cached?.licitacoes && cached.licitacoesTotalLength === licitacoes.length) {
+            setLicitacoesFiltradas(cached.licitacoes)
+            setProcessandoFiltro(false)
+            setProgressoPercentual(100)
+            addLogFiltro(`Cache reutilizado: ${cached.licitacoes.length} licitações (sem reprocessar)`)
+            return
+          }
+        } catch (e) {
+          console.warn('⚠️ [Cache] Erro ao carregar cache semântico:', e)
+        }
+      }
       
-      // IMPORTANTE: Ao logar, sempre aplicar filtro semântico para garantir dados corretos
-      // Não usar cache semântico ao logar - garante que licitações estejam alinhadas com o perfil atual
-      let resultado = licitacoes // Inicializar com todas as licitações
-      let temCacheSemantico = false
-      
-      // Removido: Não usar cache semântico ao logar
-      // Sempre aplicar filtro semântico para garantir dados corretos do perfil atual
-      
-      // REMOVIDO: Cache final não é mais necessário
-      // Já temos cache semântico no IndexedDB que é suficiente
-      // O cache final estava causando problemas de quota no localStorage
-      
+      let resultado = licitacoes
+      try {
       // Iniciar processamento do filtro semântico (sempre ao logar)
       if (!mostrarTodasLicitacoes) {
       setProcessandoFiltro(true)
       setProgressoPercentual(10)
       setMensagemProgresso('Iniciando filtro semântico...')
+      addLogFiltro('Iniciando filtro semântico...')
       setProgressoPercentual(20)
       setMensagemProgresso('Carregando perfil da empresa...')
       }
@@ -688,6 +675,7 @@ function LicitacoesContent() {
       resultado = licitacoes
       setProgressoPercentual(100)
       setMensagemProgresso('Mostrando todas as licitações')
+      addLogFiltro('Mostrando todas as licitações (sem filtro por setor)')
     } else {
       // SEMPRE aplicar filtro semântico ao logar (garantir dados corretos do perfil)
     // FILTRO AUTOMÁTICO BASEADO NO PERFIL DA EMPRESA
@@ -713,6 +701,7 @@ function LicitacoesContent() {
         if (!temNacional) {
           setProgressoPercentual(30)
           setMensagemProgresso(`Filtrando por estados: ${estadosInteresse.join(', ')}...`)
+          addLogFiltro(`Filtrando por estados: ${estadosInteresse.join(', ')}`)
           
           resultado = resultado.filter(licitacao => {
             const uf = licitacao.uf_sigla?.toUpperCase()
@@ -724,11 +713,13 @@ function LicitacoesContent() {
           
           setProgressoPercentual(40)
           setMensagemProgresso(`${resultado.length} licitações encontradas nos estados selecionados`)
+          addLogFiltro(`${resultado.length} licitações nos estados selecionados`)
         }
       } else if (foiFiltradoEstadoNoBanco) {
         // Já foi filtrado no banco, apenas atualizar progresso
         setProgressoPercentual(40)
         setMensagemProgresso(`${resultado.length} licitações encontradas nos estados selecionados`)
+        addLogFiltro(`${resultado.length} licitações nos estados selecionados`)
       }
 
       // FILTRO OBRIGATÓRIO E RESTRITIVO: Se tem setores cadastrados, DEVE filtrar rigorosamente
@@ -766,10 +757,11 @@ function LicitacoesContent() {
         
         setProgressoPercentual(50)
         setMensagemProgresso(`Processando ${antesFiltro} licitações...`)
+        addLogFiltro(`Processando ${antesFiltro} licitações (filtro por palavras)`)
         
         // Filtrar usando APENAS filtro semântico (sem IA)
-        // Processar em lotes de forma ASSÍNCRONA para não bloquear a UI
-        const TAMANHO_LOTE = 50 // Lotes menores para melhor responsividade
+        // Processar em lotes para não bloquear a UI (lotes maiores = menos etapas e mais rápido)
+        const TAMANHO_LOTE = 200
         const resultadosFiltrados = []
         const totalLotes = Math.ceil(resultado.length / TAMANHO_LOTE)
         
@@ -795,6 +787,10 @@ function LicitacoesContent() {
           setMensagemProgresso(
               `Processando: ${loteAtual}/${totalLotes} lotes (${Math.min(indiceAtual + lote.length, antesFiltro)}/${antesFiltro} licitações)...`
           )
+          const percentLote = Math.floor((loteAtual / totalLotes) * 100)
+          if (percentLote > 0 && (percentLote % 25 === 0 || loteAtual === totalLotes)) {
+            addLogFiltro(`Processando: ${loteAtual}/${totalLotes} lotes (${percentLote}%)`)
+          }
           
             // Processar lote atual
           const resultadosLote = await Promise.all(
@@ -805,7 +801,8 @@ function LicitacoesContent() {
                 palavrasChave,
                 sinonimosPersonalizados, // Sinônimos personalizados
                 sinonimosBancoFormatados, // Sinônimos do banco
-                setoresAtividades // Setores para contexto
+                setoresAtividades, // Setores para contexto
+                palavrasFortesPorSetor // Palavras fortes dinâmicas (banco)
               )
               
               // Se filtro semântico aceitou, usar diretamente
@@ -813,47 +810,32 @@ function LicitacoesContent() {
                 return licitacao
               }
               
-              // Se filtro semântico rejeitou, tentar validar com IA APENAS para casos duvidosos
-              // MELHORADO: Não chamar IA para casos claramente irrelevantes (reduz custo e falsos positivos)
+              // Se filtro semântico rejeitou, tentar validar com IA (filtro semântico + IA é o padrão)
               if (correspondeSemantico === false) {
                 // Verificar se objeto tem palavras-chave relevantes antes de chamar IA
-                // Se não tem nenhuma palavra-chave, não vale a pena chamar IA
                 const objetoCompleto = obterObjetoCompleto(licitacao)
                 if (objetoCompleto && setoresAtividades && setoresAtividades.length > 0) {
                   const objetoNormalizado = normalizarTexto(objetoCompleto)
                   
-                  // Verificar se tem palavra-chave principal OU correspondência parcial (expande cobertura)
                   const temPalavraChave = palavrasChave.principais.some(palavra => {
                     const palavraNormalizada = normalizarTexto(palavra)
-                    // Verificar correspondência exata
-                    if (objetoNormalizado.includes(palavraNormalizada)) {
-                      return true
-                    }
-                    // Verificar correspondência parcial (ex: "informática" em "informatização")
-                    // Aceitar se pelo menos 5 caracteres iniciais coincidem
-                    if (palavraNormalizada.length >= 5) {
-                      const prefixo = palavraNormalizada.substring(0, 5)
-                      if (objetoNormalizado.includes(prefixo)) {
-                        return true
-                      }
-                    }
+                    if (objetoNormalizado.includes(palavraNormalizada)) return true
+                    if (palavraNormalizada.length >= 5 && objetoNormalizado.includes(palavraNormalizada.substring(0, 5))) return true
                     return false
                   })
                   
-                  // MELHORADO: Chamar IA para casos com palavra-chave exata OU correspondência parcial
-                  // Isso aumenta a cobertura capturando mais casos relevantes
                   if (temPalavraChave) {
                     try {
                       const { validarCorrespondenciaIAEdgeFunction } = await import('@/lib/validacaoIA')
-                      
-                      // Validar com IA apenas para casos duvidosos (tem palavra-chave mas foi rejeitado)
+                      const estadosParaIA = (perfilUsuario?.estados_interesse && !perfilUsuario.estados_interesse.some(e => String(e).toUpperCase() === 'NACIONAL'))
+                        ? perfilUsuario.estados_interesse
+                        : null
                       const validacaoIA = await validarCorrespondenciaIAEdgeFunction(
                         objetoCompleto,
                         setoresAtividades,
-                        user?.id
+                        user?.id,
+                        estadosParaIA
                       )
-                      
-                      // Se IA confirmou, aceitar mesmo que filtro semântico tenha rejeitado
                       if (validacaoIA === true) {
                         console.log('✅ [IA] Licitação aceita por IA (caso duvidoso):', {
                           objeto: objetoCompleto.substring(0, 100)
@@ -861,7 +843,6 @@ function LicitacoesContent() {
                         return licitacao
                       }
                     } catch (error) {
-                      // Se erro na IA, usar resultado do filtro semântico
                       console.warn('⚠️ [IA] Erro ao validar com IA, usando filtro semântico:', error)
                     }
                   }
@@ -900,15 +881,57 @@ function LicitacoesContent() {
         })
         
         resultado = resultadosFiltrados
+
+        // Filtro semântico por IA: validar por significado (padrão quando há setores)
+        if (resultado.length > 0 && setoresAtividades?.length > 0) {
+          const totalParaIA = resultado.length
+          // Aviso se muitas licitações (> 100 pode demorar)
+          if (totalParaIA > 100) {
+            setMensagemProgresso(`Validando ${totalParaIA} licitações com IA (pode demorar)...`)
+            addLogFiltro(`Validando ${totalParaIA} licitações com IA (pode demorar)`)
+          } else {
+            setMensagemProgresso('Validando com IA (semântico)...')
+            addLogFiltro('Validando com IA (semântico)...')
+          }
+          let ultimoPercentIA = -1
+          try {
+            const { validarCorrespondenciaIABatch } = await import('@/lib/validacaoIA')
+            const estadosParaIA = (perfilUsuario?.estados_interesse && perfilUsuario.estados_interesse.length > 0 &&
+              !perfilUsuario.estados_interesse.some(e => String(e).toUpperCase() === 'NACIONAL'))
+              ? perfilUsuario.estados_interesse
+              : null
+            const idsAprovados = await validarCorrespondenciaIABatch(
+              resultado,
+              setoresAtividades,
+              obterObjetoCompleto,
+              (validados, total) => {
+                const percent = Math.round((validados / total) * 100)
+                setMensagemProgresso(`Validando com IA: ${validados}/${total} (${percent}%)`)
+                if (percent >= ultimoPercentIA + 25 || percent === 100) {
+                  addLogFiltro(`Validando com IA: ${validados}/${total} (${percent}%)`)
+                  ultimoPercentIA = percent
+                }
+              },
+              estadosParaIA
+            )
+            resultado = resultado.filter(lic => idsAprovados.has(lic.id))
+            addLogFiltro(`✅ IA aprovou ${idsAprovados.size} licitações por significado`)
+            console.log(`✅ [IA Semântico] ${idsAprovados.size} licitações aprovadas por significado`)
+          } catch (err) {
+            console.warn('⚠️ [IA] Erro no filtro semântico por IA:', err)
+            addLogFiltro('⚠️ Erro ao validar com IA', 'warn')
+          }
+        }
         
-        // IMPORTANTE: Salvar resultado do filtro semântico no cache - específico por usuário (IndexedDB)
+        // Salvar resultado no cache para reutilizar ao voltar de outra aba (evita reprocessar)
         if (user?.id) {
           const { salvarCacheSemantico } = await import('@/lib/collections/licitacoesStore')
-          await salvarCacheSemantico(resultado, user.id)
+          await salvarCacheSemantico(resultado, user.id, licitacoes.length)
         }
         
         setProgressoPercentual(90)
         setMensagemProgresso(`Filtro concluído! ${resultado.length} licitações encontradas.`)
+        addLogFiltro(`Filtro concluído! ${resultado.length} licitações encontradas.`)
         
         const depoisFiltro = resultado.length
         const percentualRemovido = antesFiltro > 0 ? ((1 - depoisFiltro/antesFiltro) * 100).toFixed(1) : 0
@@ -918,6 +941,7 @@ function LicitacoesContent() {
         console.warn('⚠️ Empresa sem setores cadastrados. NÃO MOSTRANDO licitações até configurar setores.')
         setProgressoPercentual(100)
         setMensagemProgresso('⚠️ Configure setores e estados no seu perfil')
+        addLogFiltro('⚠️ Configure setores e estados no seu perfil', 'warn')
         setTimeout(() => {
           setProcessandoFiltro(false)
           setProgressoPercentual(0)
@@ -1236,6 +1260,7 @@ function LicitacoesContent() {
     // Aplicar filtros finais
     if (processandoFiltro) {
       setMensagemProgresso('Aplicando filtros finais...')
+      addLogFiltro('Aplicando filtros finais...')
     }
 
     // REMOVIDO: Cache final não é mais necessário
@@ -1249,6 +1274,7 @@ function LicitacoesContent() {
     if (processandoFiltro) {
       setProgressoPercentual(100)
       setMensagemProgresso(`✅ ${resultado.length} licitação${resultado.length !== 1 ? 'ões' : ''} encontrada${resultado.length !== 1 ? 's' : ''}`)
+      addLogFiltro(`✅ ${resultado.length} licitação${resultado.length !== 1 ? 'ões' : ''} encontrada${resultado.length !== 1 ? 's' : ''}`)
       
       // Aguardar um momento para mostrar mensagem de sucesso, depois esconder
       setTimeout(() => {
@@ -1257,6 +1283,14 @@ function LicitacoesContent() {
         setProgressoPercentual(0)
       }, 1500)
     }
+      } catch (err) {
+        console.error('[Filtro] Erro ao aplicar filtros:', err)
+        addLogFiltro('Erro ao aplicar filtros. Exibindo resultado parcial.', 'warn')
+        setLicitacoesFiltradas(resultado ?? [])
+        setProcessandoFiltro(false)
+        setProgressoPercentual(0)
+        setMensagemProgresso('')
+      }
   }
     
     aplicarFiltros()
@@ -1664,15 +1698,15 @@ function LicitacoesContent() {
                 {contarFiltrosAtivos() > 0 && (
                   <Badge className="bg-orange-500">{contarFiltrosAtivos()}</Badge>
                 )}
-                </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setFiltrosSidebarAberta(false)}
               >
                 <X className="w-5 h-5" />
-                  </Button>
-              </div>
+              </Button>
+            </div>
                 
             {/* Botões Ação */}
             <div className="flex flex-col gap-2 mb-6">
@@ -2026,14 +2060,9 @@ function LicitacoesContent() {
             )}
                         </div>
 
-          {/* Loading - Mostrar apenas enquanto carrega do banco */}
-          {isLoading && (
-            <div className="flex flex-col items-center justify-center py-16">
-              <Loader2 className="w-10 h-10 animate-spin text-orange-500 mb-4" />
-              <p className="text-gray-600 text-lg font-medium">
-                Carregando licitações do banco de dados...
-              </p>
-            </div>
+          {/* Loading / Filtro em andamento – apenas skeleton cards */}
+          {(isLoading || (processandoFiltro && licitacoesFinais.length === 0)) && (
+            <LicitacaoCardSkeletonList count={processandoFiltro ? 12 : 8} />
           )}
 
           {/* Error */}
@@ -2073,15 +2102,15 @@ function LicitacoesContent() {
             </div>
           )}
 
-          {/* Cards de Licitações - Mostrar quando não estiver carregando do banco */}
-          {!isLoading && (
+          {/* Cards de Licitações */}
+          {!isLoading && !(processandoFiltro && licitacoesFinais.length === 0) && (
               <div className="space-y-4">
               {licitacoesFinais.length > 0 ? (
                 licitacoesFinais.map((licitacao) => {
                   return (
             <Card 
               key={licitacao.id} 
-              className="hover:shadow-lg transition-shadow border-l-4 border-l-orange-500"
+              className="rounded-xl border border-gray-100 border-l-4 border-l-orange-500 bg-white shadow-sm hover:shadow-xl hover:bg-orange-50/20 transition-all duration-200"
             >
               <CardContent className="p-6">
                 {/* Header do Card */}
@@ -2739,9 +2768,9 @@ function LicitacoesContent() {
                 })
               ) : (
                 !processandoFiltro && (
-                  <Card>
+                  <Card className="rounded-xl border border-gray-100 bg-white shadow-sm">
                     <CardContent className="py-12 text-center">
-                      <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                      <FileText className="w-16 h-16 text-orange-200 mx-auto mb-4" />
                       <h3 className="text-lg font-semibold text-gray-900 mb-2">
                         Nenhuma licitação encontrada
                       </h3>
