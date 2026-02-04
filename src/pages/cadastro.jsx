@@ -377,7 +377,7 @@ export function CadastroPage() {
 
   return (
     <PublicRoute>
-      <AuthLayout subtitle="Comece gratuitamente hoje mesmo" contentClassName="w-full max-w-4xl">
+      <AuthLayout title="Criar Conta" subtitle="Comece gratuitamente hoje mesmo" contentClassName="w-full max-w-4xl">
       <form onSubmit={handleSubmit(onSubmit)} className="bg-white shadow-xl rounded-2xl border border-border overflow-hidden">
         {/* Indicador de etapas */}
         <div className="px-8 pt-6 pb-4 border-b border-border bg-muted/30">

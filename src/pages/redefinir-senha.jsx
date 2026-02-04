@@ -83,7 +83,7 @@ export function RedefinirSenhaPage() {
   if (checking) {
     return (
       <PublicRoute>
-        <AuthLayout subtitle="Verificando link de recuperação">
+        <AuthLayout title="Validando..." subtitle="Verificando link de recuperação">
           <div className="bg-white shadow-2xl rounded-2xl p-8 md:p-10 border border-gray-100 max-w-md mx-auto text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto" />
             <p className="mt-4 text-gray-600">Validando...</p>
@@ -96,7 +96,7 @@ export function RedefinirSenhaPage() {
   if (!temSessaoRecuperacao) {
     return (
       <PublicRoute>
-        <AuthLayout subtitle="Acesse pelo link enviado no e-mail">
+        <AuthLayout title="Link inválido" subtitle="Acesse pelo link enviado no e-mail">
           <div className="bg-white shadow-2xl rounded-2xl p-8 md:p-10 border border-gray-100 max-w-md mx-auto">
             <div className="text-center space-y-4">
               <div className="flex justify-center">
@@ -127,7 +127,7 @@ export function RedefinirSenhaPage() {
 
   return (
     <PublicRoute>
-      <AuthLayout subtitle="Digite sua nova senha">
+      <AuthLayout title="Redefinir Senha" subtitle="Digite sua nova senha">
         <div className="bg-white shadow-2xl rounded-2xl p-8 md:p-10 border border-gray-100 max-w-md mx-auto">
           {success ? (
             <div className="text-center space-y-4">
