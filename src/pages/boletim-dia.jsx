@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
@@ -33,7 +33,12 @@ import {
   CheckCircle2,
   Plus,
   Edit,
-  Trash2
+  Trash2,
+  MessageCircle,
+  Send,
+  Phone,
+  Search,
+  SlidersHorizontal
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { format } from 'date-fns'
@@ -50,11 +55,12 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { VisualizadorDocumento } from '@/components/VisualizadorDocumento'
 import { useNotifications } from '@/hooks/useNotifications'
+import { useWhatsAppRateLimit } from '@/hooks/useWhatsAppRateLimit'
 import { usePalavrasFortes } from '@/hooks/usePalavrasFortes'
+import { usePalavrasIncompatibilidade } from '@/hooks/usePalavrasIncompatibilidade'
 import { obterNomeAtividadeCnae, obterListaCompletaCnaes, resumirNomeAtividade } from '@/lib/cnae'
 import { 
   extrairPalavrasChaveDosSetores, 
-  correspondeAtividades,
   obterObjetoCompleto,
   normalizarTexto
 } from '@/lib/filtroSemantico'
@@ -62,6 +68,79 @@ import { filtrarLicitacoesPorBusca, buscarEmLicitacao } from '@/lib/buscaFuzzy'
 import { useFiltroContext } from '@/contexts/FiltroContext'
 import { isZipFile, descompactarZip, limparBlobUrls } from '@/lib/zipService'
 import { LicitacaoCardSkeletonList } from '@/components/LicitacaoCardSkeleton'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
+
+// Ícone WhatsApp (logo preta)
+function IconWhatsApp({ className = 'w-4 h-4' }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+    </svg>
+  )
+}
+
+// Máscara de telefone: (11) 99999-9999
+function maskTelefone(value) {
+  const digits = String(value || '').replace(/\D/g, '')
+  if (digits.length <= 2) return digits ? `(${digits}` : ''
+  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`
+}
+
+// Modal com estado local para não travar ao digitar (evita re-render do pai a cada tecla)
+function ModalEnviarWhatsApp({ open, licitacao, onClose, onEnviar, enviando }) {
+  const [localNumero, setLocalNumero] = useState('')
+  useEffect(() => {
+    if (open) setLocalNumero('')
+  }, [open])
+  const handleChange = (e) => setLocalNumero(maskTelefone(e.target.value))
+  const rawNumero = localNumero.replace(/\D/g, '')
+  const valido = rawNumero.length >= 10
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogContent className="sm:max-w-sm p-5">
+        <DialogHeader className="space-y-1">
+          <DialogTitle className="text-base font-semibold">Enviar para WhatsApp</DialogTitle>
+          <DialogDescription className="text-xs text-muted-foreground">
+            Número com DDD. Os dados do edital serão enviados para esse número.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="py-3">
+          <Input
+            type="tel"
+            placeholder="(11) 99999-9999"
+            value={localNumero}
+            onChange={handleChange}
+            className="h-10 text-base"
+            disabled={enviando}
+            aria-label="Número WhatsApp"
+            maxLength={16}
+          />
+          {licitacao && (
+            <p className="text-xs text-muted-foreground mt-2 truncate" title={licitacao.objeto_licitacao || licitacao.numero_controle_pncp}>
+              {licitacao.objeto_licitacao?.slice(0, 50) || licitacao.numero_controle_pncp || '—'}
+              {(licitacao.objeto_licitacao?.length || 0) > 50 ? '…' : ''}
+            </p>
+          )}
+        </div>
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={enviando}>Cancelar</Button>
+          <Button size="sm" onClick={() => onEnviar(localNumero)} disabled={enviando || !valido} className="bg-green-600 hover:bg-green-700">
+            {enviando ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            {enviando ? 'Enviando…' : 'Enviar'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 // Função auxiliar para normalizar código CNAE (remover hífens e barras)
 function normalizarCodigoCnae(codigo) {
@@ -79,8 +158,75 @@ function LicitacoesContent() {
   const [visualizadorAberto, setVisualizadorAberto] = useState(false)
   const [documentoVisualizacao, setDocumentoVisualizacao] = useState(null)
   const [limitePagina, setLimitePagina] = useState(50)
+  const MAX_LICITACOES_EXIBIR = 200 // evita travar a UI com milhares de cards
   const [arquivosZipDescompactados, setArquivosZipDescompactados] = useState({}) // { anexoKey: { loading, arquivos, erro } }
   const [baixandoDocumentos, setBaixandoDocumentos] = useState(new Set()) // IDs de licitações sendo processadas
+  const [whatsAppModalLicitacao, setWhatsAppModalLicitacao] = useState(null)
+  const [whatsAppNumero, setWhatsAppNumero] = useState('')
+  const [whatsAppEnviando, setWhatsAppEnviando] = useState(false)
+  // Lista dinâmica de números WhatsApp (até 3): adicionar por um campo, minilista abaixo com opção de excluir
+  const [listaNumerosWhatsApp, setListaNumerosWhatsApp] = useState([])
+  const [whatsAppNovoNumero, setWhatsAppNovoNumero] = useState('')
+  const [whatsAppNovoLabel, setWhatsAppNovoLabel] = useState('')
+  const [whatsAppSlotsSaving, setWhatsAppSlotsSaving] = useState(false)
+  const [alertaWhatsAppAtivo, setAlertaWhatsAppAtivo] = useState(false)
+  const [alertaWhatsAppHorario, setAlertaWhatsAppHorario] = useState('08:00')
+  const [alertaWhatsAppSaving, setAlertaWhatsAppSaving] = useState(false)
+
+  // Buscar alerta WhatsApp do usuário (tipo whatsapp)
+  const { data: alertaWhatsApp } = useQuery({
+    queryKey: ['alerta-whatsapp', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null
+      const { data, error } = await supabase
+        .from('alertas_usuario')
+        .select('id, ativo, horario_verificacao, filtros')
+        .eq('usuario_id', user.id)
+        .eq('tipo', 'whatsapp')
+        .maybeSingle()
+      if (error) throw error
+      return data
+    },
+    enabled: !!user?.id,
+  })
+
+  useEffect(() => {
+    if (alertaWhatsApp) {
+      setAlertaWhatsAppAtivo(!!alertaWhatsApp.ativo)
+      const t = alertaWhatsApp.horario_verificacao
+      if (t) setAlertaWhatsAppHorario(String(t).slice(0, 5))
+    }
+  }, [alertaWhatsApp])
+
+  // Números WhatsApp cadastrados (sidebar – até 3)
+  const { data: numerosWhatsApp = [], refetch: refetchNumerosWhatsApp } = useQuery({
+    queryKey: ['usuario-whatsapp-numeros', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return []
+      const { data, error } = await supabase
+        .from('usuario_whatsapp_numeros')
+        .select('id, numero_telefone, label, ordem')
+        .eq('usuario_id', user.id)
+        .eq('ativo', true)
+        .order('ordem', { ascending: true })
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!user?.id,
+  })
+
+  // Sincronizar lista de números com os já salvos no banco
+  useEffect(() => {
+    if (!Array.isArray(numerosWhatsApp)) return
+    const list = numerosWhatsApp
+      .filter((n) => (n.numero_telefone || '').replace(/\D/g, '').length >= 10)
+      .map((n) => ({
+        numero_telefone: n.numero_telefone,
+        label: n.label || '',
+      }))
+    setListaNumerosWhatsApp(list)
+  }, [numerosWhatsApp])
+
   // Estados para processamento do filtro (compartilhado via contexto)
   const { 
     processandoFiltro, 
@@ -104,6 +250,9 @@ function LicitacoesContent() {
   }
   // Hook para notificações customizadas
   const { success, error: showError, warning, confirm } = useNotifications()
+  
+  // Hook para rate limiting de WhatsApp
+  const { checkRateLimit, registerSend, LIMITE_POR_HORA } = useWhatsAppRateLimit()
 
   // Buscar perfil do usuário com setores, estados e sinônimos personalizados
   const { data: perfilUsuario } = useQuery({
@@ -213,42 +362,80 @@ function LicitacoesContent() {
     staleTime: 1000 * 60 * 60, // Cache por 1 hora
   })
 
-  // Palavras fortes por setor (dinâmico, do banco) para filtro de preferência
+  // Palavras fortes e incompatíveis por setor (do banco: setores_palavras_fortes, setores_palavras_incompatibilidade)
   const { data: palavrasFortesPorSetor = {} } = usePalavrasFortes()
+  const { data: palavrasIncompatibilidadePorSetor = {} } = usePalavrasIncompatibilidade()
 
-  // Estados dos Filtros
-  const [filtros, setFiltros] = useState({
-    // Essenciais
-    buscaObjeto: '', // Campo para INCLUIR palavras (busca normal)
-    excluirPalavras: '', // Campo para EXCLUIR palavras (separado)
+  // Valores padrão dos filtros (reutilizado para restauração)
+  const filtrosDefaults = {
+    buscaObjeto: '',
+    excluirPalavras: '',
     uf: '',
     modalidade: '',
     dataPublicacaoInicio: '',
     dataPublicacaoFim: '',
     valorMin: '',
     valorMax: '',
-    statusEdital: '', // Em Andamento, Encerrando, Encerrado
-    
-    // Úteis
+    statusEdital: '',
     comDocumentos: false,
     comItens: false,
     comValor: false,
-    
-    // Avançados
     situacao: '',
     esfera: '',
     modoDisputa: '',
     amparoLegal: '',
-    
-    // Exclusões (o que NÃO quer ver)
-    filtrosExclusaoAtivo: false, // Toggle para ativar/desativar filtros de exclusão
-    excluirUfs: [], // Array de UFs para excluir
-    excluirPalavrasObjeto: [], // Array de palavras para excluir do objeto (ex: "construção", "saúde")
-    
-    
-  })
+    filtrosExclusaoAtivo: false,
+    excluirUfs: [],
+    excluirPalavrasObjeto: [],
+  }
+
+  // Estados dos Filtros – restaura do localStorage ao recarregar
+  const [filtros, setFiltros] = useState(filtrosDefaults)
+  const [filtrosAplicados, setFiltrosAplicados] = useState(filtros)
+  const ultimoUsuarioRestaurado = useRef(null)
+  const pulouPrimeiroSaveRef = useRef(false)
 
   const [dataFiltro, setDataFiltro] = useState('')
+
+  // Restaurar filtros do localStorage ao carregar (persiste entre reloads)
+  useEffect(() => {
+    if (!user?.id) {
+      ultimoUsuarioRestaurado.current = null
+      return
+    }
+    if (ultimoUsuarioRestaurado.current === user.id) return
+    ultimoUsuarioRestaurado.current = user.id
+    try {
+      const key = `licitacoes_filtros_${user.id}`
+      const s = localStorage.getItem(key)
+      if (s) {
+        const parsed = JSON.parse(s)
+        const restored = { ...filtrosDefaults, ...parsed }
+        setFiltros(restored)
+        setFiltrosAplicados(restored)
+        console.log('✅ [Filtros] Restaurados do cache:', Object.keys(parsed).filter(k => restored[k]))
+      }
+    } catch (e) { /* ignore */ }
+  }, [user?.id])
+
+  // Salvar filtros no localStorage quando aplicados (debounced, pula 1ª execução para não sobrescrever antes do restore)
+  useEffect(() => {
+    if (!user?.id) return
+    if (!pulouPrimeiroSaveRef.current) {
+      pulouPrimeiroSaveRef.current = true
+      return
+    }
+    const t = setTimeout(() => {
+      try {
+        const key = `licitacoes_filtros_${user.id}`
+        const toSave = { ...filtrosAplicados }
+        delete toSave.excluirUfs
+        delete toSave.excluirPalavrasObjeto
+        localStorage.setItem(key, JSON.stringify(toSave))
+      } catch (e) { /* quota ou indisponível */ }
+    }, 500)
+    return () => clearTimeout(t)
+  }, [user?.id, filtrosAplicados])
 
   // Verificar se veio com data do calendário (query string)
   useEffect(() => {
@@ -272,10 +459,6 @@ function LicitacoesContent() {
       console.log('Mostrando todas as licitações')
     }
   }, [location])
-
- 
-  const [filtrosAplicados, setFiltrosAplicados] = useState(filtros)
-  
   
   useEffect(() => {
     setLimitePagina(50)
@@ -424,7 +607,7 @@ function LicitacoesContent() {
       console.log(`✅ [Download ZIP] ZIP baixado com sucesso!`)
 
       if (result.documentosErros > 0) {
-        alert(`Download concluído! ${result.documentosBaixados} documentos baixados com sucesso, ${result.documentosErros} documentos não puderam ser baixados.`)
+        success(`Download concluído! ${result.documentosBaixados} documentos baixados com sucesso, ${result.documentosErros} documentos não puderam ser baixados.`)
       }
       
       setBaixandoDocumentos(prev => {
@@ -434,14 +617,139 @@ function LicitacoesContent() {
       })
     } catch (error) {
       console.error('❌ [Download ZIP] Erro ao baixar ZIP:', error)
-      alert(`Erro ao baixar documentos: ${error.message}`)
+      showError(`Erro ao baixar documentos: ${error.message}`)
       setBaixandoDocumentos(prev => {
         const novo = new Set(prev)
         novo.delete(licitacao.id || licitacao.numero_controle_pncp)
         return novo
       })
     }
-  }, [])
+  }, [success, showError])
+
+  const enviarParaWhatsApp = useCallback(async (numeroOverride = null, licitacaoOverride = null) => {
+    const licitacao = licitacaoOverride ?? whatsAppModalLicitacao
+    const valor = numeroOverride ?? whatsAppNumero
+    if (!licitacao || !valor?.trim()) return
+    if (!supabase) {
+      warning('Supabase não configurado. Configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.')
+      return
+    }
+    const numero = String(valor).replace(/\D/g, '')
+    if (numero.length < 10) {
+      warning('Informe um número válido com DDD (ex: 11999999999)')
+      return
+    }
+
+    // Verificar rate limit (fail-open: se erro, permite envio)
+    const rateCheck = await checkRateLimit()
+    
+    // Se houver warning (rate limit não configurado), mostrar mas continuar
+    if (rateCheck.warning) {
+      console.warn('Rate limit:', rateCheck.warning)
+    }
+    
+    // Só bloquear se realmente excedeu limite (não em caso de erro)
+    if (!rateCheck.canSend && rateCheck.error && !rateCheck.warning) {
+      warning(rateCheck.error)
+      return
+    }
+
+    const isEnvioEmLote = !!licitacaoOverride
+    if (!isEnvioEmLote) setWhatsAppEnviando(true)
+    try {
+      const dataAbertura = licitacao.dados_completos?.dataAberturaProposta || licitacao.dados_completos?.data_abertura_proposta || ''
+      const dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || licitacao.dados_completos?.data_encerramento_proposta || ''
+      const valorTotal = licitacao.valor_total_estimado ?? null
+      const objetoEdital = licitacao.objeto_compra
+        || licitacao.dados_completos?.objetoCompra
+        || licitacao.dados_completos?.objeto_compra
+        || licitacao.objeto_licitacao
+        || licitacao.resumo
+        || 'Não informado'
+      const payload = {
+        telefone: numero.startsWith('55') ? numero : `55${numero}`,
+        objeto_licitacao: objetoEdital,
+        objeto: objetoEdital,
+        orgao: licitacao.orgao_razao_social || 'Não informado',
+        modalidade: licitacao.modalidade_nome || 'Não informado',
+        valor_estimado: valorTotal,
+        valor_total: valorTotal,
+        valor_total_formatado: valorTotal != null ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valorTotal) : null,
+        uf: licitacao.uf_sigla || '',
+        numero_controle: licitacao.numero_controle_pncp || licitacao.id,
+        data_publicacao: licitacao.data_publicacao_pncp || null,
+        data_abertura: dataAbertura || null,
+        data_encerramento: dataEncerramento || null,
+        link_pncp: licitacao.link_licitacao_pncp || licitacao.url_detalhes || licitacao.dados_completos?.linkPnacp || null,
+        municipio: licitacao.municipio_nome || licitacao.dados_completos?.municipio || null,
+        unidade: licitacao.unidade_nome || licitacao.dados_completos?.unidadeCompradora || null,
+      }
+      const { data, error } = await supabase.functions.invoke('enviar-whatsapp-uazapi', { body: payload })
+      if (error) throw new Error(error.message || 'Edge Function falhou')
+      if (data?.error) throw new Error(data.error)
+      
+      // Registrar envio bem-sucedido para rate limiting (se configurado)
+      try {
+        await registerSend(
+          payload.telefone, 
+          licitacao.numero_controle_pncp || licitacao.id,
+          'success'
+        )
+      } catch (regError) {
+        console.warn('Não foi possível registrar envio:', regError)
+      }
+      
+      if (!licitacaoOverride) {
+        setWhatsAppModalLicitacao(null)
+        setWhatsAppNumero('')
+      }
+      // Mensagem de sucesso (em lote o caller mostra um único resumo)
+      if (!licitacaoOverride) {
+        if (rateCheck.warning) success('Mensagem enviada com sucesso!')
+        else {
+          const remaining = Math.max(0, rateCheck.remaining - 1)
+          success(`Mensagem enviada! Você tem ${remaining} envios restantes nesta hora.`)
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao enviar para WhatsApp:', err)
+      
+      // Registrar falha para auditoria (não conta no limite)
+      try {
+        await registerSend(
+          numero.startsWith('55') ? numero : `55${numero}`,
+          licitacao.numero_controle_pncp || licitacao.id,
+          'failed'
+        )
+      } catch (regError) {
+        console.warn('Não foi possível registrar falha:', regError)
+      }
+      
+      showError(`Erro ao enviar: ${err.message}`)
+    } finally {
+      if (!isEnvioEmLote) setWhatsAppEnviando(false)
+    }
+  }, [whatsAppModalLicitacao, success, showError, warning, checkRateLimit, registerSend, LIMITE_POR_HORA])
+
+  const enviarParaTodosNumerosCadastrados = useCallback(async (licitacao) => {
+    if (!numerosWhatsApp?.length || !licitacao) return
+    setWhatsAppEnviando(true)
+    let enviados = 0
+    let erros = 0
+    for (const n of numerosWhatsApp) {
+      const num = (n.numero_telefone || '').replace(/\D/g, '')
+      if (num.length < 10) continue
+      try {
+        await enviarParaWhatsApp(n.numero_telefone.startsWith('55') ? n.numero_telefone : `55${n.numero_telefone}`, licitacao)
+        enviados++
+      } catch {
+        erros++
+      }
+    }
+    setWhatsAppEnviando(false)
+    if (enviados > 0) success(`Enviado para ${enviados} número(s)${erros > 0 ? `. ${erros} falha(s).` : '.'}`)
+    if (erros > 0 && enviados === 0) showError('Falha ao enviar para os números cadastrados.')
+  }, [numerosWhatsApp, enviarParaWhatsApp, success, showError])
 
   // Função auxiliar para extrair itens de diferentes fontes
   const getItens = useCallback((licitacao) => {
@@ -565,11 +873,20 @@ function LicitacoesContent() {
 
   const [ultimoUserId, setUltimoUserId] = useState(null)
   
-  const { data: licitacoes = [], isLoading, error } = useQuery({
+  const { data: licitacoes = [], isLoading, isFetching, error } = useQuery({
     queryKey: ['licitacoes-sessao-completa', user?.id],
     queryFn: async () => {
       if (!user?.id) return []
-      const { buscarLicitacoesDoBanco, salvarCacheLicitacoes, carregarCacheLicitacoes, limparCacheLicitacoes, limparCacheSemantico } = await import('@/lib/collections/licitacoesStore')
+      const {
+        buscarLicitacoesDoBanco,
+        salvarCacheLicitacoes,
+        carregarCacheLicitacoes,
+        carregarCacheParcialLicitacoes,
+        salvarCacheParcialLicitacoes,
+        removerCacheParcialLicitacoes,
+        limparCacheLicitacoes,
+        limparCacheSemantico,
+      } = await import('@/lib/collections/licitacoesStore')
       const mudouUsuario = ultimoUserId && ultimoUserId !== user.id
       if (mudouUsuario) {
         await limparCacheLicitacoes(ultimoUserId)
@@ -577,19 +894,24 @@ function LicitacoesContent() {
       setUltimoUserId(user.id)
       const cached = await carregarCacheLicitacoes(user.id)
       if (cached?.length) {
-        const LIMITE_RECENTES = 15000
+        const LIMITE_RECENTES = 10000
         const licitacoesLimitadas = cached.length > LIMITE_RECENTES ? cached.slice(0, LIMITE_RECENTES) : cached
         if (licitacoesLimitadas.length < cached.length) {
-          addLogFiltro(`Cache reutilizado: ${licitacoesLimitadas.length} licitações (limite dos 15 mil mais recentes)`)
+          addLogFiltro(`Cache reutilizado: ${licitacoesLimitadas.length} licitações (limite dos 10 mil mais recentes)`)
         } else {
           addLogFiltro(`Cache reutilizado: ${licitacoesLimitadas.length} licitações (sem novo carregamento)`)
         }
         return licitacoesLimitadas
       }
       setProcessandoFiltro(true)
-      setMensagemProgresso('Carregando licitações do banco...')
-      addLogFiltro('Carregando licitações do banco...')
-      let ultimoLogBanco = 0
+      const parcial = await carregarCacheParcialLicitacoes(user.id)
+      const mensagemInicial = parcial?.licitacoes?.length
+        ? `Retomando busca: ${parcial.licitacoes.length} já carregadas...`
+        : 'Carregando licitações do banco...'
+      setMensagemProgresso(mensagemInicial)
+      addLogFiltro(mensagemInicial)
+      let ultimoLogBanco = parcial?.licitacoes?.length || 0
+      const LIMITE_BANCO = 10000
       const todasLicitacoes = await buscarLicitacoesDoBanco(
         (buscados, total) => {
           setMensagemProgresso(`Carregando do banco: ${buscados.toLocaleString()} licitações...`)
@@ -597,9 +919,15 @@ function LicitacoesContent() {
             addLogFiltro(`Carregando do banco: ${buscados.toLocaleString()} licitações...`)
             ultimoLogBanco = buscados
           }
+        },
+        LIMITE_BANCO,
+        {
+          licitacoesIniciais: parcial?.licitacoes || [],
+          onSavePartial: (arr) => salvarCacheParcialLicitacoes(arr, user.id),
         }
       )
       addLogFiltro(`✅ ${todasLicitacoes.length.toLocaleString()} licitações carregadas do banco`)
+      await removerCacheParcialLicitacoes(user.id)
       await salvarCacheLicitacoes(todasLicitacoes, user.id)
       await limparCacheSemantico(user.id)
       return todasLicitacoes
@@ -639,22 +967,55 @@ function LicitacoesContent() {
         setProgressoPercentual(0)
         return
       }
-
-      // Reusar cache semântico ao voltar de outra aba (evita reprocessar tudo)
-      if (!mostrarTodasLicitacoes && user?.id) {
+      
+      // Prioridade: reutilizar resultado final do IndexedDB ao recarregar/navegar (sem refazer busca nem filtro)
+      if (user?.id) {
         try {
-          const { carregarCacheSemantico } = await import('@/lib/collections/licitacoesStore')
-          const cached = await carregarCacheSemantico(user.id)
-          if (cached?.licitacoes && cached.licitacoesTotalLength === licitacoes.length) {
+          const { carregarResultadoFinal, hashFiltrosAplicados } = await import('@/lib/collections/licitacoesStore')
+          const hash = hashFiltrosAplicados(filtrosAplicados, mostrarTodasLicitacoes, perfilUsuario?.setores_atividades)
+          const cached = await carregarResultadoFinal(user.id, hash)
+          if (cached?.licitacoes) {
             setLicitacoesFiltradas(cached.licitacoes)
             setProcessandoFiltro(false)
-            setProgressoPercentual(100)
-            addLogFiltro(`Cache reutilizado: ${cached.licitacoes.length} licitações (sem reprocessar)`)
+            setProgressoPercentual(0)
+            setMensagemProgresso('')
+            addLogFiltro(`Resultado restaurado do cache: ${cached.licitacoes.length} licitações (sem refazer busca/filtro)`)
+            return
+          }
+        } catch (e) {
+          console.warn('⚠️ [Cache Resultado Final] Erro ao carregar:', e)
+        }
+      }
+
+      // Reusar cache semântico do IndexedDB ao recarregar ou voltar de outra página (evita reprocessar)
+      if (!mostrarTodasLicitacoes && user?.id) {
+        try {
+          const { carregarCacheSemantico, hashSetoresAtividades } = await import('@/lib/collections/licitacoesStore')
+          const setoresHash = hashSetoresAtividades(perfilUsuario?.setores_atividades)
+          const cached = await carregarCacheSemantico(user.id, setoresHash)
+          const totalRaw = Number(licitacoes.length)
+          const totalCache = cached?.licitacoesTotalLength != null ? Number(cached.licitacoesTotalLength) : 0
+          // Aceitar cache se a base de licitações é a mesma (mesmo total) ou compatível (ex.: raw foi limitado a 10k)
+          const baseCompativel = totalCache === totalRaw || (totalRaw >= totalCache && totalCache > 0)
+          if (cached?.licitacoes && Array.isArray(cached.licitacoes) && baseCompativel) {
+            setLicitacoesFiltradas(cached.licitacoes)
+            setProcessandoFiltro(false)
+            setProgressoPercentual(0)
+            setMensagemProgresso('')
+            addLogFiltro(`Cache IndexedDB reutilizado: ${cached.licitacoes.length} licitações do interesse do usuário (sem reprocessar)`)
             return
           }
         } catch (e) {
           console.warn('⚠️ [Cache] Erro ao carregar cache semântico:', e)
         }
+      }
+
+      // Ao recarregar: não mostrar as 10k se o perfil ainda não carregou — esperar perfil para aplicar filtro ou usar cache
+      if (!mostrarTodasLicitacoes && !perfilUsuario && licitacoes.length > 0) {
+        setProcessandoFiltro(true)
+        setMensagemProgresso('Carregando perfil para aplicar filtro...')
+        addLogFiltro('Aguardando perfil da empresa para aplicar filtro por atividades')
+        return
       }
       
       let resultado = licitacoes
@@ -759,154 +1120,115 @@ function LicitacoesContent() {
         setMensagemProgresso(`Processando ${antesFiltro} licitações...`)
         addLogFiltro(`Processando ${antesFiltro} licitações (filtro por palavras)`)
         
-        // Filtrar usando APENAS filtro semântico (sem IA)
-        // Processar em lotes para não bloquear a UI (lotes maiores = menos etapas e mais rápido)
-        const TAMANHO_LOTE = 200
-        const resultadosFiltrados = []
-        const totalLotes = Math.ceil(resultado.length / TAMANHO_LOTE)
-        
-        // Processar lotes de forma assíncrona para não bloquear navegação
-        await new Promise(async (resolve) => {
-          let indiceAtual = 0
-          
-          const processarProximoLote = async () => {
-            // Verificar se ainda há lotes para processar
-            if (indiceAtual >= resultado.length) {
-              resolve()
-              return
-            }
-            
-            const lote = resultado.slice(indiceAtual, indiceAtual + TAMANHO_LOTE)
-            const loteAtual = Math.floor(indiceAtual / TAMANHO_LOTE) + 1
-          
-          // Atualizar progresso baseado no lote atual (50% a 90%)
-          const progressoLote = 50 + Math.floor((loteAtual / totalLotes) * 40)
-          setProgressoPercentual(progressoLote)
-          
-          // Atualizar mensagem de progresso
-          setMensagemProgresso(
-              `Processando: ${loteAtual}/${totalLotes} lotes (${Math.min(indiceAtual + lote.length, antesFiltro)}/${antesFiltro} licitações)...`
-          )
-          const percentLote = Math.floor((loteAtual / totalLotes) * 100)
-          if (percentLote > 0 && (percentLote % 25 === 0 || loteAtual === totalLotes)) {
-            addLogFiltro(`Processando: ${loteAtual}/${totalLotes} lotes (${percentLote}%)`)
-          }
-          
-            // Processar lote atual
-          const resultadosLote = await Promise.all(
-            lote.map(async (licitacao) => {
-              // Usar filtro semântico primeiro (rápido)
-              const correspondeSemantico = correspondeAtividades(
-                licitacao,
-                palavrasChave,
-                sinonimosPersonalizados, // Sinônimos personalizados
-                sinonimosBancoFormatados, // Sinônimos do banco
-                setoresAtividades, // Setores para contexto
-                palavrasFortesPorSetor // Palavras fortes dinâmicas (banco)
-              )
-              
-              // Se filtro semântico aceitou, usar diretamente
-              if (correspondeSemantico === true) {
-                return licitacao
+        // Filtro semântico em Web Worker para não travar a UI
+        const worker = new Worker(
+          new URL('@/workers/filtroSemantico.worker.js', import.meta.url),
+          { type: 'module' }
+        )
+        const { aprovados: resultadosWorkerAprovados, duvidosos: resultadosWorkerDuvidosos } = await new Promise((resolve, reject) => {
+          const onMessage = (ev) => {
+            const { type, processados, total, percent, aprovados, duvidosos } = ev.data || {}
+            if (type === 'progress') {
+              const progressoLote = 50 + Math.floor((percent || 0) * 0.4)
+              setProgressoPercentual(progressoLote)
+              setMensagemProgresso(`Processando: ${processados}/${total} licitações (${percent}%)...`)
+              if (percent > 0 && (percent % 25 === 0 || percent === 100)) {
+                addLogFiltro(`Processando: ${processados}/${total} licitações (${percent}%)`)
               }
-              
-              // Se filtro semântico rejeitou, tentar validar com IA (filtro semântico + IA é o padrão)
-              if (correspondeSemantico === false) {
-                // Verificar se objeto tem palavras-chave relevantes antes de chamar IA
-                const objetoCompleto = obterObjetoCompleto(licitacao)
-                if (objetoCompleto && setoresAtividades && setoresAtividades.length > 0) {
-                  const objetoNormalizado = normalizarTexto(objetoCompleto)
-                  
-                  const temPalavraChave = palavrasChave.principais.some(palavra => {
-                    const palavraNormalizada = normalizarTexto(palavra)
-                    if (objetoNormalizado.includes(palavraNormalizada)) return true
-                    if (palavraNormalizada.length >= 5 && objetoNormalizado.includes(palavraNormalizada.substring(0, 5))) return true
-                    return false
-                  })
-                  
-                  if (temPalavraChave) {
+            } else if (type === 'done') {
+              worker.removeEventListener('message', onMessage)
+              worker.removeEventListener('error', onError)
+              worker.terminate()
+              resolve({ aprovados: aprovados || [], duvidosos: duvidosos || [] })
+            }
+          }
+          const onError = (err) => {
+            worker.removeEventListener('message', onMessage)
+            worker.removeEventListener('error', onError)
+            worker.terminate()
+            reject(err)
+          }
+          worker.addEventListener('message', onMessage)
+          worker.addEventListener('error', onError)
+          worker.postMessage({
+            type: 'filter',
+            payload: {
+              licitacoes: resultado,
+              palavrasChave,
+              sinonimosPersonalizados,
+              sinonimosBancoFormatados,
+              setoresAtividades,
+              palavrasFortesPorSetor,
+              palavrasIncompatibilidadePorSetor,
+            },
+          })
+        })
+
+        resultado = [...resultadosWorkerAprovados]
+        // Validar com IA os casos duvidosos (limitado para não travar: máx 30)
+        const MAX_DUVIDOSOS_IA = 30
+        const duvidososParaIA = (resultadosWorkerDuvidosos?.length > 0)
+          ? resultadosWorkerDuvidosos.slice(0, MAX_DUVIDOSOS_IA)
+          : []
+        if (duvidososParaIA.length > 0) {
+          if ((resultadosWorkerDuvidosos?.length || 0) > MAX_DUVIDOSOS_IA) {
+            addLogFiltro(`Validando até ${MAX_DUVIDOSOS_IA} casos duvidosos (${resultadosWorkerDuvidosos.length} no total)`)
+          }
+          setProgressoPercentual(91)
+          setMensagemProgresso(`Validando ${duvidososParaIA.length} casos duvidosos com IA...`)
+          addLogFiltro(`Validando ${duvidososParaIA.length} casos duvidosos com IA`)
+          const estadosParaIA = (perfilUsuario?.estados_interesse && !perfilUsuario.estados_interesse.some(e => String(e).toUpperCase() === 'NACIONAL'))
+            ? perfilUsuario.estados_interesse
+            : null
                     try {
                       const { validarCorrespondenciaIAEdgeFunction } = await import('@/lib/validacaoIA')
-                      const estadosParaIA = (perfilUsuario?.estados_interesse && !perfilUsuario.estados_interesse.some(e => String(e).toUpperCase() === 'NACIONAL'))
-                        ? perfilUsuario.estados_interesse
-                        : null
+            for (const licitacao of duvidososParaIA) {
+              const objetoCompleto = obterObjetoCompleto(licitacao)
+              if (!objetoCompleto) continue
+              try {
                       const validacaoIA = await validarCorrespondenciaIAEdgeFunction(
                         objetoCompleto,
                         setoresAtividades,
-                        user?.id,
-                        estadosParaIA
+                  user?.id,
+                  estadosParaIA
                       )
                       if (validacaoIA === true) {
-                        console.log('✅ [IA] Licitação aceita por IA (caso duvidoso):', {
-                          objeto: objetoCompleto.substring(0, 100)
-                        })
-                        return licitacao
-                      }
-                    } catch (error) {
-                      console.warn('⚠️ [IA] Erro ao validar com IA, usando filtro semântico:', error)
-                    }
-                  }
+                  resultado.push(licitacao)
                 }
-              }
-              
-              // Log detalhado para debug (apenas 1% para não poluir console)
-              if (!correspondeSemantico && licitacao.objeto_compra && Math.random() < 0.01) {
-                console.log(`🚫 [Filtro] Licitação filtrada:`, {
-                  objeto: licitacao.objeto_compra.substring(0, 100),
-                  palavrasPrincipais: palavrasChave.principais.slice(0, 3)
-                })
-              }
-              
-              return null
-            })
-          )
-          
-          // Filtrar nulls
-          const resultadosFiltradosLote = resultadosLote.filter(Boolean)
-          
-          resultadosFiltrados.push(...resultadosFiltradosLote)
-            
-            // Avançar para o próximo lote
-            indiceAtual += TAMANHO_LOTE
-            
-            // Usar setTimeout para permitir que o navegador processe outros eventos
-            // Isso evita travar a navegação durante o processamento
-            setTimeout(async () => {
-              await processarProximoLote()
-            }, 0)
+              } catch (_) { /* ignorar erro por item */ }
+            }
+          } catch (err) {
+            console.warn('⚠️ [IA] Erro ao validar duvidosos:', err)
           }
-          
-          // Iniciar processamento
-          await processarProximoLote()
-        })
-        
-        resultado = resultadosFiltrados
+        }
 
-        // Filtro semântico por IA: validar por significado (padrão quando há setores)
+        // Filtro semântico por IA: validar por significado (com timeout para sempre concluir)
+        const MAX_SEGUNDOS_IA = 120 // após 2 min usa resultado do filtro semântico e finaliza
         if (resultado.length > 0 && setoresAtividades?.length > 0) {
           const totalParaIA = resultado.length
-          // Aviso se muitas licitações (> 100 pode demorar)
+          const resultadoAntesIA = [...resultado]
           if (totalParaIA > 100) {
-            setMensagemProgresso(`Validando ${totalParaIA} licitações com IA (pode demorar)...`)
-            addLogFiltro(`Validando ${totalParaIA} licitações com IA (pode demorar)`)
+            setMensagemProgresso(`Validando ${totalParaIA} licitações com IA (máx ${MAX_SEGUNDOS_IA}s)...`)
+            addLogFiltro(`Validando ${totalParaIA} licitações com IA (máx ${MAX_SEGUNDOS_IA}s)`)
           } else {
             setMensagemProgresso('Validando com IA (semântico)...')
             addLogFiltro('Validando com IA (semântico)...')
           }
           let ultimoPercentIA = -1
-          try {
+          const runIABatch = async () => {
             const { validarCorrespondenciaIABatch } = await import('@/lib/validacaoIA')
             const estadosParaIA = (perfilUsuario?.estados_interesse && perfilUsuario.estados_interesse.length > 0 &&
               !perfilUsuario.estados_interesse.some(e => String(e).toUpperCase() === 'NACIONAL'))
               ? perfilUsuario.estados_interesse
               : null
-            const idsAprovados = await validarCorrespondenciaIABatch(
+            return validarCorrespondenciaIABatch(
               resultado,
               setoresAtividades,
               obterObjetoCompleto,
               (validados, total) => {
                 const percent = Math.round((validados / total) * 100)
                 setMensagemProgresso(`Validando com IA: ${validados}/${total} (${percent}%)`)
+                setProgressoPercentual(90 + Math.round((validados / total) * 10))
                 if (percent >= ultimoPercentIA + 25 || percent === 100) {
                   addLogFiltro(`Validando com IA: ${validados}/${total} (${percent}%)`)
                   ultimoPercentIA = percent
@@ -914,24 +1236,47 @@ function LicitacoesContent() {
               },
               estadosParaIA
             )
-            resultado = resultado.filter(lic => idsAprovados.has(lic.id))
-            addLogFiltro(`✅ IA aprovou ${idsAprovados.size} licitações por significado`)
-            console.log(`✅ [IA Semântico] ${idsAprovados.size} licitações aprovadas por significado`)
+          }
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('TIMEOUT_IA')), MAX_SEGUNDOS_IA * 1000)
+          })
+          try {
+            const idsAprovados = await Promise.race([runIABatch(), timeoutPromise])
+            if (idsAprovados && idsAprovados.size > 0) {
+              resultado = resultado.filter(lic => idsAprovados.has(lic.id))
+              addLogFiltro(`✅ IA aprovou ${idsAprovados.size} licitações por significado`)
+              console.log(`✅ [IA Semântico] ${idsAprovados.size} licitações aprovadas por significado`)
+            } else {
+              resultado = resultadoAntesIA
+              addLogFiltro('⚠️ IA indisponível (ex.: RATE_LIMIT); mantendo resultado do filtro semântico', 'warn')
+            }
           } catch (err) {
-            console.warn('⚠️ [IA] Erro no filtro semântico por IA:', err)
-            addLogFiltro('⚠️ Erro ao validar com IA', 'warn')
+            if (err?.message === 'TIMEOUT_IA') {
+              addLogFiltro(`⚠️ Tempo limite de ${MAX_SEGUNDOS_IA}s na IA; mantendo resultado do filtro semântico`, 'warn')
+              console.warn('⚠️ [IA] Timeout: usando resultado do filtro semântico')
+            } else {
+              console.warn('⚠️ [IA] Erro no filtro semântico por IA:', err)
+              addLogFiltro('⚠️ Erro ao validar com IA; mantendo resultado do filtro semântico', 'warn')
+            }
+            resultado = resultadoAntesIA
           }
         }
         
         // Salvar resultado no cache para reutilizar ao voltar de outra aba (evita reprocessar)
         if (user?.id) {
-          const { salvarCacheSemantico } = await import('@/lib/collections/licitacoesStore')
-          await salvarCacheSemantico(resultado, user.id, licitacoes.length)
+          const { salvarCacheSemantico, hashSetoresAtividades } = await import('@/lib/collections/licitacoesStore')
+          await salvarCacheSemantico(resultado, user.id, licitacoes.length, hashSetoresAtividades(perfilUsuario?.setores_atividades))
         }
         
-        setProgressoPercentual(90)
+        setProgressoPercentual(100)
         setMensagemProgresso(`Filtro concluído! ${resultado.length} licitações encontradas.`)
         addLogFiltro(`Filtro concluído! ${resultado.length} licitações encontradas.`)
+        // Encerrar spinner logo após o semântico (editais já estão disponíveis); evita ficar em 90% sem terminar
+        setTimeout(() => {
+          setProcessandoFiltro(false)
+          setMensagemProgresso('')
+          setProgressoPercentual(0)
+        }, 1200)
         
         const depoisFiltro = resultado.length
         const percentualRemovido = antesFiltro > 0 ? ((1 - depoisFiltro/antesFiltro) * 100).toFixed(1) : 0
@@ -1269,6 +1614,16 @@ function LicitacoesContent() {
     // Todos os filtros agora funcionam diretamente no cache semântico do IndexedDB
 
     setLicitacoesFiltradas(resultado)
+
+    // Salvar resultado final no IndexedDB para ao recarregar/navegar não refazer busca nem filtro
+    if (user?.id && resultado) {
+      try {
+        const { salvarResultadoFinal, hashFiltrosAplicados } = await import('@/lib/collections/licitacoesStore')
+        await salvarResultadoFinal(resultado, user.id, hashFiltrosAplicados(filtrosAplicados, mostrarTodasLicitacoes, perfilUsuario?.setores_atividades))
+      } catch (e) {
+        console.warn('⚠️ [Cache Resultado Final] Erro ao salvar:', e)
+      }
+    }
     
     // Finalizar processamento
     if (processandoFiltro) {
@@ -1290,21 +1645,40 @@ function LicitacoesContent() {
         setProcessandoFiltro(false)
         setProgressoPercentual(0)
         setMensagemProgresso('')
-      }
+    }
   }
     
     aplicarFiltros()
   }, [
-    licitacoes, 
-    filtrosAplicados, // Todos os filtros aplicados (campos texto só mudam ao clicar em "Aplicar", outros são imediatos)
-    perfilUsuario, 
+    licitacoes,
+    filtrosAplicados,
+    perfilUsuario,
     mostrarTodasLicitacoes,
     sinonimosBanco,
-    dataFiltro
+    dataFiltro,
+    palavrasFortesPorSetor,
+    palavrasIncompatibilidadePorSetor,
   ])
 
   // Licitações finais (sem filtros permanentes)
   const licitacoesFinais = licitacoesFiltradas
+
+  // Lista sem duplicatas por id (evita "two children with the same key" e cards repetidos)
+  const licitacoesParaExibir = useMemo(() => {
+    const seen = new Set()
+    return licitacoesFinais.filter(lic => {
+      const id = lic.id ?? lic.numero_controle_pncp
+      if (!id || seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
+  }, [licitacoesFinais])
+
+  // Apenas as licitações da “página” atual (evita renderizar milhares de cards e travar a UI)
+  const licitacoesPagina = useMemo(
+    () => licitacoesParaExibir.slice(0, limitePagina),
+    [licitacoesParaExibir, limitePagina]
+  )
 
   // Log para debug do filtro automático baseado no perfil (após todas as declarações)
   useEffect(() => {
@@ -1616,6 +1990,10 @@ function LicitacoesContent() {
     setFiltrosAplicados(filtrosLimpos)
     setDataFiltro('')
     setMostrarTodasLicitacoes(false) // Desativar modo "mostrar todas"
+    // Limpar filtros persistidos para não restaurar na próxima carga
+    try {
+      if (user?.id) localStorage.removeItem(`licitacoes_filtros_${user.id}`)
+    } catch (e) { /* ignore */ }
     
     // REMOVIDO: Não precisa limpar cache de filtros no localStorage
     // O cache semântico está no IndexedDB e não precisa ser limpo ao limpar filtros
@@ -1670,6 +2048,87 @@ function LicitacoesContent() {
     return count
   }
 
+  const salvarNumerosWhatsApp = async () => {
+    if (!user?.id) return
+    setWhatsAppSlotsSaving(true)
+    try {
+      const numeros = listaNumerosWhatsApp
+        .map((s) => ({ ...s, numero_telefone: (s.numero_telefone || '').replace(/\D/g, '') }))
+        .filter((s) => s.numero_telefone.length >= 10)
+      await supabase.from('usuario_whatsapp_numeros').delete().eq('usuario_id', user.id)
+      if (numeros.length > 0) {
+        const rows = numeros.slice(0, 3).map((s, i) => ({
+          usuario_id: user.id,
+          numero_telefone: s.numero_telefone.startsWith('55') ? s.numero_telefone : `55${s.numero_telefone}`,
+          label: (s.label || '').trim() || null,
+          ordem: i + 1,
+          ativo: true,
+        }))
+        const { error } = await supabase.from('usuario_whatsapp_numeros').insert(rows)
+        if (error) throw error
+      }
+      await refetchNumerosWhatsApp()
+      success('Números salvos.')
+    } catch (err) {
+      console.error(err)
+      showError('Erro ao salvar números: ' + (err.message || err))
+    } finally {
+      setWhatsAppSlotsSaving(false)
+    }
+  }
+
+  const adicionarNumeroWhatsApp = () => {
+    const raw = whatsAppNovoNumero.replace(/\D/g, '')
+    if (raw.length < 10 || listaNumerosWhatsApp.length >= 3) return
+    const num = raw.startsWith('55') ? raw : `55${raw}`
+    if (listaNumerosWhatsApp.some((n) => (n.numero_telefone || '').replace(/\D/g, '') === num.replace(/\D/g, ''))) return
+    setListaNumerosWhatsApp((prev) => [...prev, { numero_telefone: num, label: whatsAppNovoLabel.trim() || '' }])
+    setWhatsAppNovoNumero('')
+    setWhatsAppNovoLabel('')
+  }
+
+  const removerNumeroWhatsApp = (index) => {
+    setListaNumerosWhatsApp((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const salvarAlertaWhatsApp = async () => {
+    if (!user?.id) return
+    if (alertaWhatsAppAtivo && !numerosWhatsApp?.length) {
+      warning('Cadastre pelo menos um número acima antes de ativar o envio automático.')
+      return
+    }
+    setAlertaWhatsAppSaving(true)
+    try {
+      const horario = alertaWhatsAppHorario.trim() || '08:00'
+      const horarioFull = horario.length === 5 ? `${horario}:00` : horario
+      const payload = {
+        usuario_id: user.id,
+        nome_alerta: 'Envio WhatsApp',
+        tipo: 'whatsapp',
+        filtros: filtrosAplicados,
+        horario_verificacao: horarioFull,
+        ativo: alertaWhatsAppAtivo,
+        frequencia: 'diario',
+      }
+      if (alertaWhatsApp?.id) {
+        const { error } = await supabase
+          .from('alertas_usuario')
+          .update({ ativo: payload.ativo, horario_verificacao: payload.horario_verificacao, filtros: payload.filtros, updated_at: new Date().toISOString() })
+          .eq('id', alertaWhatsApp.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('alertas_usuario').insert(payload)
+        if (error) throw error
+      }
+      queryClient.invalidateQueries({ queryKey: ['alerta-whatsapp', user.id] })
+      success('Alerta agendado salvo.')
+    } catch (err) {
+      console.error(err)
+      showError('Erro ao salvar alerta: ' + (err.message || err))
+    } finally {
+      setAlertaWhatsAppSaving(false)
+    }
+  }
 
     return (
     <AppLayout 
@@ -1681,172 +2140,140 @@ function LicitacoesContent() {
         <aside 
           className={`
             ${filtrosSidebarAberta ? 'w-[420px]' : 'w-0'}
-            flex-shrink-0 bg-white border-r border-gray-200
+            flex-shrink-0 bg-gray-50/80 border-r border-border
             transition-all duration-300 ease-in-out
-            overflow-hidden h-full
+            overflow-hidden h-full shadow-sm
           `}
           style={{
             scrollbarWidth: 'thin',
             scrollbarColor: '#e5e7eb transparent'
           }}
         >
-          <div className="w-[420px] h-full overflow-y-auto p-6 space-y-6 filtros-sidebar">
-            {/* Header Filtros */}
-            <div className="flex items-center justify-between mb-6 pb-4 border-b">
-              <div className="flex items-center gap-2">
-                <Filter className="w-6 h-6 text-orange-500" />
+          <div className="w-[420px] h-full overflow-y-auto p-4 space-y-3 filtros-sidebar">
+            {/* Cabeçalho compacto */}
+            <div className="sticky top-0 z-10 -mx-4 px-4 pt-4 pb-2 bg-gray-50/95 backdrop-blur-sm border-b border-border/60">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <h2 className="text-sm font-semibold text-gray-900 tracking-tight">
+                  Filtros
+                </h2>
                 {contarFiltrosAtivos() > 0 && (
-                  <Badge className="bg-orange-500">{contarFiltrosAtivos()}</Badge>
+                  <Badge variant="secondary" className="bg-orange-500/15 text-orange-700 border-0 text-xs">
+                    {contarFiltrosAtivos()}
+                  </Badge>
                 )}
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setFiltrosSidebarAberta(false)}
-              >
-                <X className="w-5 h-5" />
-              </Button>
-            </div>
-                
-            {/* Botões Ação */}
-            <div className="flex flex-col gap-2 mb-6">
+                </div>
               <div className="flex gap-2">
                 <Button
                   variant="outline"
                   onClick={limparFiltros}
-                  className="flex-1"
+                  className="flex-1 rounded-lg border-border h-8 text-xs font-medium"
                 >
-                  <X className="w-4 h-4 mr-2" />
                   Limpar
                 </Button>
                 <Button
                   onClick={handleAplicarFiltros}
-                  className="flex-1 bg-orange-500 hover:bg-orange-600"
+                  className="flex-1 rounded-lg bg-orange-500 hover:bg-orange-600 h-8 text-xs font-medium shadow-sm"
                 >
-                  <Filter className="w-4 h-4 mr-2" />
                   Aplicar
                 </Button>
             </div>
-              {/* Toggle Mostrar Todas */}
-              <div className="flex items-center justify-between p-3 rounded-lg border border-gray-200 bg-gray-50">
-                <div className="flex items-center gap-2">
-                  <Eye className="w-4 h-4 text-blue-400" />
-                  <Label htmlFor="mostrar-todas" className="text-sm font-medium text-gray-700 cursor-pointer">
-                    Mostrar Todas (Sem Filtro)
-                  </Label>
           </div>
+
+            {/* Toggle Mostrar Todas - uma linha; switch sempre visível */}
+            <div className="rounded-lg bg-white border border-border/80 shadow-sm px-3 py-2.5 flex items-center gap-3 min-w-0">
+              <Label htmlFor="mostrar-todas" title="Exibe todas as licitações do banco, sem filtro por setor" className="text-xs font-medium text-gray-800 cursor-pointer min-w-0 flex-1 truncate">
+                Mostrar Todas (sem filtro por setor)
+              </Label>
                 <Switch
                   id="mostrar-todas"
                   checked={mostrarTodasLicitacoes}
                   onCheckedChange={(checked) => {
                     setMostrarTodasLicitacoes(checked)
                     if (checked) {
-                      // NÃO invalidar queries - manter cache do banco
                       console.log('[Filtro] Modo "Mostrar Todas" ATIVADO - usando cache do banco')
                     } else {
-                      // NÃO invalidar queries - usar cache semântico
                       console.log('[Filtro] Modo "Mostrar Todas" DESATIVADO - voltando ao cache semântico')
                     }
                   }}
-                  className="data-[state=checked]:bg-blue-400"
-                />
-            </div>
-          </div>
-
-            {/* Busca Rápida (INCLUIR) */}
-            <div className="mb-4">
-              <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-2">
-                  <Filter className="w-4 h-4 text-orange-500" />
-                  Busca Rápida
-                </Label>
+                className="flex-shrink-0 data-[state=checked]:bg-orange-500"
+              />
+            </div>            {/* Accordion: Busca Rápida + Filtros avançados + Envio WhatsApp */}
+            <Accordion type="multiple" defaultValue={['busca', 'filtros', 'whatsapp']} className="rounded-lg border border-border/80 bg-white shadow-sm overflow-hidden">
+              <AccordionItem value="busca" className="border-0 border-b border-border/60">
+                <AccordionTrigger className="px-3 py-2.5 text-xs font-semibold text-gray-900 hover:no-underline bg-gradient-to-r from-orange-50 to-orange-100/70 hover:from-orange-100/80 hover:to-orange-100/60 [&[data-state=open]]:from-orange-50 [&[data-state=open]]:to-orange-100/70 flex items-center justify-between w-full">
+                  <span className="flex items-center gap-2 text-left flex-1 min-w-0">
+                    <Search className="w-4 h-4 flex-shrink-0 text-black" />
+                    <span className="truncate">Busca Rápida e Excluir palavras</span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="px-3 pb-3 pt-1 space-y-2.5">
+                  <div>
+                    <Label className="text-[11px] font-medium text-gray-600 mb-1 block">Busca Rápida</Label>
               <Input
-                placeholder="Buscar por objeto, órgão, número de controle ou modalidade... (separar múltiplas palavras por vírgula)"
+                      placeholder="Objeto, órgão, número... (vírgula = ou)"
                 value={filtros.buscaObjeto}
                 onChange={(e) => setFiltros({ ...filtros, buscaObjeto: e.target.value })}
-                className="h-10"
+                      className="h-8 rounded-md border-border/80 text-xs"
               />
               {filtros.buscaObjeto && filtros.buscaObjeto.includes(',') && (
-                <p className="text-xs text-gray-500 mt-1">
-                  Buscando por qualquer uma das palavras: {filtros.buscaObjeto.split(',').map(t => t.trim()).filter(t => t).map((termo, idx, arr) => (
-                    <span key={idx}>
-                      <strong>"{termo}"</strong>
-                      {idx < arr.length - 1 && ', '}
-                </span>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Qualquer uma: {filtros.buscaObjeto.split(',').map(t => t.trim()).filter(t => t).map((termo, idx, arr) => (
+                          <span key={idx}><strong>"{termo}"</strong>{idx < arr.length - 1 && ', '}</span>
                   ))}
                 </p>
               )}
             </div>
-
-            {/* Excluir Palavras (EXCLUIR) */}
-            <div className="mb-4">
-              <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-2">
-                <Filter className="w-4 h-4 text-red-500" />
-                Excluir Palavras
-              </Label>
+                  <div>
+                    <Label className="text-[11px] font-medium text-gray-600 mb-1 block">Excluir palavras</Label>
               <Input
-                placeholder="Excluir licitações que contêm... (separar múltiplas palavras por vírgula)"
+                      placeholder="Palavras que não devem aparecer (vírgula)"
                 value={filtros.excluirPalavras}
                 onChange={(e) => setFiltros({ ...filtros, excluirPalavras: e.target.value })}
-                className="h-10"
+                      className="h-8 rounded-md border-border/80 text-xs"
               />
               {filtros.excluirPalavras && (
-                  <p className="text-xs text-gray-500 mt-1">
-                  Mostrando apenas licitações que <strong>NÃO</strong> contêm: {filtros.excluirPalavras.split(',').map(t => t.trim()).filter(t => t).map((termo, idx, arr) => (
-                    <span key={idx}>
-                      <strong>"{termo}"</strong>
-                      {idx < arr.length - 1 && ', '}
-                    </span>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Ocultando: {filtros.excluirPalavras.split(',').map(t => t.trim()).filter(t => t).map((termo, idx, arr) => (
+                          <span key={idx}><strong>"{termo}"</strong>{idx < arr.length - 1 && ', '}</span>
                   ))}
                 </p>
                 )}
               </div>
-                
-            {/* Accordion com Filtros */}
-            <Accordion type="multiple" defaultValue={['filtros']}>
-              
-              {/* FILTROS - Todos os filtros consolidados */}
-              <AccordionItem value="filtros">
-                <AccordionTrigger className="text-sm font-semibold">
-                  <div className="flex items-center gap-2">
-                    <Filter className="w-4 h-4 text-orange-500" />
-                    Filtros
-      </div>
+                </AccordionContent>
+              </AccordionItem>
+              <AccordionItem value="filtros" className="border-0 border-b border-border/60">
+                <AccordionTrigger className="px-3 py-2.5 text-xs font-semibold text-gray-900 hover:no-underline bg-gradient-to-r from-orange-50 to-orange-100/70 hover:from-orange-100/80 hover:to-orange-100/60 [&[data-state=open]]:from-orange-50 [&[data-state=open]]:to-orange-100/70 flex items-center justify-between w-full">
+                  <span className="flex items-center gap-2 text-left flex-1 min-w-0">
+                    <SlidersHorizontal className="w-4 h-4 flex-shrink-0 text-black" />
+                    <span className="truncate">Data, UF, Modalidade e mais</span>
+                  </span>
                 </AccordionTrigger>
-                <AccordionContent className="space-y-4 pt-3">
-                
+                <AccordionContent className="px-3 pb-3 pt-1 space-y-3 border-t border-border/60">
                   {/* Data Publicação */}
                 <div>
-                    <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
-                      <Calendar className="w-4 h-4 text-gray-500" />
-                      Data Publicação
-                  </Label>
-                    <div className="flex gap-2 mb-2">
+                    <Label className="text-[11px] font-medium text-gray-600 mb-1 block">Data Publicação</Label>
+                    <div className="flex gap-1.5">
                   <Input
                         type="date"
                         value={filtros.dataPublicacaoInicio}
                         onChange={(e) => setFiltros({ ...filtros, dataPublicacaoInicio: e.target.value })}
-                        className="h-9 text-xs"
+                        className="h-8 rounded-md text-xs border-border/80"
                       />
                       <Input
                         type="date"
                         value={filtros.dataPublicacaoFim}
                         onChange={(e) => setFiltros({ ...filtros, dataPublicacaoFim: e.target.value })}
-                        className="h-9 text-xs"
+                        className="h-8 rounded-md text-xs border-border/80"
                       />
           </div>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Deixe vazio para mostrar apenas os últimos 7 dias
-                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Vazio = últimos 7 dias</p>
                 </div>
                 
                   {/* UF */}
                 <div>
-                    <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
-                      <MapPin className="w-4 h-4 text-gray-500" />
-                      Estado (UF)
-                    </Label>
+                    <Label className="text-[11px] font-medium text-gray-600 mb-1 block">Estado (UF)</Label>
                     <Select value={filtros.uf || "TODOS"} onValueChange={(value) => setFiltros({ ...filtros, uf: value === "TODOS" ? "" : value })}>
-                      <SelectTrigger className="h-9 text-xs">
+                      <SelectTrigger className="h-8 rounded-md text-xs border-border/80">
                         <SelectValue placeholder="Selecione o estado" />
                       </SelectTrigger>
                       <SelectContent className="max-h-60">
@@ -1860,12 +2287,9 @@ function LicitacoesContent() {
 
                   {/* Modalidade */}
                   <div>
-                    <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-gray-500" />
-                    Modalidade
-                  </Label>
+                    <Label className="text-[11px] font-medium text-gray-600 mb-1 block">Modalidade</Label>
                     <Select value={filtros.modalidade || "TODAS"} onValueChange={(value) => setFiltros({ ...filtros, modalidade: value === "TODAS" ? "" : value })}>
-                      <SelectTrigger className="h-9 text-xs">
+                      <SelectTrigger className="h-8 rounded-md text-xs border-border/80">
                         <SelectValue placeholder="Selecione a modalidade" />
                       </SelectTrigger>
                       <SelectContent className="max-h-60">
@@ -1889,12 +2313,9 @@ function LicitacoesContent() {
 
                   {/* Status do Edital */}
                 <div>
-                    <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-gray-500" />
-                      Status do Edital
-                    </Label>
+                    <Label className="text-[11px] font-medium text-gray-600 mb-1 block">Status do Edital</Label>
                     <Select value={filtros.statusEdital || "TODOS"} onValueChange={(value) => setFiltros({ ...filtros, statusEdital: value === "TODOS" ? "" : value })}>
-                      <SelectTrigger className="h-9 text-xs">
+                      <SelectTrigger className="h-8 rounded-md text-xs border-border/80">
                         <SelectValue placeholder="Selecione o status" />
                     </SelectTrigger>
                       <SelectContent>
@@ -1910,71 +2331,163 @@ function LicitacoesContent() {
 
                   {/* Valor Estimado */}
                 <div>
-                    <Label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-2">
-                      <DollarSign className="w-4 h-4 text-gray-500" />
-                      Valor Estimado
-                  </Label>
-                    <div className="flex gap-2">
+                    <Label className="text-[11px] font-medium text-gray-600 mb-1 block">Valor Estimado</Label>
+                    <div className="flex gap-1.5">
                   <Input
                         type="number"
-                        placeholder="Mínimo"
+                        placeholder="Mín"
                         value={filtros.valorMin}
                         onChange={(e) => setFiltros({ ...filtros, valorMin: e.target.value })}
-                        className="h-9 text-xs"
+                        className="h-8 rounded-md text-xs border-border/80"
                       />
                       <Input
                         type="number"
-                        placeholder="Máximo"
+                        placeholder="Máx"
                         value={filtros.valorMax}
                         onChange={(e) => setFiltros({ ...filtros, valorMax: e.target.value })}
-                        className="h-9 text-xs"
+                        className="h-8 rounded-md text-xs border-border/80"
                   />
                 </div>
           </div>
 
                   {/* Checkboxes */}
-                  <div className="space-y-2">
+                  <div className="space-y-1.5 pt-0.5">
                     <div className="flex items-center gap-2">
                       <Checkbox
                         id="comDocumentos"
                         checked={filtros.comDocumentos}
                         onCheckedChange={(checked) => setFiltros({ ...filtros, comDocumentos: checked })}
+                        className="rounded-md"
                       />
-                      <Label htmlFor="comDocumentos" className="text-xs cursor-pointer flex items-center gap-2">
-                        <Download className="w-3 h-3 text-gray-500" />
-                        Com Documentos
-                      </Label>
+                      <Label htmlFor="comDocumentos" className="text-[11px] cursor-pointer text-gray-700">Com Documentos</Label>
             </div>
                     <div className="flex items-center gap-2">
                       <Checkbox
                         id="comItens"
                         checked={filtros.comItens}
                         onCheckedChange={(checked) => setFiltros({ ...filtros, comItens: checked })}
+                        className="rounded-md"
                       />
-                      <Label htmlFor="comItens" className="text-xs cursor-pointer flex items-center gap-2">
-                        <FileText className="w-3 h-3 text-gray-500" />
-                        Com Itens
-                      </Label>
+                      <Label htmlFor="comItens" className="text-[11px] cursor-pointer text-gray-700">Com Itens</Label>
                     </div>
                     <div className="flex items-center gap-2">
                       <Checkbox
                         id="comValor"
                         checked={filtros.comValor}
                         onCheckedChange={(checked) => setFiltros({ ...filtros, comValor: checked })}
+                        className="rounded-md"
                       />
-                      <Label htmlFor="comValor" className="text-xs cursor-pointer flex items-center gap-2">
-                        <DollarSign className="w-3 h-3 text-gray-500" />
-                        Com Valor Estimado
-                      </Label>
+                      <Label htmlFor="comValor" className="text-[11px] cursor-pointer text-gray-700">Com Valor Estimado</Label>
                     </div>
                   </div>
-
-
               </AccordionContent>
             </AccordionItem>
-
+              <AccordionItem value="whatsapp" className="border-0">
+                <AccordionTrigger className="px-3 py-2.5 text-xs font-semibold text-gray-900 hover:no-underline bg-gradient-to-r from-orange-50 to-orange-100/70 hover:from-orange-100/80 hover:to-orange-100/60 [&[data-state=open]]:from-orange-50 [&[data-state=open]]:to-orange-100/70 flex items-center justify-between w-full">
+                  <span className="flex items-center gap-2 text-left flex-1 min-w-0">
+                    <IconWhatsApp className="w-4 h-4 flex-shrink-0 text-black" />
+                    <span className="truncate">Envio para WhatsApp</span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="px-3 pb-3 pt-1 space-y-2.5 border-t border-border/60">
+                  <p className="text-[11px] text-muted-foreground">
+                    Cadastre até 3 números. O botão Enviar em cada card envia <strong>somente aquela licitação</strong> para os números cadastrados (sem abrir modal).
+                  </p>
+                  <div className="space-y-1.5">
+                    <div className="flex gap-1.5">
+                      <Input
+                        placeholder="DDD + celular"
+                        value={whatsAppNovoNumero}
+                        onChange={(e) => setWhatsAppNovoNumero(maskTelefone(e.target.value))}
+                        className="h-8 rounded-md border-border/80 text-xs flex-1"
+                        maxLength={16}
+                      />
+                      <Input
+                        placeholder="Rótulo"
+                        value={whatsAppNovoLabel}
+                        onChange={(e) => setWhatsAppNovoLabel(e.target.value)}
+                        className="h-8 rounded-md border-border/80 text-[11px] w-24"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 rounded-lg border-border text-xs shrink-0"
+                        onClick={adicionarNumeroWhatsApp}
+                        disabled={listaNumerosWhatsApp.length >= 3 || whatsAppNovoNumero.replace(/\D/g, '').length < 10}
+                      >
+                        Adicionar
+                      </Button>
+                    </div>
+                    {listaNumerosWhatsApp.length > 0 && (
+                      <ul className="space-y-1 mt-2">
+                        {listaNumerosWhatsApp.map((item, index) => {
+                          const num = (item.numero_telefone || '').replace(/\D/g, '')
+                          const display = num.length >= 10 ? maskTelefone(item.numero_telefone) : item.numero_telefone
+                          return (
+                            <li key={index} className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md bg-gray-50 border border-border/60 text-[11px]">
+                              <span className="truncate flex-1 min-w-0">
+                                {item.label ? `${item.label}: ` : ''}{display}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => removerNumeroWhatsApp(index)}
+                                className="p-1 rounded hover:bg-red-100 text-red-600 shrink-0"
+                                title="Remover número"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    className="w-full rounded-lg bg-green-600 hover:bg-green-700 h-8 text-xs"
+                    onClick={salvarNumerosWhatsApp}
+                    disabled={whatsAppSlotsSaving || listaNumerosWhatsApp.length === 0}
+                  >
+                    {whatsAppSlotsSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Salvar números'}
+                  </Button>
+                  <div className="border-t border-border/60 pt-2.5 mt-2.5 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label className="text-[11px] font-medium text-gray-700">Enviar automaticamente no horário</Label>
+                      <Switch
+                        checked={alertaWhatsAppAtivo}
+                        onCheckedChange={setAlertaWhatsAppAtivo}
+                        className="data-[state=checked]:bg-green-600 flex-shrink-0"
+                      />
+                    </div>
+                    {alertaWhatsAppAtivo && (
+                      <div className="flex gap-2 items-center">
+                        <Input
+                          type="time"
+                          value={alertaWhatsAppHorario}
+                          onChange={(e) => setAlertaWhatsAppHorario(e.target.value || '08:00')}
+                          className="h-8 rounded-md border-border/80 text-xs flex-1"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs rounded-lg border-border"
+                          onClick={salvarAlertaWhatsApp}
+                          disabled={alertaWhatsAppSaving}
+                        >
+                          {alertaWhatsAppSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Salvar'}
+                        </Button>
+                      </div>
+                    )}
+                    {alertaWhatsAppAtivo && (
+                      <p className="text-[10px] text-muted-foreground">
+                        Diferente do botão no card: um job roda no <strong>minuto configurado</strong> (ex.: 10:01), usa os <strong>filtros salvos</strong> desta tela, busca licitações dos <strong>últimos 2 dias</strong> (até 50) e envia cada uma para cada número cadastrado.
+                      </p>
+                    )}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
           </Accordion>
-
               </div>
         </aside>
 
@@ -2060,8 +2573,8 @@ function LicitacoesContent() {
             )}
                         </div>
 
-          {/* Loading / Filtro em andamento – apenas skeleton cards */}
-          {(isLoading || (processandoFiltro && licitacoesFinais.length === 0)) && (
+          {/* Loading / Filtro em andamento – skeleton cards (garante visibilidade durante todo o carregamento) */}
+          {((isLoading || isFetching || processandoFiltro) && licitacoesFinais.length === 0) && (
             <LicitacaoCardSkeletonList count={processandoFiltro ? 12 : 8} />
           )}
 
@@ -2080,11 +2593,13 @@ function LicitacoesContent() {
             </Card>
           )}
 
-          {/* Resultados - Mostrar mesmo durante processamento final */}
-          {!isLoading && !error && (
+          {/* Resultados - Ocultar durante loading para evitar "0 licitações" antes do skeleton */}
+          {!error && !((isLoading || isFetching || processandoFiltro) && licitacoesFinais.length === 0) && (
             <div className="mb-4">
               <p className="text-sm text-gray-600">
-                {licitacoesFinais.length} {licitacoesFinais.length === 1 ? 'licitação encontrada' : 'licitações encontradas'}
+                {licitacoesParaExibir.length === licitacoesPagina.length
+                  ? licitacoesParaExibir.length
+                  : `${licitacoesPagina.length} de ${licitacoesParaExibir.length}`} {licitacoesParaExibir.length === 1 ? 'licitação encontrada' : 'licitações encontradas'}
                 {perfilUsuario?.setores_atividades?.length > 0 && (
                   <span className="text-xs text-gray-500 ml-2">
                     (filtradas por setores e estados cadastrados)
@@ -2094,19 +2609,19 @@ function LicitacoesContent() {
               {(filtros.buscaObjeto || filtros.excluirPalavras || filtros.uf || filtros.modalidade || filtros.statusEdital || 
                 filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim || filtros.valorMin || 
                 filtros.valorMax || filtros.comDocumentos || 
-                filtros.comItens || filtros.comValor || dataFiltro) && licitacoesFinais.length > 100 && (
+                filtros.comItens || filtros.comValor || dataFiltro) && licitacoesParaExibir.length > 100 && (
                 <p className="text-xs text-orange-600 mt-1">
-                  ⚠️ Muitos resultados encontrados ({licitacoesFinais.length}). Considere adicionar mais filtros para refinar a busca.
+                  ⚠️ Muitos resultados encontrados ({licitacoesParaExibir.length}). Considere adicionar mais filtros para refinar a busca.
                 </p>
               )}
             </div>
           )}
 
           {/* Cards de Licitações */}
-          {!isLoading && !(processandoFiltro && licitacoesFinais.length === 0) && (
+          {!((isLoading || isFetching || processandoFiltro) && licitacoesFinais.length === 0) && (
               <div className="space-y-4">
-              {licitacoesFinais.length > 0 ? (
-                licitacoesFinais.map((licitacao) => {
+              {licitacoesParaExibir.length > 0 ? (
+                licitacoesPagina.map((licitacao) => {
                   return (
             <Card 
               key={licitacao.id} 
@@ -2116,8 +2631,34 @@ function LicitacoesContent() {
                 {/* Header do Card */}
                 <div className="flex items-start justify-between mb-4">
                               <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-white border flex items-center justify-center">
-                      <FileText className="w-4 h-4 text-gray-600" />
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (numerosWhatsApp?.length > 0) {
+                            enviarParaTodosNumerosCadastrados(licitacao)
+                          } else {
+                            setWhatsAppModalLicitacao(licitacao)
+                            setWhatsAppNumero('')
+                          }
+                        }}
+                        disabled={whatsAppEnviando}
+                        className="w-8 h-8 rounded-full bg-white border flex items-center justify-center hover:bg-gray-50 hover:border-gray-300 transition-colors disabled:opacity-50"
+                        title={numerosWhatsApp?.length > 0 ? `Enviar só esta licitação para ${numerosWhatsApp.length} número(s) cadastrado(s)` : 'Enviar esta licitação para WhatsApp'}
+                      >
+                        {whatsAppEnviando ? <Loader2 className="w-4 h-4 animate-spin text-gray-600" /> : <Send className="w-4 h-4 text-gray-600" />}
+                      </button>
+                      {numerosWhatsApp?.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setWhatsAppModalLicitacao(licitacao); setWhatsAppNumero(''); }}
+                          className="w-7 h-7 rounded-full bg-white border flex items-center justify-center hover:bg-gray-50 hover:border-gray-300 transition-colors text-[10px] font-medium text-gray-500"
+                          title="Enviar para outro número"
+                        >
+                          +1
+                        </button>
+                      )}
                               </div>
                     <button
                       onClick={(e) => handleFavoritar(e, licitacao)}
@@ -2784,28 +3325,38 @@ function LicitacoesContent() {
             </div>
           )}
 
-          {/* Botão Carregar Mais (apenas sem filtros) */}
-          {!isLoading && !error && !processandoFiltro && licitacoesFinais.length >= limitePagina && 
-           !(filtros.buscaObjeto || filtros.excluirPalavras || filtros.uf || filtros.modalidade || filtros.statusEdital || 
-             filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim || filtros.valorMin || 
-             filtros.valorMax || filtros.comDocumentos || 
-             filtros.comItens || filtros.comValor || dataFiltro) && (
+          {/* Botão Carregar Mais: só renderiza até MAX_LICITACOES_EXIBIR para não travar a UI */}
+          {!isLoading && !error && !processandoFiltro && licitacoesParaExibir.length > limitePagina && limitePagina < MAX_LICITACOES_EXIBIR && (
             <div className="text-center mt-8">
               <Button
-                onClick={() => setLimitePagina(prev => prev + 50)}
+                onClick={() => setLimitePagina(prev => Math.min(prev + 50, MAX_LICITACOES_EXIBIR))}
                 className="bg-orange-500 hover:bg-orange-600"
                 size="lg"
               >
                 Carregar Mais Licitações
               </Button>
               <p className="text-xs text-gray-500 mt-2">
-                Mostrando {licitacoesFinais.length} licitações
+                Exibindo {licitacoesPagina.length} de {licitacoesParaExibir.length}. Use filtros para refinar.
               </p>
             </div>
+          )}
+          {!isLoading && !error && licitacoesParaExibir.length > MAX_LICITACOES_EXIBIR && limitePagina >= MAX_LICITACOES_EXIBIR && (
+            <p className="text-center text-sm text-amber-700 mt-4">
+              Limite de exibição ({MAX_LICITACOES_EXIBIR} licitações). Use os filtros ao lado para refinar a busca.
+            </p>
           )}
               
         </div>
       </div>
+
+      {/* Modal Enviar para WhatsApp (estado local = não trava ao digitar) */}
+      <ModalEnviarWhatsApp
+        open={!!whatsAppModalLicitacao}
+        licitacao={whatsAppModalLicitacao}
+        onClose={() => { setWhatsAppModalLicitacao(null); setWhatsAppNumero(''); }}
+        onEnviar={enviarParaWhatsApp}
+        enviando={whatsAppEnviando}
+      />
 
       {/* Visualizador de Documento com Chat Integrado */}
       <VisualizadorDocumento

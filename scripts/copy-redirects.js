@@ -1,5 +1,5 @@
 /**
- * Script para copiar _redirects para dist após o build
+ * Script para copiar _redirects e _headers para dist após o build
  * Necessário para Render Static Site funcionar corretamente com rotas SPA
  */
 
@@ -11,18 +11,20 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const rootDir = join(__dirname, '..')
 
-const sourceFile = join(rootDir, 'public', '_redirects')
 const destDir = join(rootDir, 'dist')
-const destFile = join(destDir, '_redirects')
+
+// Criar pasta dist se não existir
+if (!existsSync(destDir)) {
+  mkdirSync(destDir, { recursive: true })
+}
+
+// Copiar _redirects
+const redirectsSource = join(rootDir, 'public', '_redirects')
+const redirectsDest = join(destDir, '_redirects')
 
 try {
-  if (existsSync(sourceFile)) {
-    // Criar pasta dist se não existir
-    if (!existsSync(destDir)) {
-      mkdirSync(destDir, { recursive: true })
-    }
-    
-    copyFileSync(sourceFile, destFile)
+  if (existsSync(redirectsSource)) {
+    copyFileSync(redirectsSource, redirectsDest)
     console.log('✅ Arquivo _redirects copiado para dist/')
   } else {
     console.warn('⚠️ Arquivo _redirects não encontrado em public/')
@@ -32,3 +34,17 @@ try {
   process.exit(1)
 }
 
+// Copiar _headers
+const headersSource = join(rootDir, 'public', '_headers')
+const headersDest = join(destDir, '_headers')
+
+try {
+  if (existsSync(headersSource)) {
+    copyFileSync(headersSource, headersDest)
+    console.log('✅ Arquivo _headers copiado para dist/')
+  } else {
+    console.log('ℹ️ Arquivo _headers não encontrado (opcional)')
+  }
+} catch (error) {
+  console.warn('⚠️ Erro ao copiar _headers:', error.message)
+}

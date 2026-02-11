@@ -18,7 +18,6 @@ import { useUserStore } from '@/store/userStore'
 import { 
   FileText, 
   Star, 
-  Bell, 
   BarChart3, 
   User, 
   Users,
@@ -49,14 +48,6 @@ function ModulosContent() {
       descricao: 'Suas licitações favoritadas',
       icone: Star,
       rota: '/favoritos',
-      disponivel: true
-    },
-    {
-      id: 'alertas',
-      titulo: 'Alertas',
-      descricao: 'Configure alertas personalizados',
-      icone: Bell,
-      rota: '/alertas',
       disponivel: true
     },
     {

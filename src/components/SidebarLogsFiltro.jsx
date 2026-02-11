@@ -1,5 +1,4 @@
 import { useFiltroContext } from '@/contexts/FiltroContext'
-import { Progress } from '@/components/ui/progress'
 import { CheckCircle2, Loader2, Database, Filter, Sparkles } from 'lucide-react'
 
 const ETAPAS = [
@@ -34,28 +33,7 @@ export function SidebarLogsFiltro({ aberto, onFechar }) {
         role="dialog"
         aria-label="Andamento do filtro"
       >
-        <div className="flex-1 overflow-y-auto p-6 space-y-8">
-          {/* Barra de progresso */}
-          <div className="space-y-2">
-            <div className="flex justify-between items-baseline">
-              <span className="text-sm font-medium text-gray-600">Progresso</span>
-              <span className="text-2xl font-bold text-orange-600 tabular-nums">
-                {Math.round(progressoPercentual)}%
-              </span>
-            </div>
-            <Progress value={progressoPercentual} className="h-3 bg-gray-100 rounded-full" />
-          </div>
-
-          {/* Mensagem atual */}
-          {mensagemProgresso && (
-            <div className="rounded-xl bg-gray-50 px-4 py-3 border border-gray-100">
-              <p className="text-sm text-gray-700 leading-relaxed" title={mensagemProgresso}>
-                {mensagemProgresso}
-              </p>
-            </div>
-          )}
-
-          {/* Steps melhorados */}
+        <div className="flex-1 overflow-y-auto p-6">
           <div>
             <span className="text-sm font-medium text-gray-600 mb-4 block">Etapas</span>
             <ul className="relative space-y-0">
@@ -64,9 +42,9 @@ export function SidebarLogsFiltro({ aberto, onFechar }) {
                 const concluido = i < etapaAtual || (i === etapaAtual && progressoPercentual >= 100)
                 const atual = i === etapaAtual && processandoFiltro
                 const pendente = i > etapaAtual
+                const percentNaEtapa = atual && processandoFiltro ? Math.round(progressoPercentual) : null
                 return (
                   <li key={etapa.label} className="relative flex gap-4 pb-8 last:pb-0">
-                    {/* Linha conectora (exceto no último) */}
                     {i < ETAPAS.length - 1 && (
                       <div
                         className={`absolute left-[11px] top-8 bottom-0 w-0.5 rounded-full transition-colors ${
@@ -91,7 +69,10 @@ export function SidebarLogsFiltro({ aberto, onFechar }) {
                         <Icon className="w-4 h-4" />
                       )}
                     </div>
-                    <div className="flex-1 min-w-0 pt-0.5">
+                    <div
+                      className="flex-1 min-w-0 pt-0.5 flex items-baseline justify-between gap-2"
+                      title={atual && mensagemProgresso ? mensagemProgresso : undefined}
+                    >
                       <p
                         className={`text-sm font-medium ${
                           concluido ? 'text-green-700' : atual ? 'text-orange-700' : 'text-gray-500'
@@ -99,6 +80,11 @@ export function SidebarLogsFiltro({ aberto, onFechar }) {
                       >
                         {etapa.label}
                       </p>
+                      {percentNaEtapa != null && (
+                        <span className="text-sm font-semibold tabular-nums shrink-0 text-orange-600">
+                          {percentNaEtapa}%
+                        </span>
+                      )}
                     </div>
                   </li>
                 )

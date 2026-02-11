@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { PublicLayout } from '@/components/layout/PublicLayout'
 import { PublicRoute } from '@/components/PublicRoute'
-import { Search, Bell, Star, TrendingUp, Clock, Shield, Zap, FileText, Filter, CheckCircle, ArrowRight, Building2, MapPin } from 'lucide-react'
+import { Search, Star, TrendingUp, Clock, Shield, Zap, FileText, Filter, CheckCircle, ArrowRight, Building2, MapPin } from 'lucide-react'
 
 export function LandingPage() {
   return (
@@ -27,7 +27,7 @@ export function LandingPage() {
                 </h1>
                 
                 <p className="text-lg md:text-xl text-gray-600 mb-8 leading-relaxed">
-                  Encontre oportunidades, receba alertas automáticos e gerencie seus processos licitatórios com eficiência e praticidade.
+                  Encontre oportunidades e gerencie seus processos licitatórios com eficiência e praticidade.
                 </p>
                 
                 <div className="flex flex-col sm:flex-row gap-4 mb-12">
@@ -157,18 +157,6 @@ export function LandingPage() {
 
               <Card className="border-2 hover:border-orange-200 hover:shadow-xl transition-all duration-300">
                 <CardHeader>
-                  <div className="w-14 h-14 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
-                    <Bell className="w-7 h-7 text-blue-500" />
-                  </div>
-                  <CardTitle className="text-xl">Alertas Automáticos</CardTitle>
-                  <CardDescription className="text-base">
-                    Receba notificações em tempo real quando novas oportunidades corresponderem ao seu perfil.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-
-              <Card className="border-2 hover:border-orange-200 hover:shadow-xl transition-all duration-300">
-                <CardHeader>
                   <div className="w-14 h-14 bg-yellow-100 rounded-lg flex items-center justify-center mb-4">
                     <Star className="w-7 h-7 text-yellow-500" />
                   </div>
@@ -249,9 +237,9 @@ export function LandingPage() {
                   <div className="w-16 h-16 bg-orange-500 text-white rounded-full flex items-center justify-center text-2xl font-bold mb-4">
                     2
                   </div>
-                  <h3 className="text-xl font-semibold text-gray-900 mb-3">Configure Alertas</h3>
+                  <h3 className="text-xl font-semibold text-gray-900 mb-3">Configure seu perfil</h3>
                   <p className="text-gray-600">
-                    Defina seus critérios e receba notificações de novas oportunidades.
+                    Defina estados, setores e receba licitações relevantes. Envie por WhatsApp com um clique.
                   </p>
                 </div>
                 <div className="hidden md:block absolute top-8 -right-4 w-8 h-0.5 bg-orange-300"></div>
@@ -304,7 +292,7 @@ export function LandingPage() {
                     <div>
                       <h3 className="font-semibold text-gray-900 mb-1">Não Perca Oportunidades</h3>
                       <p className="text-gray-600">
-                        Alertas automáticos garantem que você seja notificado de novas licitações relevantes.
+                        Filtros por perfil e envio por WhatsApp garantem que você veja e compartilhe licitações relevantes.
                       </p>
                     </div>
                   </div>
@@ -349,7 +337,7 @@ export function LandingPage() {
                     </li>
                     <li className="flex items-start gap-3">
                       <CheckCircle className="w-6 h-6 flex-shrink-0 mt-0.5" />
-                      <span>Alertas personalizados por email</span>
+                      <span>Envio de licitações por WhatsApp</span>
                     </li>
                     <li className="flex items-start gap-3">
                       <CheckCircle className="w-6 h-6 flex-shrink-0 mt-0.5" />

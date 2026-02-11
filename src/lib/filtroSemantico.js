@@ -117,19 +117,54 @@ function extrairPalavrasChave(texto) {
 }
 
 /**
- * Mapeamento de sinônimos MÍNIMO (fallback apenas)
- * Usado apenas quando tabela do banco não está disponível
- * A fonte principal de sinônimos deve ser a tabela `sinonimos` do banco
- * 
- * NOTA: Este objeto deve ser mantido mínimo. Para sinônimos completos,
- * use a tabela `sinonimos` do banco de dados que pode ser gerenciada
- * dinamicamente e contém muito mais termos.
+ * Sinônimos por setor/área (fallback + banco).
+ * Usado para expandir vocabulário e correspondência (menos rígido).
+ * O banco (tabela sinonimos) complementa e sobrescreve quando disponível.
  */
 const SINONIMOS_BASE_MINIMO = {
-  'construção': ['construcao', 'obra', 'edificação', 'edificacao'],
-  'engenharia': ['engenheiro', 'projeto', 'projetos'],
-  'serviço': ['servico', 'servicos', 'prestação', 'prestacao'],
-  'material': ['materiais', 'equipamento', 'equipamentos'],
+  // Construção e obras
+  'construção': ['construcao', 'obra', 'obras', 'edificação', 'edificacao', 'pavimentação', 'pavimentacao', 'demolição', 'demolicao'],
+  'engenharia': ['engenheiro', 'projeto', 'projetos', 'fiscalização', 'fiscalizacao', 'topografia', 'geotecnia'],
+  'material': ['materiais', 'equipamento', 'equipamentos', 'insumos'],
+  'saneamento': ['esgoto', 'drenagem', 'água', 'agua'],
+  'pavimentação': ['pavimentacao', 'asfalto', 'calçamento', 'calçamento'],
+  // Serviços
+  'serviço': ['servico', 'servicos', 'prestação', 'prestacao', 'execução', 'execucao'],
+  'manutenção': ['manutencao', 'reparo', 'reparos', 'conservação', 'conservacao'],
+  // Saúde
+  'saúde': ['saude', 'hospitalar', 'hospital', 'médico', 'medico', 'clínica', 'clinica'],
+  'medicamento': ['medicamentos', 'remédio', 'remedios', 'fármaco', 'farmaco'],
+  'hospitalar': ['hospital', 'clínica', 'clinica', 'ambulatório', 'ambulatorio', 'pronto socorro'],
+  'laboratorial': ['laboratório', 'laboratorio', 'exame', 'análise', 'analise', 'diagnóstico', 'diagnostico'],
+  'vacina': ['vacinas', 'imunização', 'imunizacao'],
+  'dieta': ['dietas', 'nutrição', 'nutricao', 'enteral', 'parenteral'],
+  'oxigênio': ['oxigenio', 'oxigênio medicinal', 'oxigenio medicinal', 'medicinal'],
+  // Alimentação
+  'alimentação': ['alimentacao', 'comida', 'alimento', 'alimentos', 'nutrição', 'nutricao', 'refeição', 'refeicao', 'merenda'],
+  'cesta': ['cestas', 'cesta básica', 'cesta basica', 'cestas básicas', 'cestas basicas', 'kit alimentar', 'doação', 'doacao'],
+  'refeição': ['refeicao', 'refeições', 'refeicoes', 'merenda', 'almoço', 'almoco', 'jantar'],
+  'gêneros': ['generos', 'gêneros alimentícios', 'generos alimenticios', 'hortifruti', 'hortifrutigranjeiros'],
+  'bebida': ['bebidas', 'laticínios', 'laticinios'],
+  'buffet': ['buffets', 'catering', 'refeitório', 'refeitorio', 'copa'],
+  // Informática
+  'informática': ['informatica', 'ti', 'tecnologia', 'tecnologia da informação', 'tecnologia da informacao'],
+  'computador': ['computadores', 'notebook', 'desktop', 'microcomputador'],
+  'software': ['softwares', 'sistema', 'aplicativo', 'aplicação', 'aplicacao', 'licença', 'licenca'],
+  'hardware': ['equipamentos informática', 'servidor', 'rede'],
+  // Transporte
+  'transporte': ['fretamento', 'frota', 'veículo', 'veiculo', 'locação veículos', 'locacao veiculos'],
+  'veículo': ['veiculo', 'veículos', 'veiculos', 'automóvel', 'automovel', 'ônibus', 'onibus', 'caminhão', 'caminhao'],
+  'passagem': ['passagens', 'bilhete', 'bilhetes'],
+  // Educação
+  'educação': ['educacao', 'escolar', 'pedagógico', 'pedagogico', 'capacitação', 'capacitacao', 'treinamento', 'curso', 'cursos'],
+  // Financeiro
+  'seguro': ['seguros', 'apólice', 'apolice', 'cobertura'],
+  'contabilidade': ['contábil', 'contabil', 'auditoria', 'consultoria contábil'],
+  // Eventos
+  'evento': ['eventos', 'cerimonial', 'organização eventos', 'organizacao eventos', 'shows', 'palestras'],
+  // Outros
+  'limpeza': ['higienização', 'higienizacao', 'conservação', 'conservacao', 'asepsia'],
+  'segurança': ['seguranca', 'vigilância', 'vigilancia', 'proteção', 'protecao', 'portaria'],
 }
 
 /**
@@ -431,37 +466,45 @@ function extrairPalavrasContexto(setoresAtividades) {
 
 /**
  * Constrói um vocabulário completo do setor baseado nos subsetores cadastrados
- * Este vocabulário é usado para verificar correspondência semântica
+ * Expandido com sinônimos para correspondência menos rígida (mais licitações compatíveis)
  * @param {Array} setoresAtividades - Setores e subsetores da empresa
- * @returns {Set} - Vocabulário completo do setor (palavras únicas)
+ * @param {Object} sinonimosPersonalizados - Sinônimos personalizados (opcional)
+ * @param {Object} sinonimosBanco - Sinônimos do banco (opcional)
+ * @returns {Set} - Vocabulário completo do setor (palavras + sinônimos)
  */
-function construirVocabularioSetor(setoresAtividades) {
+function construirVocabularioSetor(setoresAtividades, sinonimosPersonalizados = {}, sinonimosBanco = {}) {
   if (!setoresAtividades || !Array.isArray(setoresAtividades)) {
     return new Set()
   }
   
-  const vocabulario = new Set()
+  const termosColetados = []
   
   setoresAtividades.forEach(setor => {
-    // Adicionar nome do setor completo
+    // Nome do setor completo
     if (setor.setor) {
-      vocabulario.add(normalizarTexto(setor.setor))
+      termosColetados.push(normalizarTexto(setor.setor))
       const palavrasSetor = extrairPalavrasChave(setor.setor)
-      palavrasSetor.forEach(p => vocabulario.add(p))
+      palavrasSetor.forEach(p => termosColetados.push(normalizarTexto(p)))
     }
-    
-    // Adicionar subsetores completos e suas palavras
+    // Subsetores completos e suas palavras
     if (setor.subsetores && Array.isArray(setor.subsetores)) {
       setor.subsetores.forEach(subsetor => {
         if (subsetor) {
-          // Adicionar subsetor completo
-          vocabulario.add(normalizarTexto(subsetor))
-          // Adicionar palavras do subsetor
+          termosColetados.push(normalizarTexto(subsetor))
           const palavras = extrairPalavrasChave(subsetor)
-          palavras.forEach(p => vocabulario.add(p))
+          palavras.forEach(p => termosColetados.push(normalizarTexto(p)))
         }
       })
     }
+  })
+  
+  // Expandir cada termo com sinônimos (fallback + banco + personalizados)
+  const vocabulario = new Set()
+  const termosUnicos = [...new Set(termosColetados)]
+  termosUnicos.forEach(termo => {
+    vocabulario.add(termo)
+    const expandidos = expandirComSinonimos([termo], sinonimosPersonalizados, sinonimosBanco)
+    expandidos.forEach(e => vocabulario.add(e))
   })
   
   return vocabulario
@@ -520,6 +563,7 @@ function correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor) {
  * @param {Object} sinonimosBanco 
  * @param {Array} setoresAtividades 
  * @param {Object} [palavrasFortesPorSetor] - Palavras fortes por setor do banco (dinâmico). Formato: { setor_nome: [palavra1, ...] }
+ * @param {Object} [palavrasIncompatibilidadePorSetor] - Palavras incompatíveis por setor do banco. Formato: { setor_nome: [palavra1, ...] }. Se o objeto contiver uma delas, rejeita para esse setor.
  */
 export function correspondeAtividades(
   licitacao, 
@@ -527,15 +571,18 @@ export function correspondeAtividades(
   sinonimosPersonalizados = {},
   sinonimosBanco = {},
   setoresAtividades = [],
-  palavrasFortesPorSetor = {}
+  palavrasFortesPorSetor = {},
+  palavrasIncompatibilidadePorSetor = {}
 ) {
  
   const palavrasChaveFormatadas = palavrasChave.todas || palavrasChave.principais || (Array.isArray(palavrasChave) ? palavrasChave : [])
   const palavrasPrincipais = palavrasChave.principais || []
   const palavrasSecundarias = palavrasChave.secundarias || []
   
+  // Sem palavras-chave: se a empresa tem setores cadastrados, não mostrar (evitar mostrar editais de outras áreas)
   if (!palavrasChaveFormatadas || palavrasChaveFormatadas.length === 0) {
-    return true 
+    if (setoresAtividades?.length > 0) return false
+    return true
   }
   
   const objetoCompleto = obterObjetoCompleto(licitacao)
@@ -547,34 +594,117 @@ export function correspondeAtividades(
   const palavrasObjeto = objetoNormalizado.split(/\s+/).filter(p => p.length >= 4)
   const palavrasChaveObjeto = extrairPalavrasChave(objetoCompleto)
   const palavrasContexto = extrairPalavrasContexto(setoresAtividades)
-  const vocabularioSetor = construirVocabularioSetor(setoresAtividades)
+  const vocabularioSetor = construirVocabularioSetor(setoresAtividades, sinonimosPersonalizados, sinonimosBanco)
   
-  // VERIFICAÇÃO PRÉVIA: Palavras de exclusão por setor (rejeitar imediatamente se incompatível)
-  // Isso evita processar licitações claramente incompatíveis (ex: "material escolar" para empresa de TI)
-  // e licitações de CONSTRUÇÃO aparecendo para empresas de SAÚDE (e vice-versa)
-  const palavrasIncompatibilidade = {
-    'informatica': ['escolar', 'escolares', 'material', 'materiais', 'kit', 'kits', 'alimento', 'comida', 'vestuario', 'vestuário', 'roupa', 'uniforme'],
-    'informática': ['escolar', 'escolares', 'material', 'materiais', 'kit', 'kits', 'alimento', 'comida', 'vestuario', 'vestuário', 'roupa', 'uniforme'],
-    'servicos': ['material', 'materiais', 'equipamento', 'hardware', 'veiculo', 'veículo', 'automovel', 'automóvel'],
-    'serviços': ['material', 'materiais', 'equipamento', 'hardware', 'veiculo', 'veículo', 'automovel', 'automóvel'],
-    // Saúde: rejeitar licitações claramente de construção/engenharia civil e de manutenção de veículos
-    // (objeto deve ser sobre medicamentos, material hospitalar, serviços médicos etc., não "revisão de veículo da Secretaria de Saúde")
-    'saude': [
-      'construção', 'construcao', 'construcoes', 'obra', 'obras', 'edificação', 'edificacao', 'edificacoes',
-      'pavimentação', 'pavimentacao', 'pavimentacoes', 'terraplanagem', 'demolição', 'demolicao', 'demolicoes',
-      'asfáltico', 'asfaltico', 'asfalticos', 'concreto', 'drenagem', 'viaduto', 'viadutos', 'tunel', 'tuneis',
-      'passarela', 'passarelas', 'contenção', 'contencao', 'arrimo', 'saneamento', 'esgoto', 'rede de agua',
-      'rede de gas', 'reformas', 'obras de arte', 'sinalização viária', 'construção civil', 'obras civis',
-      'revisão preventiva', 'revisao preventiva', 'revisão de veículo', 'revisao de veiculo', 'manutenção de veículo',
-      'manutencao de veiculo', 'manutenção veicular', 'veículo', 'veiculos', 'veiculo', 'automóvel', 'automovel',
-      'frota de veículos', 'placa ', 'mecânica automotiva', 'mecanica automotiva', 'oficina mecânica'
+  // VERIFICAÇÃO PRÉVIA: Palavras de exclusão por setor (rejeitar imediatamente se incompatível).
+  // Populado com tudo que NÃO tem a ver com cada setor (base: setores e subsetores do sistema).
+  // Rejeitar: objeto do edital contém uma dessas palavras = não mostrar (só compatíveis).
+  const FALLBACK_INCOMPATIBILIDADE = {
+    // Saúde: rejeitar tudo que não é saúde (obras, frota, eventos, publicidade, ar condicionado, etc.)
+    saude: [
+      'publicidade', 'diario oficial', 'publicacao de atos', 'servicos de publicidade', 'revisao de veiculo', 'manutencao de veiculo',
+      'veiculo', 'automovel', 'construcao', 'obra', 'concreto', 'saneamento', 'esgoto', 'pavimentacao', 'terraplanagem', 'demolicao', 'drenagem', 'viaduto', 'tunel',
+      'diesel', 'oleo diesel', 'arla', 'frota municipal', 'abastecimento da frota', 'combustivel', 'combustiveis',
+      'eventos', 'shows', 'sonorizacao', 'iluminacao', 'promocao de eventos', 'organizacao de shows', 'equipamentos de som',
+      'fardamento escolar', 'fardamento', 'camiseta', 'camisetas', 'tenis de uso escolar', 'tenis escolar', 'uso escolar',
+      'vestuario escolar', 'uniforme escolar', 'material escolar', 'kit escolar', 'padronizadas',
+      'passagem aerea', 'passagens aereas', 'bilhete aereo', 'seguro', 'seguros', 'apolice', 'cartao corporativo', 'cartao de pagamento',
+      'locacao de imovel', 'aluguel de imovel', 'imovel publico', 'pedagio', 'concessionaria de pedagio', 'leilao', 'leilao de veiculos',
+      'ar condicionado', 'manutencao de ar condicionado', 'climatizacao', 'condicionamento de ar', 'hvac',
+      'limpeza predial', 'conservacao predial', 'vigilancia patrimonial', 'seguranca patrimonial', 'portaria',
+      'jardinagem', 'servicos de jardinagem', 'podas', 'servicos de podas', 'impressao', 'servicos de impressao', 'marketing', 'servicos de marketing',
+      'carga e descarga', 'armazenagem', 'lavanderia', 'dedetizacao', 'desinfecao', 'arquitetura', 'ferramentas', 'petrobras', 'solda', 'servicos de solda',
+      'transporte aereo', 'transporte rodoviario', 'transporte nautico', 'ferroviarios', 'calibracao', 'varricao', 'serralheria', 'pintura predial',
+      'servicos de rh', 'contabilidade', 'servicos de contabilidade', 'eletrica predial', 'hidraulica predial', 'revisao preventiva',
+      'transcricao', 'digitalizacao', 'digitacao', 'sistema de vales', 'coleta de lixo', 'assessorias', 'inspecao', 'certificacao',
+      'concessoes', 'exploracao', 'advocacia', 'servicos de advocacia', 'call center', 'telemarketing', 'design grafico',
+      'agropecuaria', 'fotografia', 'funeraria', 'embalagens', 'faturamento', 'cobranca', 'traducao', 'montagem de moveis',
+      'carpintaria', 'mobiliarios', 'desentupimento', 'telefonia', 'locacao de equipamentos', 'alvenaria', 'mineracao', 'pesca', 'textil',
+      'infancia', 'playground', 'fornecimento de energia', 'esportivos', 'musica', 'hospedagem', 'grafica', 'escritorio',
     ],
-    // Engenharia / Construção: rejeitar licitações claramente só de saúde (medicamento, hospitalar)
-    'engenharia': ['medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'radiológico', 'dieta enteral', 'parenteral'],
-    'construção': ['medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'radiológico', 'dieta enteral', 'parenteral'],
-    'construcao': ['medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'radiológico', 'dieta enteral', 'parenteral']
+    // Alimentação: rejeitar tudo que não é alimentação (medicamento, obras, TI, eventos, ar condicionado, etc.)
+    alimentacao: [
+      'diesel', 'oleo diesel', 'arla', 'frota municipal', 'abastecimento da frota', 'combustivel', 'combustiveis',
+      'veiculo', 'automovel', 'frota', 'construcao', 'obra', 'concreto', 'saneamento', 'pavimentacao', 'demolicao',
+      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral', 'proteses', 'orteses',
+      'eventos', 'shows', 'sonorizacao', 'iluminacao', 'promocao de eventos', 'organizacao de shows', 'software', 'hardware', 'informatica', 'ti',
+      'fardamento escolar', 'fardamento', 'camiseta', 'camisetas', 'tenis de uso escolar', 'tenis escolar', 'uso escolar',
+      'vestuario escolar', 'uniforme escolar', 'material escolar', 'kit escolar', 'padronizadas',
+      'passagem aerea', 'passagens aereas', 'bilhete aereo', 'seguro', 'seguros', 'apolice', 'cartao corporativo', 'cartao de pagamento',
+      'locacao de imovel', 'aluguel de imovel', 'imovel publico', 'pedagio', 'concessionaria de pedagio', 'leilao', 'leilao de veiculos',
+      'ar condicionado', 'manutencao de ar condicionado', 'climatizacao', 'condicionamento de ar', 'hvac',
+      'limpeza predial', 'conservacao predial', 'vigilancia patrimonial', 'seguranca patrimonial', 'portaria',
+      'jardinagem', 'podas', 'impressao', 'marketing', 'carga e descarga', 'armazenagem', 'lavanderia', 'dedetizacao', 'arquitetura', 'ferramentas', 'petrobras', 'solda',
+      'transporte aereo', 'transporte rodoviario', 'transporte nautico', 'ferroviarios', 'calibracao', 'varricao', 'serralheria', 'pintura predial',
+      'servicos de rh', 'contabilidade', 'eletrica predial', 'hidraulica predial', 'revisao de veiculo', 'transcricao', 'digitalizacao', 'digitacao',
+      'sistema de vales', 'coleta de lixo', 'assessorias', 'inspecao', 'certificacao', 'concessoes', 'advocacia', 'call center', 'telemarketing', 'design grafico',
+      'fotografia', 'funeraria', 'faturamento', 'cobranca', 'traducao', 'montagem de moveis', 'carpintaria', 'mobiliarios', 'desentupimento', 'telefonia',
+      'alvenaria', 'mineracao', 'pesca', 'textil', 'fornecimento de energia', 'esportivos', 'musica', 'hospedagem', 'grafica', 'publicidade',
+    ],
+    // Informática: rejeitar escolar, material didático, alimento, vestuário, obras, saúde, etc.
+    informatica: [
+      'escolar', 'escolares', 'material escolar', 'kit escolar', 'alimento', 'comida', 'vestuario', 'roupa', 'uniforme', 'fardamento',
+      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'construcao', 'obra', 'concreto', 'pavimentacao', 'saneamento',
+      'diesel', 'combustivel', 'frota', 'veiculo', 'eventos', 'shows', 'publicidade', 'ar condicionado', 'climatizacao',
+      'jardinagem', 'podas', 'solda', 'serralheria', 'pintura predial', 'alvenaria', 'hidraulica predial', 'eletrica predial',
+      'seguro', 'seguros', 'passagem aerea', 'leilao', 'pedagio', 'locacao de imovel', 'cartao corporativo', 'advocacia', 'contabilidade',
+      'funeraria', 'fotografia', 'agropecuaria', 'pesca', 'textil', 'mineracao',
+    ],
+    // Serviços: rejeitar medicamento, produto hospitalar, gêneros alimentícios (fornecimento), obra civil pesada
+    servicos: [
+      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral', 'vacina', 'hemodialise',
+      'generos alimenticios', 'cesta basica', 'merenda escolar', 'refeicao escolar', 'fornecimento de alimentos',
+      'construcao civil', 'pavimentacao', 'terraplanagem', 'demolicao', 'viaduto', 'tunel', 'drenagem', 'obra de arte',
+      'software', 'hardware', 'sistema de informacao', 'desenvolvimento de software', 'licenca de software',
+    ],
+    // Engenharia/Construção: rejeitar medicamento, hospitalar, alimentação, vestuário, eventos, etc.
+    engenharia: [
+      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral', 'vacina', 'exame medico',
+      'generos alimenticios', 'cesta basica', 'refeicao', 'merenda', 'alimentacao escolar',
+      'fardamento escolar', 'uniforme escolar', 'material escolar', 'vestuario', 'camiseta', 'tenis escolar',
+      'eventos', 'shows', 'sonorizacao', 'iluminacao', 'publicidade', 'seguro', 'passagem aerea', 'cartao corporativo',
+      'leilao de veiculos', 'pedagio', 'locacao de imovel', 'advocacia', 'contabilidade', 'call center', 'telemarketing',
+    ],
+    construcao: [
+      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral',
+      'generos alimenticios', 'cesta basica', 'refeicao', 'merenda', 'fardamento escolar', 'uniforme escolar', 'material escolar',
+      'eventos', 'shows', 'publicidade', 'seguro', 'passagem aerea', 'leilao de veiculos', 'pedagio', 'locacao de imovel',
+      'advocacia', 'contabilidade', 'call center', 'telemarketing', 'funeraria', 'fotografia',
+    ],
+    // Transporte: rejeitar medicamento, hospitalar, material escolar, obra civil, dieta enteral
+    transporte: [
+      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'dieta enteral', 'parenteral', 'raio-x',
+      'material escolar', 'fardamento escolar', 'uniforme escolar', 'kit escolar', 'merenda escolar',
+      'construcao civil', 'pavimentacao', 'obra', 'concreto', 'saneamento', 'demolicao', 'pedagio', 'concessionaria de pedagio',
+    ],
+    // Educação: rejeitar diesel, frota, combustível, obra pesada, medicamento (fora contexto escolar), seguros, leilão
+    educacao: [
+      'diesel', 'oleo diesel', 'arla', 'frota municipal', 'combustivel', 'abastecimento da frota',
+      'construcao civil', 'pavimentacao', 'terraplanagem', 'demolicao', 'viaduto', 'saneamento', 'obra de arte',
+      'medicamento hospitalar', 'dieta enteral', 'parenteral', 'seguro', 'seguros', 'apolice', 'passagem aerea',
+      'leilao', 'leilao de veiculos', 'pedagio', 'locacao de imovel', 'cartao corporativo', 'advocacia', 'contabilidade',
+    ],
+    // Financeiro: rejeitar obra, construção, medicamento, fardamento, ar condicionado, jardinagem, solda, etc.
+    financeiro: [
+      'construcao civil', 'obra', 'pavimentacao', 'demolicao', 'saneamento', 'medicamento', 'medicamentos', 'hospitalar',
+      'fardamento escolar', 'material escolar', 'uniforme escolar', 'ar condicionado', 'climatizacao', 'jardinagem', 'solda',
+      'serralheria', 'pintura predial', 'alvenaria', 'hidraulica', 'eletrica predial', 'transporte aereo', 'transporte rodoviario',
+      'leilao de veiculos', 'pedagio', 'advocacia', 'funeraria', 'fotografia', 'agropecuaria',
+    ],
+    // Eventos: rejeitar medicamento, frota, construção, material escolar, etc.
+    eventos: [
+      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'diesel', 'frota municipal', 'combustivel',
+      'construcao civil', 'pavimentacao', 'obra', 'saneamento', 'material escolar', 'fardamento escolar', 'uniforme escolar',
+      'seguro', 'apolice', 'passagem aerea', 'leilao de veiculos', 'pedagio', 'locacao de imovel', 'cartao corporativo',
+    ],
   }
-  
+  const palavrasIncompatibilidade = {}
+  for (const chave of [...new Set([...Object.keys(FALLBACK_INCOMPATIBILIDADE), ...Object.keys(palavrasIncompatibilidadePorSetor || {})])]) {
+    const fallback = FALLBACK_INCOMPATIBILIDADE[chave] || []
+    const doBanco = (palavrasIncompatibilidadePorSetor || {})[chave] || []
+    palavrasIncompatibilidade[chave] = [...new Set([...fallback, ...doBanco])]
+  }
+
   // Verificar incompatibilidades antes de processar
   if (setoresAtividades && setoresAtividades.length > 0) {
     for (const setor of setoresAtividades) {
@@ -636,8 +766,8 @@ export function correspondeAtividades(
    * Fallback fixo no código; o banco (palavrasFortesPorSetor) sobrescreve/estende quando disponível.
    */
   const PALAVRAS_FORTES_FALLBACK = {
-    saude: ['medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'medico', 'saude', 'hospital', 'laboratorio', 'radiologico', 'raio-x', 'dieta', 'enteral', 'parenteral', 'utensilio', 'vacina', 'vacinas', 'exame medico', 'analise laboratorial'],
-    alimentacao: ['alimentacao', 'alimento', 'cesta basica', 'refeicao', 'copa', 'buffet', 'bebida', 'bebidas', 'generos alimenticios'],
+    saude: ['medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'medico', 'saude', 'hospital', 'laboratorio', 'radiologico', 'raio-x', 'dieta', 'enteral', 'parenteral', 'utensilio', 'vacina', 'vacinas', 'exame medico', 'analise laboratorial', 'oxigenio', 'oxigenio medicinal', 'medicinal', 'ambulatorio', 'pronto socorro', 'consulta medica', 'internacao'],
+    alimentacao: ['alimentacao', 'alimento', 'cesta basica', 'cestas basicas', 'refeicao', 'refeicoes', 'copa', 'buffet', 'bebida', 'bebidas', 'generos alimenticios', 'merenda', 'merenda escolar', 'doacao', 'nutricao', 'hortifruti', 'hortifrutigranjeiros'],
     informatica: ['informatica', 'computador', 'software', 'hardware', 'sistema de informacao', 'ti', 'tecnologia'],
     engenharia: ['construcao', 'obra', 'edificacao', 'pavimentacao', 'reforma', 'saneamento', 'drenagem', 'asfalto', 'concreto', 'terraplanagem', 'demolicao', 'viaduto', 'tunel', 'passarela'],
     transporte: ['veiculo', 'transporte', 'frota', 'onibus', 'caminhao', 'ambulancia', 'motocicleta', 'locacao de veiculos'],
@@ -677,14 +807,13 @@ export function correspondeAtividades(
           palavras.forEach(p => palavrasFortesSetor.add(normalizarTexto(p)))
         }
       }
-      // 2) COBERTURA TOTAL: sempre usar nome do setor + subsetores do perfil como palavras fortes
+      // 2) COBERTURA TOTAL: nome do setor + subsetores do perfil como palavras fortes
       palavrasFortesSetor.add(nomeNorm)
       if (setor.subsetores && Array.isArray(setor.subsetores)) {
         for (const subsetor of setor.subsetores) {
           if (!subsetor) continue
           const subNorm = normalizarTexto(subsetor)
           if (subNorm.length >= 3) palavrasFortesSetor.add(subNorm)
-          // Palavras-chave do subsetor (exceto genéricas) para maior cobertura
           const palavrasSub = extrairPalavrasChave(subsetor).filter(
             p => !PALAVRAS_GENERICAS_SOZINHAS.includes(normalizarTexto(p))
           )
@@ -693,7 +822,14 @@ export function correspondeAtividades(
       }
     }
     if (palavrasFortesSetor.size === 0) return true
-    const temForte = Array.from(palavrasFortesSetor).some(p => p && objetoNorm.includes(p))
+    // Expandir com sinônimos (menos rígido, considera variações das áreas)
+    const palavrasFortesExpandidas = new Set()
+    Array.from(palavrasFortesSetor).forEach(p => {
+      palavrasFortesExpandidas.add(p)
+      const expandidos = expandirComSinonimos([p], sinonimosPersonalizados, sinonimosBanco)
+      expandidos.forEach(e => palavrasFortesExpandidas.add(e))
+    })
+    const temForte = Array.from(palavrasFortesExpandidas).some(p => p && objetoNorm.includes(p))
     return temForte
   }
   
@@ -761,7 +897,7 @@ export function correspondeAtividades(
                 const indiceContexto = objetoNormalizado.indexOf(pcNormalizado)
                 if (indiceContexto === -1) return false
                 const distancia = Math.abs(indicePalavra - indiceContexto)
-                return distancia <= 100  // Reduzido de 150 para 100 para maior precisão
+                return distancia <= 130  // Contexto próximo para abranger mais (ex: "alimentação escolar" próximo a "merenda")
               })
               if (temContexto) {
                 palavrasEncontradas++
@@ -813,54 +949,35 @@ export function correspondeAtividades(
     // Estratégia: Aceitar casos com pontuação alta OU múltiplas palavras-chave
     // Isso aumenta a cobertura sem perder muita precisão
     
-    // CASO 1: Pontuação muito alta (7+) = aceitar diretamente (alta confiança)
-    if (pontuacaoCorrespondencia >= 7) {
-      const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
-      if (correspondeVocabulario || vocabularioSetor.size === 0) {
-        if (exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)) {
-          return true
-        }
-      }
+    // REGRA: Com setores cadastrados, exige SEMPRE vocabulário do setor + pelo menos uma palavra forte (mostrar só o compatível).
+    const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
+    const temPalavraForte = exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)
+    const exigeVocab = vocabularioSetor.size === 0 || correspondeVocabulario
+
+    // CASO 1: Pontuação alta (6+) + vocabulário + palavra forte (abaixado de 7 para trazer mais)
+    if (pontuacaoCorrespondencia >= 6 && exigeVocab && temPalavraForte) {
+      return true
     }
-    
-    // CASO 2: Pontuação média-alta (4-6) + múltiplas palavras-chave (2+) = aceitar
-    if (pontuacaoCorrespondencia >= 4 && palavrasUnicasEncontradas.size >= 2) {
-      const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
-      if (correspondeVocabulario || vocabularioSetor.size === 0) {
-        if (exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)) {
-          return true
-        }
-      }
+    // CASO 2: Pontuação média-alta (5+) + pelo menos 2 termos do setor + vocabulário + palavra forte
+    if (pontuacaoCorrespondencia >= 5 && palavrasUnicasEncontradas.size >= 2 && exigeVocab && temPalavraForte) {
+      return true
     }
-    
-    // CASO 3: Pontuação média-alta (6+) + múltiplas palavras-chave (2+) = aceitar
-    if (pontuacaoCorrespondencia >= 6 && palavrasUnicasEncontradas.size >= 2) {
-      const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
-      if (vocabularioSetor.size > 0) {
-        if (correspondeVocabulario && exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)) {
-          return true
-        }
-        return false
-      }
-      const temSubsetorCompleto = pontuacaoCorrespondencia >= 5
-      if (temSubsetorCompleto && exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)) {
-        return true
-      }
+    // CASO 3: Subsetor completo no objeto (5+ pts) + 1 termo + vocabulário + palavra forte (abrange mais, mantém compatível)
+    if (pontuacaoCorrespondencia >= 5 && palavrasUnicasEncontradas.size >= 1 && exigeVocab && temPalavraForte) {
+      return true
     }
-    
-    // CASO 4: Subsetor completo encontrado (5 pontos) = aceitar mesmo com apenas 1 palavra-chave
-    if (pontuacaoCorrespondencia >= 5 && palavrasUnicasEncontradas.size >= 1) {
-      const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
-      if (correspondeVocabulario || vocabularioSetor.size === 0) {
-        if (exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)) {
-          return true
-        }
-      }
+    // CASO 4: Pontuação média (4+) + 2+ termos + vocabulário + palavra forte (mais abrangente)
+    if (pontuacaoCorrespondencia >= 4 && palavrasUnicasEncontradas.size >= 2 && exigeVocab && temPalavraForte) {
+      return true
     }
+    // Não passou: não mostrar (evita diesel, eventos, fardamento, etc.)
   }
   
-  // FALLBACK: Se não encontrou correspondência específica (pontuação < 5), usar lógica mais restritiva
-  // IMPORTANTE: Exigir correspondência com vocabulário do setor OU múltiplas palavras-chave principais
+  // FALLBACK: Se a empresa tem setores e não passou nos critérios restritivos acima, não aceitar (mostrar só compatíveis).
+  if (setoresAtividades && setoresAtividades.length > 0) {
+    return false
+  }
+  // Sem setores: usar lógica mais restritiva com palavras-chave principais
   let temCorrespondenciaPrincipal = false
   if (palavrasPrincipais.length > 0) {
     

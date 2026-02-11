@@ -5,29 +5,27 @@ services:
     env: static
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
     envVars:
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
         sync: false
 
-  # Servidor de Verificação de Alertas - Background Worker
-  - type: worker
-    name: verificar-alertas
+  # Cron: dispara alerta WhatsApp diário (chama a Edge Function no horário)
+  # Roda a cada hora (UTC); a Edge Function usa horário Brasil e processa só alertas do minuto atual.
+  - type: cron
+    name: alerta-whatsapp-diario
     env: node
+    schedule: "0 * * * *"
     buildCommand: npm install
-    startCommand: npm start
+    startCommand: node scripts/trigger-alerta-whatsapp.js
     envVars:
-      - key: SUPABASE_URL
-        sync: false
       - key: VITE_SUPABASE_URL
         sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
+      - key: VITE_SUPABASE_ANON_KEY
         sync: false
-      - key: RESEND_API_KEY
-        sync: false
-      - key: EMAIL_FROM
-        sync: false
-      - key: INTERVALO_VERIFICACAO
-        value: "5"
-        sync: false
+

@@ -186,12 +186,12 @@ function EditalContent() {
                   {error ? `Erro ao carregar edital: ${error.message}` : 'Edital não encontrado.'}
                 </p>
                 <Button
-                  onClick={() => setLocation('/boletim')}
+                  onClick={() => setLocation('/licitacoes')}
                   className="mt-4"
                   variant="outline"
                 >
                   <ArrowLeft className="w-4 h-4 mr-2" />
-                  Voltar ao Boletim
+                  Voltar às Licitações
                 </Button>
               </CardContent>
             </Card>
@@ -211,12 +211,12 @@ function EditalContent() {
       <main className="flex-1 p-8">
         <div className="mx-auto max-w-4xl">
           <Button
-            onClick={() => setLocation('/boletim')}
+            onClick={() => setLocation('/licitacoes')}
             variant="outline"
             className="mb-6"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Voltar ao Boletim
+            Voltar às Licitações
           </Button>
 
           <Card className="mb-6">

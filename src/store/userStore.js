@@ -174,11 +174,18 @@ export const useUserStore = create(
           isLoading: false 
         })
         
-        // Limpar localStorage
+        // Limpar localStorage (sessão + filtros salvos por usuário)
         try {
           localStorage.removeItem('user')
           localStorage.removeItem('session')
           localStorage.removeItem('user-storage')
+          // Filtros persistidos (licitacoes_filtros_<userId>)
+          const keysToRemove = []
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i)
+            if (key && key.startsWith('licitacoes_filtros_')) keysToRemove.push(key)
+          }
+          keysToRemove.forEach((k) => localStorage.removeItem(k))
         } catch (e) {
           console.warn('⚠️ Erro ao limpar localStorage no logout:', e)
         }

@@ -376,16 +376,25 @@ export async function validarCorrespondenciaIABatch(
       } catch (fetchErr) {
         clearTimeout(timeoutId)
         if (fetchErr.name === 'AbortError') {
-          console.warn('⚠️ [IA] Timeout na Edge Function (validar-correspondencia-ia). Continuando com o que já foi validado.')
+          console.warn('⚠️ [IA] Timeout na Edge Function (validar-correspondencia-ia). Mantendo resultado do filtro semântico (fail-open).')
         } else {
           console.warn('⚠️ [IA] Erro de rede na Edge Function:', fetchErr.message)
         }
+        // Fail-open: aprovar as que ainda não foram validadas para não zerar a lista
+        licitacoesParaValidar.slice(i).forEach(lic => idsAprovados.add(lic.id))
         break
       }
       clearTimeout(timeoutId)
 
       if (!response.ok) {
-        console.warn('⚠️ [IA] Edge Function retornou erro:', response.status, response.statusText)
+        const errorBody = await response.json().catch(() => ({}))
+        const isRateLimit = response.status === 429 || (errorBody && (errorBody.error === 'RATE_LIMIT' || String(errorBody.error || '').includes('RATE_LIMIT')))
+        console.warn('⚠️ [IA] Edge Function retornou erro:', response.status, errorBody.error || response.statusText)
+        // Fail-open: em RATE_LIMIT ou 500, aprovar as que ainda não foram validadas para não zerar a lista
+        if (isRateLimit || response.status >= 500) {
+          licitacoesParaValidar.slice(i).forEach(lic => idsAprovados.add(lic.id))
+          console.warn('⚠️ [IA] RATE_LIMIT/erro no servidor: mantendo resultado do filtro semântico (fail-open)')
+        }
         break
       }
 
@@ -411,4 +420,3 @@ export async function validarCorrespondenciaIABatch(
     return idsAprovados // Retorna o que já foi aprovado (inclui cache)
   }
 }
-

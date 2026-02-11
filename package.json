@@ -4,12 +4,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:server\"",
-    "dev:frontend": "vite",
-    "dev:server": "node server/verificar-alertas.js",
+    "dev": "vite",
     "build": "vite build && node scripts/copy-redirects.js",
     "preview": "vite preview",
-    "start": "node server/verificar-alertas.js",
+    "start": "vite preview",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "buscar-edital": "node scripts/buscar-edital-completo.js",
     "sincronizar-licitacoes": "node scripts/sincronizar-licitacoes.js",
@@ -17,7 +15,7 @@
     "testar-filtro-semantico": "node scripts/testar-filtro-semantico.js",
     "certificar-filtros": "node scripts/testar-filtro-semantico.js",
     "testar-filtro-por-cadastro-id": "node scripts/testar-filtro-por-cadastro-id.js",
-    "verificar-alertas": "node server/verificar-alertas.js"
+    "trigger-alerta-whatsapp": "node scripts/trigger-alerta-whatsapp.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.2",
@@ -64,6 +62,7 @@
     "eslint-plugin-react-refresh": "^0.4.5",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
+    "terser": "^5.46.0",
     "vite": "^5.0.8"
   }
 }

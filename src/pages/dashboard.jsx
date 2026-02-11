@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Button } from '@/components/ui/button'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
-import { Calendar, Filter, Bell, Star, Loader2, FileText, Plus, TrendingUp, MapPin, DollarSign } from 'lucide-react'
+import { Calendar, Filter, Star, Loader2, FileText, Plus, TrendingUp, MapPin, DollarSign } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { useUserStore } from '@/store/userStore'
@@ -236,24 +236,6 @@ function DashboardContent() {
     enabled: !!user?.id,
   })
 
-  // Total de Alertas Ativos do usuário
-  const { data: totalAlertas = 0, isLoading: loadingAlertas } = useQuery({
-    queryKey: ['dashboard', 'alertas', user?.id],
-    queryFn: async () => {
-      if (!user?.id) return 0
-
-      const { count, error } = await supabase
-        .from('alertas_usuario')
-        .select('*', { count: 'exact', head: true })
-        .eq('usuario_id', user.id)
-        .eq('ativo', true)
-
-      if (error) throw error
-      return count || 0
-    },
-    enabled: !!user?.id,
-  })
-
   // Licitações desta semana (filtradas)
   const licitacoesSemana = useMemo(() => {
     if (!licitacoesFiltradas || licitacoesFiltradas.length === 0) return 0
@@ -289,35 +271,15 @@ function DashboardContent() {
         .order('data_adicao', { ascending: false })
         .limit(3)
 
-      // Buscar últimos 2 alertas criados
-      const { data: alertas, error: errorAlertas } = await supabase
-        .from('alertas_usuario')
-        .select('id, nome_alerta, created_at')
-        .eq('usuario_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(2)
+      if (errorFavoritos) throw errorFavoritos
 
-      if (errorFavoritos || errorAlertas) {
-        throw errorFavoritos || errorAlertas
-      }
-
-      // Combinar e ordenar por data
-      const atividades = [
-        ...(favoritos || []).map(f => ({
-          tipo: 'favorito',
-          data: f.data_adicao,
-          titulo: f.licitacoes?.objeto_compra || 'Licitação favoritada',
-          descricao: f.licitacoes?.numero_controle_pncp || '',
-          id: f.id,
-        })),
-        ...(alertas || []).map(a => ({
-          tipo: 'alerta',
-          data: a.created_at,
-          titulo: `Alerta: ${a.nome_alerta}`,
-          descricao: 'Alerta configurado',
-          id: a.id,
-        })),
-      ].sort((a, b) => new Date(b.data) - new Date(a.data)).slice(0, 5)
+      const atividades = (favoritos || []).map(f => ({
+        tipo: 'favorito',
+        data: f.data_adicao,
+        titulo: f.licitacoes?.objeto_compra || 'Licitação favoritada',
+        descricao: f.licitacoes?.numero_controle_pncp || '',
+        id: f.id,
+      })).sort((a, b) => new Date(b.data) - new Date(a.data)).slice(0, 5)
 
       return atividades
     },
@@ -426,7 +388,7 @@ function DashboardContent() {
       .slice(0, 5)
   }, [licitacoesFiltradas])
 
-  const isLoading = loadingLicitacoes || loadingFavoritos || loadingAlertas
+  const isLoading = loadingLicitacoes || loadingFavoritos
   const isLoadingGraficos = loadingLicitacoes
 
   return (
@@ -489,26 +451,6 @@ function DashboardContent() {
                   </div>
                   <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center">
                     <Star className="w-6 h-6 text-yellow-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Alertas Ativos</p>
-                    {isLoading ? (
-                      <Loader2 className="w-8 h-8 animate-spin text-gray-400 mt-2" />
-                    ) : (
-                      <p className="text-3xl font-bold text-gray-900 mt-2">
-                        {totalAlertas.toLocaleString('pt-BR')}
-                      </p>
-                    )}
-                  </div>
-                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                    <Bell className="w-6 h-6 text-blue-600" />
                   </div>
                 </div>
               </CardContent>
@@ -727,12 +669,6 @@ function DashboardContent() {
                         Ver Licitações
                       </Button>
                     </Link>
-                    <Link href="/alertas">
-                      <Button variant="outline">
-                        <Bell className="w-4 h-4 mr-2" />
-                        Criar Alerta
-                      </Button>
-                    </Link>
                   </div>
                 </div>
               ) : (
@@ -742,16 +678,8 @@ function DashboardContent() {
                       key={`${atividade.tipo}-${atividade.id}`}
                       className="flex items-start gap-4 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
                     >
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-                        atividade.tipo === 'favorito' 
-                          ? 'bg-yellow-100' 
-                          : 'bg-blue-100'
-                      }`}>
-                        {atividade.tipo === 'favorito' ? (
-                          <Star className="w-5 h-5 text-yellow-600" />
-                        ) : (
-                          <Bell className="w-5 h-5 text-blue-600" />
-                        )}
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 bg-yellow-100">
+                        <Star className="w-5 h-5 text-yellow-600" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-gray-900 text-sm">
