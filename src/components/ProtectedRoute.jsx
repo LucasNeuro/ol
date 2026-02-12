@@ -7,10 +7,9 @@ export function ProtectedRoute({ children }) {
   const [, setLocation] = useLocation()
 
   useEffect(() => {
-    // Se não estiver carregando e não tiver usuário, redirecionar para landing page
+    // Se não estiver carregando e não tiver usuário, redirecionar para a página de login (ex.: após logout)
     if (!loading && !user) {
-      console.log('⚠️ [ProtectedRoute] Usuário não autenticado, redirecionando para landing page')
-      setLocation('/')
+      setLocation('/login')
     }
   }, [user, loading, setLocation])
 

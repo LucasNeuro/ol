@@ -100,8 +100,9 @@ export function Header() {
     try {
       await signOut()
       setDropdownOpen(false)
-      // Redirecionar para login usando o roteador do wouter (funciona melhor no Render)
       setLocation('/login')
+      const base = typeof window !== 'undefined' ? window.location.origin : ''
+      if (base) window.location.href = `${base}/login`
     } catch (error) {
       console.error('Erro ao fazer logout:', error)
     }
