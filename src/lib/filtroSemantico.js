@@ -596,107 +596,217 @@ export function correspondeAtividades(
   const palavrasContexto = extrairPalavrasContexto(setoresAtividades)
   const vocabularioSetor = construirVocabularioSetor(setoresAtividades, sinonimosPersonalizados, sinonimosBanco)
   
-  // VERIFICAÇÃO PRÉVIA: Palavras de exclusão por setor (rejeitar imediatamente se incompatível).
-  // Populado com tudo que NÃO tem a ver com cada setor (base: setores e subsetores do sistema).
-  // Rejeitar: objeto do edital contém uma dessas palavras = não mostrar (só compatíveis).
+ 
+  const listSaude = [
+    'publicidade', 'diario oficial', 'publicacao de atos', 'servicos de publicidade', 'revisao de veiculo', 'manutencao de veiculo',
+    'veiculo', 'automovel', 'construcao', 'obra', 'concreto', 'saneamento', 'esgoto', 'pavimentacao', 'terraplanagem', 'demolicao', 'drenagem', 'viaduto', 'tunel',
+    'diesel', 'oleo diesel', 'arla', 'frota municipal', 'abastecimento da frota', 'combustivel', 'combustiveis',
+    'eventos', 'shows', 'sonorizacao', 'iluminacao', 'promocao de eventos', 'organizacao de shows', 'equipamentos de som',
+    'fardamento escolar', 'fardamento', 'camiseta', 'camisetas', 'tenis de uso escolar', 'tenis escolar', 'uso escolar',
+    'vestuario escolar', 'uniforme escolar', 'material escolar', 'kit escolar', 'padronizadas',
+    'passagem aerea', 'passagens aereas', 'bilhete aereo', 'seguro', 'seguros', 'apolice', 'cartao corporativo', 'cartao de pagamento',
+    'locacao de imovel', 'aluguel de imovel', 'imovel publico', 'pedagio', 'concessionaria de pedagio', 'leilao', 'leilao de veiculos',
+    'ar condicionado', 'manutencao de ar condicionado', 'climatizacao', 'condicionamento de ar', 'hvac',
+    'limpeza predial', 'conservacao predial', 'vigilancia patrimonial', 'seguranca patrimonial', 'portaria',
+    'jardinagem', 'servicos de jardinagem', 'podas', 'servicos de podas', 'impressao', 'servicos de impressao', 'marketing', 'servicos de marketing',
+    'carga e descarga', 'armazenagem', 'lavanderia', 'dedetizacao', 'desinfecao', 'arquitetura', 'ferramentas', 'petrobras', 'solda', 'servicos de solda',
+    'transporte aereo', 'transporte rodoviario', 'transporte nautico', 'ferroviarios', 'calibracao', 'varricao', 'serralheria', 'pintura predial',
+    'servicos de rh', 'contabilidade', 'servicos de contabilidade', 'eletrica predial', 'hidraulica predial', 'revisao preventiva',
+    'transcricao', 'digitalizacao', 'digitacao', 'sistema de vales', 'coleta de lixo', 'assessorias', 'inspecao', 'certificacao',
+    'concessoes', 'exploracao', 'advocacia', 'servicos de advocacia', 'call center', 'telemarketing', 'design grafico',
+    'agropecuaria', 'fotografia', 'funeraria', 'embalagens', 'faturamento', 'cobranca', 'traducao', 'montagem de moveis',
+    'carpintaria', 'mobiliarios', 'desentupimento', 'telefonia', 'locacao de equipamentos', 'alvenaria', 'mineracao', 'pesca', 'textil',
+    'infancia', 'playground', 'fornecimento de energia', 'esportivos', 'musica', 'hospedagem', 'grafica', 'escritorio',
+    'porta de vidro', 'vidro temperado', 'esquadria', 'janela de vidro', 'instalacao de porta', 'instalacao de janela',
+    'porta', 'vidro', 'temperado', 'janela', 'puxador', 'abrir e fechar',
+  ]
+  const listAlimentacao = [
+    'diesel', 'oleo diesel', 'arla', 'frota municipal', 'abastecimento da frota', 'combustivel', 'combustiveis',
+    'veiculo', 'automovel', 'frota', 'construcao', 'obra', 'concreto', 'saneamento', 'pavimentacao', 'demolicao',
+    'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral', 'proteses', 'orteses',
+    'eventos', 'shows', 'sonorizacao', 'iluminacao', 'promocao de eventos', 'organizacao de shows', 'software', 'hardware', 'informatica', 'ti',
+    'fardamento escolar', 'fardamento', 'camiseta', 'camisetas', 'tenis de uso escolar', 'tenis escolar', 'uso escolar',
+    'vestuario escolar', 'uniforme escolar', 'material escolar', 'kit escolar', 'padronizadas',
+    'passagem aerea', 'passagens aereas', 'bilhete aereo', 'seguro', 'seguros', 'apolice', 'cartao corporativo', 'cartao de pagamento',
+    'locacao de imovel', 'aluguel de imovel', 'imovel publico', 'pedagio', 'concessionaria de pedagio', 'leilao', 'leilao de veiculos',
+    'ar condicionado', 'manutencao de ar condicionado', 'climatizacao', 'condicionamento de ar', 'hvac',
+    'limpeza predial', 'conservacao predial', 'vigilancia patrimonial', 'seguranca patrimonial', 'portaria',
+    'jardinagem', 'podas', 'impressao', 'marketing', 'carga e descarga', 'armazenagem', 'lavanderia', 'dedetizacao', 'arquitetura', 'ferramentas', 'petrobras', 'solda',
+    'transporte aereo', 'transporte rodoviario', 'transporte nautico', 'ferroviarios', 'calibracao', 'varricao', 'serralheria', 'pintura predial',
+    'servicos de rh', 'contabilidade', 'eletrica predial', 'hidraulica predial', 'revisao de veiculo', 'transcricao', 'digitalizacao', 'digitacao',
+    'sistema de vales', 'coleta de lixo', 'assessorias', 'inspecao', 'certificacao', 'concessoes', 'advocacia', 'call center', 'telemarketing', 'design grafico',
+    'fotografia', 'funeraria', 'faturamento', 'cobranca', 'traducao', 'montagem de moveis', 'carpintaria', 'mobiliarios', 'desentupimento', 'telefonia',
+    'alvenaria', 'mineracao', 'pesca', 'textil', 'fornecimento de energia', 'esportivos', 'musica', 'hospedagem', 'grafica', 'publicidade',
+    'porta de vidro', 'vidro temperado', 'esquadria', 'janela de vidro', 'instalacao de porta', 'instalacao de janela',
+    'porta', 'vidro', 'temperado', 'janela', 'puxador', 'abrir e fechar',
+  ]
+  const listInformatica = [
+    'escolar', 'escolares', 'material escolar', 'kit escolar', 'alimento', 'comida', 'vestuario', 'roupa', 'uniforme', 'fardamento',
+    'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'construcao', 'obra', 'concreto', 'pavimentacao', 'saneamento',
+    'diesel', 'combustivel', 'frota', 'veiculo', 'eventos', 'shows', 'publicidade', 'ar condicionado', 'climatizacao',
+    'jardinagem', 'podas', 'solda', 'serralheria', 'pintura predial', 'alvenaria', 'hidraulica predial', 'eletrica predial',
+    'seguro', 'seguros', 'passagem aerea', 'leilao', 'pedagio', 'locacao de imovel', 'cartao corporativo', 'advocacia', 'contabilidade',
+    'funeraria', 'fotografia', 'agropecuaria', 'pesca', 'textil', 'mineracao',
+  ]
+  const listServicos = [
+    'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral', 'vacina', 'hemodialise',
+    'generos alimenticios', 'cesta basica', 'merenda escolar', 'refeicao escolar', 'fornecimento de alimentos',
+    'construcao civil', 'pavimentacao', 'terraplanagem', 'demolicao', 'viaduto', 'tunel', 'drenagem', 'obra de arte',
+    'software', 'hardware', 'sistema de informacao', 'desenvolvimento de software', 'licenca de software',
+    'porta de vidro', 'vidro temperado', 'esquadria', 'porta', 'vidro', 'temperado', 'janela', 'diesel', 'frota', 'combustivel', 'veiculo',
+  ]
+  const listEngenharia = [
+    'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral', 'vacina', 'exame medico',
+    'generos alimenticios', 'cesta basica', 'refeicao', 'merenda', 'alimentacao escolar',
+    'fardamento escolar', 'uniforme escolar', 'material escolar', 'vestuario', 'camiseta', 'tenis escolar',
+    'eventos', 'shows', 'sonorizacao', 'iluminacao', 'publicidade', 'seguro', 'passagem aerea', 'cartao corporativo',
+    'leilao de veiculos', 'pedagio', 'locacao de imovel', 'advocacia', 'contabilidade', 'call center', 'telemarketing',
+  ]
+  const listConstrucao = [
+    'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral',
+    'generos alimenticios', 'cesta basica', 'refeicao', 'merenda', 'fardamento escolar', 'uniforme escolar', 'material escolar',
+    'eventos', 'shows', 'publicidade', 'seguro', 'passagem aerea', 'leilao de veiculos', 'pedagio', 'locacao de imovel',
+    'advocacia', 'contabilidade', 'call center', 'telemarketing', 'funeraria', 'fotografia',
+  ]
+  const listTransporte = [
+    'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'dieta enteral', 'parenteral', 'raio-x',
+    'material escolar', 'fardamento escolar', 'uniforme escolar', 'kit escolar', 'merenda escolar',
+    'construcao civil', 'pavimentacao', 'obra', 'concreto', 'saneamento', 'demolicao', 'pedagio', 'concessionaria de pedagio',
+  ]
+  const listFinanceiro = [
+    'construcao civil', 'obra', 'pavimentacao', 'demolicao', 'saneamento', 'medicamento', 'medicamentos', 'hospitalar',
+    'fardamento escolar', 'material escolar', 'uniforme escolar', 'ar condicionado', 'climatizacao', 'jardinagem', 'solda',
+    'serralheria', 'pintura predial', 'alvenaria', 'hidraulica', 'eletrica predial', 'transporte aereo', 'transporte rodoviario',
+    'leilao de veiculos', 'pedagio', 'advocacia', 'funeraria', 'fotografia', 'agropecuaria',
+    'porta de vidro', 'vidro temperado', 'porta', 'vidro', 'temperado', 'diesel', 'frota', 'veiculo',
+  ]
+  const listEventos = [
+    'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'diesel', 'frota municipal', 'combustivel',
+    'construcao civil', 'pavimentacao', 'obra', 'saneamento', 'material escolar', 'fardamento escolar', 'uniforme escolar',
+    'seguro', 'apolice', 'passagem aerea', 'leilao de veiculos', 'pedagio', 'locacao de imovel', 'cartao corporativo',
+  ]
+  const listEducacao = [
+    'diesel', 'oleo diesel', 'arla', 'frota municipal', 'combustivel', 'abastecimento da frota',
+    'construcao civil', 'pavimentacao', 'terraplanagem', 'demolicao', 'viaduto', 'saneamento', 'obra de arte',
+    'medicamento hospitalar', 'dieta enteral', 'parenteral', 'seguro', 'seguros', 'apolice', 'passagem aerea',
+    'leilao', 'leilao de veiculos', 'pedagio', 'locacao de imovel', 'cartao corporativo', 'advocacia', 'contabilidade',
+  ]
+
+  // Não usar chave "servicos" sozinha: todos os setores têm "Serviços" no nome e rejeitariam editais corretos.
   const FALLBACK_INCOMPATIBILIDADE = {
-    // Saúde: rejeitar tudo que não é saúde (obras, frota, eventos, publicidade, ar condicionado, etc.)
-    saude: [
-      'publicidade', 'diario oficial', 'publicacao de atos', 'servicos de publicidade', 'revisao de veiculo', 'manutencao de veiculo',
-      'veiculo', 'automovel', 'construcao', 'obra', 'concreto', 'saneamento', 'esgoto', 'pavimentacao', 'terraplanagem', 'demolicao', 'drenagem', 'viaduto', 'tunel',
-      'diesel', 'oleo diesel', 'arla', 'frota municipal', 'abastecimento da frota', 'combustivel', 'combustiveis',
-      'eventos', 'shows', 'sonorizacao', 'iluminacao', 'promocao de eventos', 'organizacao de shows', 'equipamentos de som',
-      'fardamento escolar', 'fardamento', 'camiseta', 'camisetas', 'tenis de uso escolar', 'tenis escolar', 'uso escolar',
-      'vestuario escolar', 'uniforme escolar', 'material escolar', 'kit escolar', 'padronizadas',
-      'passagem aerea', 'passagens aereas', 'bilhete aereo', 'seguro', 'seguros', 'apolice', 'cartao corporativo', 'cartao de pagamento',
-      'locacao de imovel', 'aluguel de imovel', 'imovel publico', 'pedagio', 'concessionaria de pedagio', 'leilao', 'leilao de veiculos',
-      'ar condicionado', 'manutencao de ar condicionado', 'climatizacao', 'condicionamento de ar', 'hvac',
-      'limpeza predial', 'conservacao predial', 'vigilancia patrimonial', 'seguranca patrimonial', 'portaria',
-      'jardinagem', 'servicos de jardinagem', 'podas', 'servicos de podas', 'impressao', 'servicos de impressao', 'marketing', 'servicos de marketing',
-      'carga e descarga', 'armazenagem', 'lavanderia', 'dedetizacao', 'desinfecao', 'arquitetura', 'ferramentas', 'petrobras', 'solda', 'servicos de solda',
-      'transporte aereo', 'transporte rodoviario', 'transporte nautico', 'ferroviarios', 'calibracao', 'varricao', 'serralheria', 'pintura predial',
-      'servicos de rh', 'contabilidade', 'servicos de contabilidade', 'eletrica predial', 'hidraulica predial', 'revisao preventiva',
-      'transcricao', 'digitalizacao', 'digitacao', 'sistema de vales', 'coleta de lixo', 'assessorias', 'inspecao', 'certificacao',
-      'concessoes', 'exploracao', 'advocacia', 'servicos de advocacia', 'call center', 'telemarketing', 'design grafico',
-      'agropecuaria', 'fotografia', 'funeraria', 'embalagens', 'faturamento', 'cobranca', 'traducao', 'montagem de moveis',
-      'carpintaria', 'mobiliarios', 'desentupimento', 'telefonia', 'locacao de equipamentos', 'alvenaria', 'mineracao', 'pesca', 'textil',
-      'infancia', 'playground', 'fornecimento de energia', 'esportivos', 'musica', 'hospedagem', 'grafica', 'escritorio',
-    ],
-    // Alimentação: rejeitar tudo que não é alimentação (medicamento, obras, TI, eventos, ar condicionado, etc.)
-    alimentacao: [
-      'diesel', 'oleo diesel', 'arla', 'frota municipal', 'abastecimento da frota', 'combustivel', 'combustiveis',
-      'veiculo', 'automovel', 'frota', 'construcao', 'obra', 'concreto', 'saneamento', 'pavimentacao', 'demolicao',
-      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral', 'proteses', 'orteses',
-      'eventos', 'shows', 'sonorizacao', 'iluminacao', 'promocao de eventos', 'organizacao de shows', 'software', 'hardware', 'informatica', 'ti',
-      'fardamento escolar', 'fardamento', 'camiseta', 'camisetas', 'tenis de uso escolar', 'tenis escolar', 'uso escolar',
-      'vestuario escolar', 'uniforme escolar', 'material escolar', 'kit escolar', 'padronizadas',
-      'passagem aerea', 'passagens aereas', 'bilhete aereo', 'seguro', 'seguros', 'apolice', 'cartao corporativo', 'cartao de pagamento',
-      'locacao de imovel', 'aluguel de imovel', 'imovel publico', 'pedagio', 'concessionaria de pedagio', 'leilao', 'leilao de veiculos',
-      'ar condicionado', 'manutencao de ar condicionado', 'climatizacao', 'condicionamento de ar', 'hvac',
-      'limpeza predial', 'conservacao predial', 'vigilancia patrimonial', 'seguranca patrimonial', 'portaria',
-      'jardinagem', 'podas', 'impressao', 'marketing', 'carga e descarga', 'armazenagem', 'lavanderia', 'dedetizacao', 'arquitetura', 'ferramentas', 'petrobras', 'solda',
-      'transporte aereo', 'transporte rodoviario', 'transporte nautico', 'ferroviarios', 'calibracao', 'varricao', 'serralheria', 'pintura predial',
-      'servicos de rh', 'contabilidade', 'eletrica predial', 'hidraulica predial', 'revisao de veiculo', 'transcricao', 'digitalizacao', 'digitacao',
-      'sistema de vales', 'coleta de lixo', 'assessorias', 'inspecao', 'certificacao', 'concessoes', 'advocacia', 'call center', 'telemarketing', 'design grafico',
-      'fotografia', 'funeraria', 'faturamento', 'cobranca', 'traducao', 'montagem de moveis', 'carpintaria', 'mobiliarios', 'desentupimento', 'telefonia',
-      'alvenaria', 'mineracao', 'pesca', 'textil', 'fornecimento de energia', 'esportivos', 'musica', 'hospedagem', 'grafica', 'publicidade',
-    ],
-    // Informática: rejeitar escolar, material didático, alimento, vestuário, obras, saúde, etc.
-    informatica: [
-      'escolar', 'escolares', 'material escolar', 'kit escolar', 'alimento', 'comida', 'vestuario', 'roupa', 'uniforme', 'fardamento',
-      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'construcao', 'obra', 'concreto', 'pavimentacao', 'saneamento',
-      'diesel', 'combustivel', 'frota', 'veiculo', 'eventos', 'shows', 'publicidade', 'ar condicionado', 'climatizacao',
-      'jardinagem', 'podas', 'solda', 'serralheria', 'pintura predial', 'alvenaria', 'hidraulica predial', 'eletrica predial',
-      'seguro', 'seguros', 'passagem aerea', 'leilao', 'pedagio', 'locacao de imovel', 'cartao corporativo', 'advocacia', 'contabilidade',
-      'funeraria', 'fotografia', 'agropecuaria', 'pesca', 'textil', 'mineracao',
-    ],
-    // Serviços: rejeitar medicamento, produto hospitalar, gêneros alimentícios (fornecimento), obra civil pesada
-    servicos: [
-      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral', 'vacina', 'hemodialise',
-      'generos alimenticios', 'cesta basica', 'merenda escolar', 'refeicao escolar', 'fornecimento de alimentos',
-      'construcao civil', 'pavimentacao', 'terraplanagem', 'demolicao', 'viaduto', 'tunel', 'drenagem', 'obra de arte',
-      'software', 'hardware', 'sistema de informacao', 'desenvolvimento de software', 'licenca de software',
-    ],
-    // Engenharia/Construção: rejeitar medicamento, hospitalar, alimentação, vestuário, eventos, etc.
-    engenharia: [
-      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral', 'vacina', 'exame medico',
-      'generos alimenticios', 'cesta basica', 'refeicao', 'merenda', 'alimentacao escolar',
-      'fardamento escolar', 'uniforme escolar', 'material escolar', 'vestuario', 'camiseta', 'tenis escolar',
-      'eventos', 'shows', 'sonorizacao', 'iluminacao', 'publicidade', 'seguro', 'passagem aerea', 'cartao corporativo',
-      'leilao de veiculos', 'pedagio', 'locacao de imovel', 'advocacia', 'contabilidade', 'call center', 'telemarketing',
-    ],
-    construcao: [
-      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'raio-x', 'dieta enteral', 'parenteral',
-      'generos alimenticios', 'cesta basica', 'refeicao', 'merenda', 'fardamento escolar', 'uniforme escolar', 'material escolar',
-      'eventos', 'shows', 'publicidade', 'seguro', 'passagem aerea', 'leilao de veiculos', 'pedagio', 'locacao de imovel',
-      'advocacia', 'contabilidade', 'call center', 'telemarketing', 'funeraria', 'fotografia',
-    ],
-    // Transporte: rejeitar medicamento, hospitalar, material escolar, obra civil, dieta enteral
-    transporte: [
-      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'dieta enteral', 'parenteral', 'raio-x',
-      'material escolar', 'fardamento escolar', 'uniforme escolar', 'kit escolar', 'merenda escolar',
-      'construcao civil', 'pavimentacao', 'obra', 'concreto', 'saneamento', 'demolicao', 'pedagio', 'concessionaria de pedagio',
-    ],
-    // Educação: rejeitar diesel, frota, combustível, obra pesada, medicamento (fora contexto escolar), seguros, leilão
-    educacao: [
-      'diesel', 'oleo diesel', 'arla', 'frota municipal', 'combustivel', 'abastecimento da frota',
-      'construcao civil', 'pavimentacao', 'terraplanagem', 'demolicao', 'viaduto', 'saneamento', 'obra de arte',
-      'medicamento hospitalar', 'dieta enteral', 'parenteral', 'seguro', 'seguros', 'apolice', 'passagem aerea',
-      'leilao', 'leilao de veiculos', 'pedagio', 'locacao de imovel', 'cartao corporativo', 'advocacia', 'contabilidade',
-    ],
-    // Financeiro: rejeitar obra, construção, medicamento, fardamento, ar condicionado, jardinagem, solda, etc.
-    financeiro: [
-      'construcao civil', 'obra', 'pavimentacao', 'demolicao', 'saneamento', 'medicamento', 'medicamentos', 'hospitalar',
-      'fardamento escolar', 'material escolar', 'uniforme escolar', 'ar condicionado', 'climatizacao', 'jardinagem', 'solda',
-      'serralheria', 'pintura predial', 'alvenaria', 'hidraulica', 'eletrica predial', 'transporte aereo', 'transporte rodoviario',
-      'leilao de veiculos', 'pedagio', 'advocacia', 'funeraria', 'fotografia', 'agropecuaria',
-    ],
-    // Eventos: rejeitar medicamento, frota, construção, material escolar, etc.
-    eventos: [
-      'medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'diesel', 'frota municipal', 'combustivel',
-      'construcao civil', 'pavimentacao', 'obra', 'saneamento', 'material escolar', 'fardamento escolar', 'uniforme escolar',
-      'seguro', 'apolice', 'passagem aerea', 'leilao de veiculos', 'pedagio', 'locacao de imovel', 'cartao corporativo',
-    ],
+    saude: listSaude,
+    alimentacao: listAlimentacao,
+    informatica: listInformatica,
+    engenharia: listEngenharia,
+    construcao: listConstrucao,
+    transporte: listTransporte,
+    financeiro: listFinanceiro,
+    eventos: listEventos,
+    educacao: listEducacao,
+    // Chaves que batem com os nomes dos setores da tabela setores (cadastro)
+    contabeis: listFinanceiro,
+    fiscais: listFinanceiro,
+    tributarios: listFinanceiro,
+    alvenaria: listConstrucao,
+    reformas: listConstrucao,
+    laboratoriais: listSaude,
+    arquitetura: listEngenharia,
+    arquivamento: listServicos,
+    documental: listServicos,
+    buffet: listAlimentacao,
+    catering: listAlimentacao,
+    copa: listAlimentacao,
+    cozinha: listAlimentacao,
+    nutricao: listAlimentacao,
+    calibracao: listServicos,
+    metrologia: listServicos,
+    'call center': listServicos,
+    carga: listTransporte,
+    descarga: listTransporte,
+    movimentacao: listTransporte,
+    carpintaria: listConstrucao,
+    marcenaria: listConstrucao,
+    certificacao: listFinanceiro,
+    auditoria: listFinanceiro,
+    cobranca: listFinanceiro,
+    coleta: listServicos,
+    residuos: listServicos,
+    dedetizacao: listServicos,
+    pragas: listServicos,
+    desentupimento: listServicos,
+    esgotos: listServicos,
+    'design grafico': listServicos,
+    desinfeccao: listServicos,
+    sanitizacao: listServicos,
+    digitacao: listServicos,
+    digitalizacao: listServicos,
+    'energia eletrica': listEngenharia,
+    'energias renovaveis': listEngenharia,
+    enfermagem: listSaude,
+    faturamento: listFinanceiro,
+    fisioterapia: listSaude,
+    reabilitacao: listSaude,
+    fotografia: listEventos,
+    filmagem: listEventos,
+    impressao: listServicos,
+    grafica: listServicos,
+    inspecao: listServicos,
+    vistoria: listServicos,
+    'instalacao de equipamentos': listServicos,
+    internet: listInformatica,
+    conectividade: listInformatica,
+    jardinagem: listServicos,
+    paisagismo: listServicos,
+    lavanderia: listServicos,
+    limpeza: listServicos,
+    conservacao: listServicos,
+    higienizacao: listServicos,
+    locacao: listTransporte,
+    veiculos: listTransporte,
+    marketing: listServicos,
+    comunicacao: listServicos,
+    montagem: listServicos,
+    desmontagem: listServicos,
+    pintura: listConstrucao,
+    revestimento: listConstrucao,
+    acabamento: listConstrucao,
+    poda: listServicos,
+    arvores: listServicos,
+    vegetacao: listServicos,
+    portaria: listServicos,
+    recepcao: listServicos,
+    psicologia: listSaude,
+    'recursos humanos': listServicos,
+    'gestao de pessoas': listServicos,
+    'revisao de textos': listServicos,
+    saneamento: listEngenharia,
+    'tratamento de agua': listEngenharia,
+    seguranca: listServicos,
+    vigilancia: listServicos,
+    protecao: listServicos,
+    serralheria: listServicos,
+    metalurgia: listServicos,
+    solda: listServicos,
+    caldeiraria: listServicos,
+    tecnologia: listInformatica,
+    informacao: listInformatica,
+    telefonia: listServicos,
+    telecomunicacoes: listServicos,
+    telemarketing: listServicos,
+    traducao: listServicos,
+    interpretacao: listServicos,
+    transcricao: listServicos,
+    logistica: listTransporte,
+    treinamento: listServicos,
+    capacitacao: listServicos,
+    varricao: listServicos,
+    eletricos: listEngenharia,
+    hidraulicos: listEngenharia,
+    encanamento: listEngenharia,
+    juridicos: listServicos,
+    advocacia: listServicos,
+    medicos: listSaude,
+    'bem-estar': listSaude,
   }
   const palavrasIncompatibilidade = {}
   for (const chave of [...new Set([...Object.keys(FALLBACK_INCOMPATIBILIDADE), ...Object.keys(palavrasIncompatibilidadePorSetor || {})])]) {
@@ -716,11 +826,9 @@ export function correspondeAtividades(
               objetoNormalizado.includes(normalizarTexto(palavra))
             )
             if (temIncompativel) {
-              console.log(`🚫 [Filtro] Licitação rejeitada por incompatibilidade:`, {
-                setor: setor.setor,
-                palavraIncompativel: palavrasIncompativeis.find(p => objetoNormalizado.includes(normalizarTexto(p))),
-                objeto: objetoCompleto.substring(0, 100)
-              })
+              const palavraEncontrada = palavrasIncompativeis.find(p => objetoNormalizado.includes(normalizarTexto(p)))
+              // Log com valores serializáveis (string) para aparecer corretamente no console quando rodar no Worker
+              console.log(`🚫 [Filtro] Licitação rejeitada por incompatibilidade: setor="${String(setor.setor)}" palavraIncompativel="${String(palavraEncontrada ?? '')}" objeto="${String(objetoCompleto).substring(0, 100)}"`)
               return false  // Rejeitar imediatamente
             }
           }
@@ -730,20 +838,14 @@ export function correspondeAtividades(
           const temEquipamento = /\b(equipamento|equipamentos|peca|pecas)\b/.test(objetoNormalizado)
           const temNaoSaude = /\b(audio|som|informatica|informatico)\b/.test(objetoNormalizado)
           if (temEquipamento && temNaoSaude) {
-            console.log(`🚫 [Filtro] Licitação rejeitada (equipamento não médico para Saúde):`, {
-              setor: setor.setor,
-              objeto: objetoCompleto.substring(0, 100)
-            })
+            console.log(`🚫 [Filtro] Licitação rejeitada (equipamento não médico para Saúde): setor="${String(setor.setor)}" objeto="${String(objetoCompleto).substring(0, 100)}"`)
             return false
           }
           // Rejeitar manutenção/revisão de veículo (objeto é sobre veículo, não sobre produtos/serviços de saúde)
           const temaVeiculo = /\b(revisao|revisão|manutencao|manutenção)\s+(preventiva|de\s+veiculo|veicular|automotiva)\b/i.test(objetoCompleto) ||
             (/\b(veiculo|veículo|automovel|automóvel|frota|placa\s+[a-z]{3}\d{4})\b/i.test(objetoCompleto) && /\b(revisao|revisão|manutencao|manutenção|mecânica|mecanica)\b/i.test(objetoCompleto))
           if (temaVeiculo) {
-            console.log(`🚫 [Filtro] Licitação rejeitada (manutenção/revisão de veículo para setor Saúde):`, {
-              setor: setor.setor,
-              objeto: objetoCompleto.substring(0, 120)
-            })
+            console.log(`🚫 [Filtro] Licitação rejeitada (manutenção/revisão de veículo para setor Saúde): setor="${String(setor.setor)}" objeto="${String(objetoCompleto).substring(0, 120)}"`)
             return false
           }
         }
@@ -763,15 +865,59 @@ export function correspondeAtividades(
 
   /**
    * Por setor: palavras que provam que o edital é daquele setor (específicas).
-   * Fallback fixo no código; o banco (palavrasFortesPorSetor) sobrescreve/estende quando disponível.
+   * Chaves batem com nome normalizado do setor (tabela setores). Banco (palavrasFortesPorSetor) estende quando disponível.
    */
+  const palavrasFortesSaude = ['medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'medico', 'saude', 'hospital', 'laboratorio', 'radiologico', 'raio-x', 'dieta', 'enteral', 'parenteral', 'utensilio', 'vacina', 'vacinas', 'exame medico', 'analise laboratorial', 'oxigenio', 'oxigenio medicinal', 'medicinal', 'ambulatorio', 'pronto socorro', 'consulta medica', 'internacao', 'enfermagem', 'fisioterapia', 'psicologia', 'nutricao clinica', 'reabilitacao']
+  const palavrasFortesAlimentacao = ['alimentacao', 'alimento', 'cesta basica', 'cestas basicas', 'refeicao', 'refeicoes', 'copa', 'buffet', 'bebida', 'bebidas', 'generos alimenticios', 'merenda', 'merenda escolar', 'doacao', 'nutricao', 'hortifruti', 'hortifrutigranjeiros', 'catering']
+  const palavrasFortesInformatica = ['informatica', 'computador', 'software', 'hardware', 'sistema de informacao', 'ti', 'tecnologia', 'internet', 'conectividade', 'rede', 'licenca']
+  const palavrasFortesEngenharia = ['construcao', 'obra', 'edificacao', 'pavimentacao', 'reforma', 'saneamento', 'drenagem', 'asfalto', 'concreto', 'terraplanagem', 'demolicao', 'viaduto', 'tunel', 'passarela', 'arquitetura', 'energia eletrica', 'hidraulica', 'eletrica']
+  const palavrasFortesConstrucao = ['construcao', 'obra', 'edificacao', 'pavimentacao', 'reforma', 'saneamento', 'alvenaria', 'carpintaria', 'marcenaria', 'pintura', 'revestimento', 'acabamento', 'concreto', 'demolicao']
+  const palavrasFortesTransporte = ['veiculo', 'transporte', 'frota', 'onibus', 'caminhao', 'ambulancia', 'motocicleta', 'locacao de veiculos', 'logistica', 'carga', 'descarga', 'movimentacao']
+  const palavrasFortesFinanceiro = ['contabilidade', 'contabil', 'fiscal', 'tributario', 'tributo', 'nota fiscal', 'faturamento', 'cobranca', 'auditoria', 'certificacao', 'emissao de notas']
+  const palavrasFortesServicos = ['limpeza', 'conservacao', 'higienizacao', 'jardinagem', 'paisagismo', 'lavanderia', 'dedetizacao', 'desentupimento', 'impressao', 'grafica', 'design grafico', 'digitacao', 'digitalizacao', 'inspecao', 'vistoria', 'seguranca', 'vigilancia', 'portaria', 'recepcao', 'serralheria', 'solda', 'montagem', 'desmontagem', 'treinamento', 'capacitacao', 'varricao', 'coleta de lixo', 'residuos', 'traducao', 'transcricao', 'advocacia', 'juridico', 'recursos humanos', 'revisao de textos', 'calibracao', 'metrologia', 'call center', 'telemarketing', 'marketing', 'comunicacao', 'fotografia', 'filmagem', 'locacao de equipamentos', 'manutencao', 'reparo', 'telefonia', 'telecomunicacoes']
+  const palavrasFortesEventos = ['eventos', 'shows', 'sonorizacao', 'iluminacao', 'fotografia', 'filmagem', 'promocao']
+
   const PALAVRAS_FORTES_FALLBACK = {
-    saude: ['medicamento', 'medicamentos', 'hospitalar', 'laboratorial', 'medico', 'saude', 'hospital', 'laboratorio', 'radiologico', 'raio-x', 'dieta', 'enteral', 'parenteral', 'utensilio', 'vacina', 'vacinas', 'exame medico', 'analise laboratorial', 'oxigenio', 'oxigenio medicinal', 'medicinal', 'ambulatorio', 'pronto socorro', 'consulta medica', 'internacao'],
-    alimentacao: ['alimentacao', 'alimento', 'cesta basica', 'cestas basicas', 'refeicao', 'refeicoes', 'copa', 'buffet', 'bebida', 'bebidas', 'generos alimenticios', 'merenda', 'merenda escolar', 'doacao', 'nutricao', 'hortifruti', 'hortifrutigranjeiros'],
-    informatica: ['informatica', 'computador', 'software', 'hardware', 'sistema de informacao', 'ti', 'tecnologia'],
-    engenharia: ['construcao', 'obra', 'edificacao', 'pavimentacao', 'reforma', 'saneamento', 'drenagem', 'asfalto', 'concreto', 'terraplanagem', 'demolicao', 'viaduto', 'tunel', 'passarela'],
-    transporte: ['veiculo', 'transporte', 'frota', 'onibus', 'caminhao', 'ambulancia', 'motocicleta', 'locacao de veiculos'],
-    seguranca: ['seguranca', 'protecao', 'epi', 'armamento', 'vigilancia', 'protecao individual']
+    saude: palavrasFortesSaude,
+    alimentacao: palavrasFortesAlimentacao,
+    informatica: palavrasFortesInformatica,
+    engenharia: palavrasFortesEngenharia,
+    construcao: palavrasFortesConstrucao,
+    transporte: palavrasFortesTransporte,
+    financeiro: palavrasFortesFinanceiro,
+    eventos: palavrasFortesEventos,
+    seguranca: ['seguranca', 'protecao', 'epi', 'armamento', 'vigilancia', 'protecao individual'],
+    // Chaves dos setores da tabela setores (nome normalizado inclui uma delas)
+    contabeis: palavrasFortesFinanceiro,
+    fiscais: palavrasFortesFinanceiro,
+    tributarios: palavrasFortesFinanceiro,
+    laboratoriais: palavrasFortesSaude,
+    arquitetura: palavrasFortesEngenharia,
+    buffet: palavrasFortesAlimentacao,
+    catering: palavrasFortesAlimentacao,
+    copa: palavrasFortesAlimentacao,
+    cozinha: palavrasFortesAlimentacao,
+    nutricao: palavrasFortesAlimentacao,
+    enfermagem: palavrasFortesSaude,
+    fisioterapia: palavrasFortesSaude,
+    psicologia: palavrasFortesSaude,
+    medicos: palavrasFortesSaude,
+    'bem-estar': palavrasFortesSaude,
+    alvenaria: palavrasFortesConstrucao,
+    reformas: palavrasFortesConstrucao,
+    carpintaria: palavrasFortesConstrucao,
+    marcenaria: palavrasFortesConstrucao,
+    pintura: palavrasFortesConstrucao,
+    saneamento: palavrasFortesEngenharia,
+    'energia eletrica': palavrasFortesEngenharia,
+    eletricos: palavrasFortesEngenharia,
+    hidraulicos: palavrasFortesEngenharia,
+    tecnologia: palavrasFortesInformatica,
+    internet: palavrasFortesInformatica,
+    logistica: palavrasFortesTransporte,
+    limpeza: palavrasFortesServicos,
+    jardinagem: palavrasFortesServicos,
+    vigilancia: palavrasFortesServicos,
   }
   // Dinâmico: banco sobrescreve/estende o fallback (permite gerenciar sem deploy)
   const palavrasFortesMescladas = {}
@@ -966,11 +1112,11 @@ export function correspondeAtividades(
     if (pontuacaoCorrespondencia >= 5 && palavrasUnicasEncontradas.size >= 1 && exigeVocab && temPalavraForte) {
       return true
     }
-    // CASO 4: Pontuação média (4+) + 2+ termos + vocabulário + palavra forte (mais abrangente)
-    if (pontuacaoCorrespondencia >= 4 && palavrasUnicasEncontradas.size >= 2 && exigeVocab && temPalavraForte) {
+    // CASO 4: Pontuação média (5+) + 2+ termos + vocabulário + palavra forte (reforço contra falso positivo)
+    if (pontuacaoCorrespondencia >= 5 && palavrasUnicasEncontradas.size >= 2 && exigeVocab && temPalavraForte) {
       return true
     }
-    // Não passou: não mostrar (evita diesel, eventos, fardamento, etc.)
+    // Não passou: não mostrar (só compatíveis com setores e atividades cadastrados)
   }
   
   // FALLBACK: Se a empresa tem setores e não passou nos critérios restritivos acima, não aceitar (mostrar só compatíveis).
