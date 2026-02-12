@@ -29,9 +29,6 @@ export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
       await signOut()
       setDropdownOpen(false)
       setLocation('/')
-      // Em produção (ex.: Render), garantir que a URL mude mesmo se o SPA atrasar
-      const base = typeof window !== 'undefined' ? window.location.origin : ''
-      if (base) window.location.href = `${base}/login`
     } catch (error) {
       console.error('Erro ao fazer logout:', error)
     }
