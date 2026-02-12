@@ -7,9 +7,9 @@ export function ProtectedRoute({ children }) {
   const [, setLocation] = useLocation()
 
   useEffect(() => {
-    // Se não estiver carregando e não tiver usuário, redirecionar para a página de login (ex.: após logout)
+    // Se não estiver carregando e não tiver usuário, redirecionar para a raiz (evita 404 em produção quando rewrite /* não existe)
     if (!loading && !user) {
-      setLocation('/login')
+      setLocation('/')
     }
   }, [user, loading, setLocation])
 

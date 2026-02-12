@@ -100,7 +100,7 @@ export function Header() {
     try {
       await signOut()
       setDropdownOpen(false)
-      setLocation('/login')
+      setLocation('/')
       const base = typeof window !== 'undefined' ? window.location.origin : ''
       if (base) window.location.href = `${base}/login`
     } catch (error) {
