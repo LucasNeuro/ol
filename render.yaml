@@ -5,11 +5,7 @@ services:
     env: static
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
-    # SPA: todas as rotas (incl. /redefinir-senha do link do e-mail) devem servir index.html
     routes:
-      - type: rewrite
-        source: /redefinir-senha
-        destination: /index.html
       - type: rewrite
         source: /*
         destination: /index.html
