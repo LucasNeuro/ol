@@ -123,21 +123,10 @@ export function isSessionValid() {
 }
 
 /**
- * Retorna a URL base do app (para links de email). Em produção pode usar VITE_APP_URL.
- * RedirectTo deve ser URL absoluta e estar em Authentication → URL Configuration → Redirect URLs no Supabase.
- */
-function getAppOrigin() {
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin
-  }
-  const envUrl = typeof import.meta !== 'undefined' && import.meta.env?.VITE_APP_URL
-  if (envUrl) return envUrl.replace(/\/$/, '')
-  return ''
-}
-
-/**
  * Etapa 1 do reset (doc Supabase: "Redefinir uma senha").
- * 100% Supabase: o Supabase envia o email com o link; redirectTo deve estar em Redirect URLs no dashboard.
+ * Página pública: coletar e-mail, solicitar e-mail de redefinição.
+ * redirectTo = URL da página de alteração de senha (deve estar em Redirect URLs).
+ * Supabase envia o e-mail; SMTP customizado (ex. Resend) em prod.
  */
 export async function solicitarRecuperacaoSenha(email) {
   if (!supabase) throw new Error(SUPABASE_NAO_CONFIGURADO_MSG)
@@ -145,9 +134,7 @@ export async function solicitarRecuperacaoSenha(email) {
   const emailNorm = (email || '').toLowerCase().trim()
   if (!emailNorm) throw new Error('Informe o e-mail.')
 
-  const origin = getAppOrigin()
-  if (!origin) throw new Error('Não foi possível determinar a URL do app. Configure VITE_APP_URL no .env em produção.')
-
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const redirectTo = `${origin}/redefinir-senha`
 
   const { error } = await supabase.auth.resetPasswordForEmail(emailNorm, { redirectTo })

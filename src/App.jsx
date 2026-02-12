@@ -1,30 +1,29 @@
-import { useEffect, lazy, Suspense } from 'react'
+import { useEffect } from 'react'
 import { Route, Switch, Redirect } from 'wouter'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from '@/lib/queryClient'
 import { ToastProvider } from '@/components/ui/toast'
 import { ConfirmDialogProvider } from '@/components/ui/confirm-dialog'
 import { FiltroProvider } from '@/contexts/FiltroContext'
-import { useSessionTimeout } from '@/hooks/useSessionTimeout'
 import { useAuth } from '@/hooks/useAuth'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
-import { LicitacaoCardSkeletonList } from '@/components/LicitacaoCardSkeleton'
 
-// Páginas públicas – lazy load para carregamento inicial mais rápido
-const LandingPage = lazy(() => import('@/pages/landing').then(m => ({ default: m.LandingPage })))
-const LoginPage = lazy(() => import('@/pages/login').then(m => ({ default: m.LoginPage })))
-const CadastroPage = lazy(() => import('@/pages/cadastro').then(m => ({ default: m.CadastroPage })))
-const RecuperarSenhaPage = lazy(() => import('@/pages/recuperar-senha').then(m => ({ default: m.RecuperarSenhaPage })))
-const RedefinirSenhaPage = lazy(() => import('@/pages/redefinir-senha').then(m => ({ default: m.RedefinirSenhaPage })))
+// Páginas públicas
+import { LandingPage } from '@/pages/landing'
+import { LoginPage } from '@/pages/login'
+import { CadastroPage } from '@/pages/cadastro'
+import { RecuperarSenhaPage } from '@/pages/recuperar-senha'
+import { RedefinirSenhaPage } from '@/pages/redefinir-senha'
 
-// Páginas protegidas – lazy load
-const ModulosPage = lazy(() => import('@/pages/modulos').then(m => ({ default: m.ModulosPage })))
-const DashboardPage = lazy(() => import('@/pages/dashboard').then(m => ({ default: m.DashboardPage })))
-const BoletimDiaPage = lazy(() => import('@/pages/boletim-dia').then(m => ({ default: m.BoletimDiaPage })))
-const FavoritosPage = lazy(() => import('@/pages/favoritos').then(m => ({ default: m.FavoritosPage })))
-const EditalPage = lazy(() => import('@/pages/edital').then(m => ({ default: m.EditalPage })))
-const PerfilPage = lazy(() => import('@/pages/perfil').then(m => ({ default: m.PerfilPage })))
-const AdminUsuariosPage = lazy(() => import('@/pages/admin/usuarios').then(m => ({ default: m.AdminUsuariosPage })))
+// Páginas protegidas
+import { ModulosPage } from '@/pages/modulos'
+import { DashboardPage } from '@/pages/dashboard'
+import { BoletimPage } from '@/pages/boletim'
+import { BoletimDiaPage } from '@/pages/boletim-dia'
+import { FavoritosPage } from '@/pages/favoritos'
+import { EditalPage } from '@/pages/edital'
+import { PerfilPage } from '@/pages/perfil'
+import { AdminUsuariosPage } from '@/pages/admin/usuarios'
 
 /**
  * Função para limpar cache antigo do localStorage ao iniciar a aplicação
@@ -74,9 +73,7 @@ function limparCacheInicial() {
 }
 
 function AppContent() {
-  const { user } = useAuth()
-  // Timeout automático de sessão após 30 min de inatividade
-  useSessionTimeout(30)
+  useAuth()
 
   return (
     <Switch>
@@ -91,6 +88,7 @@ function AppContent() {
       <Route path="/modulos" component={() => <ProtectedRoute><ModulosPage /></ProtectedRoute>} />
       <Route path="/dashboard" component={() => <ProtectedRoute><DashboardPage /></ProtectedRoute>} />
       <Route path="/perfil" component={() => <ProtectedRoute><PerfilPage /></ProtectedRoute>} />
+      <Route path="/boletim" component={() => <ProtectedRoute><BoletimPage /></ProtectedRoute>} />
       <Route path="/licitacoes" component={() => <ProtectedRoute><BoletimDiaPage /></ProtectedRoute>} />
       <Route path="/favoritos" component={() => <ProtectedRoute><FavoritosPage /></ProtectedRoute>} />
       <Route path="/edital/:numeroControle" component={() => <ProtectedRoute><EditalPage /></ProtectedRoute>} />
@@ -117,15 +115,7 @@ function App() {
       <FiltroProvider>
         <ToastProvider>
           <ConfirmDialogProvider>
-            <Suspense fallback={
-              <div className="min-h-screen flex items-center justify-center bg-surface">
-                <div className="w-full max-w-2xl px-4">
-                  <LicitacaoCardSkeletonList count={6} />
-                </div>
-              </div>
-            }>
-              <AppContent />
-            </Suspense>
+            <AppContent />
           </ConfirmDialogProvider>
         </ToastProvider>
       </FiltroProvider>

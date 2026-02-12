@@ -51,7 +51,7 @@ export function LoginPage() {
 
   return (
     <PublicRoute>
-      <AuthLayout subtitle="Acesse sua conta">
+      <AuthLayout title="Entrar" subtitle="Acesse sua conta">
         <div className="bg-white shadow-2xl rounded-2xl p-8 md:p-10 border border-gray-100 max-w-md mx-auto">
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
                 <div>

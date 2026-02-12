@@ -10,7 +10,6 @@ import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/hooks/useAuth'
 import { useNotifications } from '@/hooks/useNotifications'
 import { supabase } from '@/lib/supabase'
-import { syncPalavrasFortesFromSetores } from '@/lib/palavrasFortes'
 import { Building2, MapPin, Phone, FileText, Edit2, Save, X, Settings, Plus, CheckCircle2 } from 'lucide-react'
 import { SelecionarSetores } from '@/components/SelecionarSetores'
 import { SelecionarEstados } from '@/components/SelecionarEstados'
@@ -193,14 +192,6 @@ function PerfilContent() {
       queryClient.invalidateQueries(['perfil-completo', user.id])
       queryClient.invalidateQueries(['perfil-usuario', user.id])
       queryClient.invalidateQueries(['licitacoes']) // Recarregar licitações com novos filtros
-      queryClient.invalidateQueries(['palavras-fortes-setor']) // Atualizar palavras fortes do filtro
-
-      // Popular tabela de palavras fortes com setores/subsetores (filtro dinâmico)
-      if (setoresSelecionados?.length > 0) {
-        syncPalavrasFortesFromSetores(setoresSelecionados, supabase).then(({ ok, inseridas }) => {
-          if (ok && inseridas) console.log(`✅ [palavrasFortes] ${inseridas} termo(s) sincronizado(s) a partir do perfil`)
-        })
-      }
 
       // Mostrar notificação de sucesso
       showSuccess('Configuração salva com sucesso! As licitações serão filtradas automaticamente.')

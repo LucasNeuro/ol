@@ -45,7 +45,7 @@ export function RecuperarSenhaPage() {
 
   return (
     <PublicRoute>
-      <AuthLayout subtitle="Digite seu email para receber o link de recuperação">
+      <AuthLayout title="Recuperar Senha" subtitle="Digite seu email para receber o link de recuperação">
         <div className="bg-white shadow-2xl rounded-2xl p-8 md:p-10 border border-gray-100 max-w-md mx-auto">
           {success ? (
             <div className="text-center space-y-4">
