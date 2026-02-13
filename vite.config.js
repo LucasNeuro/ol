@@ -9,15 +9,16 @@ import { dirname } from 'path'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
-// Plugin para copiar _redirects e _headers após o build (para Render Static Site)
+// Plugin para copiar _redirects, _headers e 404.html após o build (SPA fallback em produção)
 const copyRedirectsPlugin = () => {
   return {
     name: 'copy-redirects',
     writeBundle() {
-      // Copiar _redirects
+      const distDir = join(__dirname, 'dist')
+
+      // Copiar _redirects (Netlify e outros: /* → /index.html 200)
       const redirectsSource = join(__dirname, 'public', '_redirects')
-      const redirectsDest = join(__dirname, 'dist', '_redirects')
-      
+      const redirectsDest = join(distDir, '_redirects')
       if (existsSync(redirectsSource)) {
         try {
           copyFileSync(redirectsSource, redirectsDest)
@@ -25,20 +26,29 @@ const copyRedirectsPlugin = () => {
         } catch (error) {
           console.warn('⚠️ Erro ao copiar _redirects:', error.message)
         }
-      } else {
-        console.warn('⚠️ Arquivo _redirects não encontrado em public/')
       }
 
       // Copiar _headers
       const headersSource = join(__dirname, 'public', '_headers')
-      const headersDest = join(__dirname, 'dist', '_headers')
-      
+      const headersDest = join(distDir, '_headers')
       if (existsSync(headersSource)) {
         try {
           copyFileSync(headersSource, headersDest)
           console.log('✅ Arquivo _headers copiado para dist/')
         } catch (error) {
           console.warn('⚠️ Erro ao copiar _headers:', error.message)
+        }
+      }
+
+      // 404.html = cópia de index.html (fallback para hosts que servem 404 em rotas inexistentes, ex.: /redefinir-senha)
+      const indexPath = join(distDir, 'index.html')
+      const fallback404 = join(distDir, '404.html')
+      if (existsSync(indexPath)) {
+        try {
+          copyFileSync(indexPath, fallback404)
+          console.log('✅ 404.html criado (SPA fallback para /redefinir-senha etc.)')
+        } catch (error) {
+          console.warn('⚠️ Erro ao criar 404.html:', error.message)
         }
       }
     },
