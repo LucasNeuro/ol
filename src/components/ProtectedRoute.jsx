@@ -9,7 +9,6 @@ export function ProtectedRoute({ children }) {
   useEffect(() => {
     // Se não estiver carregando e não tiver usuário, redirecionar para landing page
     if (!loading && !user) {
-      console.log('⚠️ [ProtectedRoute] Usuário não autenticado, redirecionando para landing page')
       setLocation('/')
     }
   }, [user, loading, setLocation])

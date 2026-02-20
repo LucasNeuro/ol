@@ -35,7 +35,6 @@ export function useAuth() {
           clearUser()
         }
       } catch (e) {
-        console.error('❌ [useAuth] Erro ao verificar sessão:', e)
         clearUser()
       } finally {
         setLoading(false)
@@ -81,7 +80,6 @@ export function useAuth() {
       await authSignOut()
       await logout()
     } catch (e) {
-      console.error('Erro ao fazer logout:', e)
       throw e
     }
   }

@@ -217,7 +217,6 @@ function AdminUsuariosContent() {
     },
     onError: (err) => {
       showError('Erro ao atualizar usuários para Enterprise')
-      console.error(err)
     }
   })
 

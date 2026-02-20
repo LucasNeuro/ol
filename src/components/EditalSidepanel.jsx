@@ -35,7 +35,6 @@ async function salvarLicitacaoCompleta(licitacao, userId) {
 async function buscarLicitacaoDoBanco(numeroControlePNCP) {
   const resultado = await buscarLicitacaoDoBancoSync(numeroControlePNCP)
   if (!resultado || !resultado.contratacao) {
-    console.log('⚠️ [Sidepanel] Nenhum resultado do banco')
     return null
   }
   
@@ -142,7 +141,6 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
         }
 
         // Descompactar automaticamente
-        console.log(`📦 [Auto-ZIP] Descompactando automaticamente: ${nome}`)
         setArquivosZipDescompactados(prev => ({
           ...prev,
           [docKey]: { loading: true, arquivos: [], erro: null }
@@ -150,14 +148,12 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
 
         descompactarZip(url, nome)
           .then(arquivos => {
-            console.log(`✅ [Auto-ZIP] ${nome} descompactado: ${arquivos.length} arquivos`)
             setArquivosZipDescompactados(prev => ({
               ...prev,
               [docKey]: { loading: false, arquivos, erro: null }
             }))
           })
           .catch(error => {
-            console.error(`❌ [Auto-ZIP] Erro ao descompactar ${nome}:`, error)
             setArquivosZipDescompactados(prev => ({
               ...prev,
               [docKey]: { loading: false, arquivos: [], erro: error.message }
@@ -172,27 +168,17 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
     queryKey: ['edital-sidepanel', numeroControle, user?.id],
     queryFn: async () => {
       if (!numeroControle) {
-        console.warn('⚠️ [Sidepanel] Número de controle não fornecido')
         return null
       }
 
-      console.log('🔍 [Sidepanel] ===== INICIANDO BUSCA =====')
-      console.log('🔍 [Sidepanel] Número de controle:', numeroControle)
-      console.log('🔍 [Sidepanel] User ID:', user?.id)
 
       // 1. PRIMEIRO: Tentar buscar do banco de dados
       if (user?.id && supabase) {
-        console.log('📦 [Sidepanel] Buscando do banco de dados...')
         const licitacaoDoBanco = await buscarLicitacaoDoBanco(numeroControle)
         
         if (licitacaoDoBanco && licitacaoDoBanco.numeroControlePNCP) {
-          console.log('✅ [Sidepanel] Licitação encontrada no banco!', {
-            itens: licitacaoDoBanco.itens?.length || 0,
-            documentos: licitacaoDoBanco.documentos?.length || 0,
-          })
           return licitacaoDoBanco
         }
-        console.log('⚠️ [Sidepanel] Licitação não encontrada no banco, buscando da API...')
       }
 
       // 2. SEGUNDO: Se não encontrou no banco, buscar da API
@@ -223,33 +209,23 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
 
             if (encontrada) {
               licitacaoBasica = encontrada
-              console.log('✅ [Sidepanel] Licitação encontrada na API, data:', dataStr)
               break
             }
           }
         } catch (err) {
-          console.warn(`⚠️ [Sidepanel] Erro ao buscar data ${dataStr}:`, err.message)
           continue
         }
       }
 
       if (!licitacaoBasica) {
-        console.warn('⚠️ [Sidepanel] Licitação não encontrada na API')
         return null
       }
 
       // 3. Buscar detalhes completos (itens, documentos)
-      console.log('🔍 [Sidepanel] Buscando detalhes da API...')
       let detalhes = null
       try {
         detalhes = await buscarDetalhesContratacao(numeroControle)
-        console.log('✅ [Sidepanel] Detalhes obtidos:', {
-          temContratacao: !!detalhes?.contratacao,
-          itens: detalhes?.itens?.length || 0,
-          documentos: detalhes?.documentos?.length || 0,
-        })
       } catch (err) {
-        console.error('❌ [Sidepanel] Erro ao buscar detalhes:', err)
       }
       
       // Combinar dados básicos com detalhes (formato plano)
@@ -262,32 +238,17 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
         documentos: detalhes?.documentos || []
       }
       
-      console.log('📊 [Sidepanel] Resultado final:', {
-        numeroControle: resultado.numeroControlePNCP,
-        objeto: resultado.objetoCompra?.substring(0, 50),
-        itens: resultado.itens?.length || 0,
-        documentos: resultado.documentos?.length || 0,
-      })
       
       // 4. SALVAR NO BANCO para próximas consultas
       if (user?.id && supabase && resultado.numeroControlePNCP) {
-        console.log('💾 [Sidepanel] Salvando no banco de dados...')
         try {
           const salvo = await salvarLicitacaoCompleta(resultado, user.id)
           if (salvo) {
-            console.log('✅ [Sidepanel] Licitação salva com sucesso no banco!')
           } else {
-            console.warn('⚠️ [Sidepanel] Não foi possível salvar no banco')
           }
         } catch (err) {
-          console.error('❌ [Sidepanel] Erro ao salvar no banco:', err)
         }
       } else {
-        console.warn('⚠️ [Sidepanel] Não salvando - faltam dados:', {
-          temUser: !!user?.id,
-          temSupabase: !!supabase,
-          temNumeroControle: !!resultado.numeroControlePNCP,
-        })
       }
       
       return resultado
@@ -326,7 +287,6 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
 
         return !!existing
       } catch (error) {
-        console.error('Erro ao verificar favorito:', error)
         return false
       }
     },
@@ -348,7 +308,6 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
         .maybeSingle()
 
       if (erroUsuario || !usuarioExiste) {
-        console.error('❌ Usuário não encontrado na tabela profiles:', erroUsuario)
         showError('Sua sessão expirou. Por favor, faça login novamente.')
         // Limpar sessão inválida
         const { clearUser } = useUserStore.getState()
@@ -366,7 +325,6 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
         .maybeSingle()
       
       if (!licitacaoExistente) {
-        console.warn('⚠️ [Favorito] Licitação não encontrada no banco:', licitacao.numeroControlePNCP)
         showError('Licitação não encontrada no banco. Tente abrir os detalhes novamente.')
         return
       }
@@ -410,7 +368,6 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
         setIsFavorito(true)
       }
     } catch (error) {
-      console.error('Erro ao atualizar favorito:', error)
       showError('Erro ao atualizar favorito. Tente novamente.')
     }
   }
@@ -674,7 +631,6 @@ export function EditalSidepanel({ numeroControle, open, onOpenChange }) {
                             [docKey]: { loading: false, arquivos, erro: null }
                           }))
                         } catch (error) {
-                          console.error('❌ Erro ao descompactar ZIP:', error)
                           setArquivosZipDescompactados(prev => ({
                             ...prev,
                             [docKey]: { loading: false, arquivos: [], erro: error.message }

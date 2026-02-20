@@ -79,7 +79,6 @@ export function VisualizadorDocumento({
         licitacaoId || 'visualizacao'
       )
     } catch (error) {
-      console.error('Erro ao processar documento para chat:', error)
     } finally {
       setProcessandoDoc(false)
     }
@@ -140,13 +139,6 @@ export function VisualizadorDocumento({
       // OU se tiver qualquer indicação de PDF
       const resultadoIsPdf = !temExtensaoNaoPdf || temIndicacaoPdf
       
-      console.log('🔍 Detecção de tipo:', {
-        urlDocumento: urlDocumento.substring(0, 100),
-        nomeArquivo,
-        temIndicacaoPdf,
-        temExtensaoNaoPdf,
-        resultadoIsPdf
-      })
       
       setIsPdf(resultadoIsPdf)
       
@@ -176,7 +168,6 @@ export function VisualizadorDocumento({
   // Função para baixar e salvar PDF no Supabase Storage usando Edge Function
   const baixarESalvarNoBucket = async () => {
     try {
-      console.log('📥 Processando PDF via Edge Function:', urlDocumento)
       
       if (!supabase) {
         throw new Error('Supabase não configurado')
@@ -195,7 +186,6 @@ export function VisualizadorDocumento({
       // Usar Edge Function para baixar e salvar (contorna CORS)
       const edgeFunctionUrl = `${supabaseUrl}/functions/v1/processar-documento`
       
-      console.log('🔗 Chamando Edge Function:', edgeFunctionUrl)
       
       let response
       try {
@@ -213,7 +203,6 @@ export function VisualizadorDocumento({
           }),
         })
       } catch (fetchError) {
-        console.error('❌ Erro na requisição fetch:', fetchError)
         // Se a Edge Function não existir ou não estiver disponível
         if (fetchError.message.includes('Failed to fetch') || fetchError.message.includes('NetworkError')) {
           throw new Error('Edge Function não disponível. Verifique se está deployada e acessível. O documento precisa ser aberto em nova aba devido a restrições CORS.')
@@ -221,7 +210,6 @@ export function VisualizadorDocumento({
         throw fetchError
       }
       
-      console.log('📡 Resposta recebida:', response.status, response.statusText)
       
       if (!response.ok) {
         // Se retornar 404, a Edge Function não existe
@@ -232,7 +220,6 @@ export function VisualizadorDocumento({
         let errorText = 'Erro desconhecido'
         try {
           errorText = await response.text()
-          console.error('❌ Erro na Edge Function:', errorText)
           
           // Tentar parsear como JSON
           try {
@@ -241,20 +228,17 @@ export function VisualizadorDocumento({
               errorText = errorJson.error
             }
             if (errorJson.details) {
-              console.error('❌ Detalhes do erro:', errorJson.details)
             }
           } catch (e) {
             // Não é JSON, usar texto direto
           }
         } catch (e) {
-          console.error('❌ Erro ao ler resposta de erro:', e)
         }
         
         throw new Error(`Erro ao processar documento (${response.status}): ${errorText}`)
       }
       
       const result = await response.json()
-      console.log('✅ Resultado da Edge Function:', result)
       
       if (!result.success) {
         throw new Error(result.error || 'Erro ao processar documento')
@@ -264,13 +248,10 @@ export function VisualizadorDocumento({
         throw new Error('Resposta da Edge Function inválida: URL do documento não encontrada')
       }
       
-      console.log('✅ PDF processado e salvo:', result.documento)
       
       // Retornar URL do storage
       return result.documento.urlStorage
     } catch (err) {
-      console.error('❌ Erro ao processar PDF via Edge Function:', err)
-      console.error('❌ Stack:', err.stack)
       throw err
     }
   }
@@ -285,7 +266,6 @@ export function VisualizadorDocumento({
       setLoading(true)
       setError(null)
       
-      console.log('📥 Iniciando carregamento de PDF...')
       
       // SEMPRE usar Edge Function primeiro para evitar problemas de CORS
       // A API do PNCP tem problemas de CORS que impedem acesso direto
@@ -294,12 +274,10 @@ export function VisualizadorDocumento({
       
       // Estratégia 1: Usar Edge Function para baixar e salvar no bucket (contorna CORS)
       try {
-        console.log('🔄 Usando Edge Function para contornar CORS...')
         const urlLocalStorage = await baixarESalvarNoBucket()
         urlParaUsar = urlLocalStorage
         setUrlLocal(urlLocalStorage)
         tentouBucket = true
-        console.log('✅ PDF processado via Edge Function, usando URL local:', urlLocalStorage)
         
         // Tentar carregar o PDF do bucket
         const loadingTask = pdfjsLib.getDocument({
@@ -310,7 +288,6 @@ export function VisualizadorDocumento({
         })
         
         const pdfData = await loadingTask.promise
-        console.log('✅ PDF carregado do bucket:', pdfData.numPages, 'páginas')
         
         setPdfDoc(pdfData)
         setNumPages(pdfData.numPages)
@@ -318,7 +295,6 @@ export function VisualizadorDocumento({
         setLoading(false)
         return // Sucesso!
       } catch (bucketError) {
-        console.error('❌ Falha ao processar via Edge Function:', bucketError.message)
         
         // Se o erro for de tamanho, mostrar mensagem específica
         if (bucketError.message.includes('muito grande')) {
@@ -326,7 +302,6 @@ export function VisualizadorDocumento({
         }
         
         // Se o erro for de CORS ou outro, tentar carregar diretamente como fallback
-        console.warn('⚠️ Tentando carregar diretamente como fallback...')
         try {
           const loadingTaskDireto = pdfjsLib.getDocument({
             url: urlDocumento,
@@ -336,7 +311,6 @@ export function VisualizadorDocumento({
           })
           
           const pdfDataDireto = await loadingTaskDireto.promise
-          console.log('✅ PDF carregado diretamente (fallback):', pdfDataDireto.numPages, 'páginas')
           
           setPdfDoc(pdfDataDireto)
           setNumPages(pdfDataDireto.numPages)
@@ -344,13 +318,11 @@ export function VisualizadorDocumento({
           setLoading(false)
           return // Sucesso no fallback!
         } catch (erroDireto) {
-          console.error('❌ Fallback também falhou:', erroDireto.message)
           throw new Error('Não foi possível carregar o documento. O servidor bloqueia o acesso devido a restrições de segurança (CORS). Use "Abrir em nova aba" para visualizar o documento.')
         }
       }
       
     } catch (err) {
-      console.error('❌ Erro ao carregar PDF:', err)
       setError(err.message || 'Não foi possível carregar o documento PDF')
       setLoading(false)
     }
@@ -371,7 +343,6 @@ export function VisualizadorDocumento({
         try {
           renderTaskRef.current.cancel()
         } catch (err) {
-          console.warn('⚠️ Falha ao cancelar render anterior:', err)
         }
       }
       
@@ -396,9 +367,7 @@ export function VisualizadorDocumento({
       
       renderTaskRef.current = page.render(renderContext)
       await renderTaskRef.current.promise
-      console.log('✅ Página renderizada:', pageNumber, 'zoom:', zoom, 'dimensões:', viewport.width, 'x', viewport.height)
     } catch (err) {
-      console.error('❌ Erro ao renderizar página:', err)
       setError('Erro ao renderizar página do documento')
     } finally {
       renderTaskRef.current = null

@@ -71,7 +71,6 @@ export function ChatDocumento({
         licitacaoId
       )
     } catch (error) {
-      console.error('Erro ao processar:', error)
     } finally {
       setProcessando(false)
     }

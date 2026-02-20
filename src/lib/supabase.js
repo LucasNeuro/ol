@@ -13,9 +13,6 @@ export const SUPABASE_NAO_CONFIGURADO_MSG =
 // Validação mais amigável
 if (!isSupabaseConfigured) {
   if (import.meta.env.DEV) {
-    console.warn('⚠️ Variáveis de ambiente do Supabase não configuradas!')
-    console.warn('Crie um arquivo .env com VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY')
-    console.warn('Funcionalidades que requerem autenticação não estarão disponíveis.')
   }
 }
 

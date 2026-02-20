@@ -98,7 +98,6 @@ export async function sincronizarLicitacoesComCliente(supabaseClient, dataInicia
       total: licitacoes.length,
     }
   } catch (error) {
-    console.error('Erro ao sincronizar licitações:', error)
     return {
       sucesso: false,
       erro: error.message,
@@ -131,38 +130,25 @@ export async function sincronizarLicitacoesRecentes(dias = 7) {
  */
 export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
   if (!supabase || !licitacaoBasica?.numeroControlePNCP) {
-    console.error('❌ [Salvar Completa] Dados inválidos')
     return null
   }
 
   try {
-    console.log(`💾 [Salvar Completa] ===== INICIANDO SALVAMENTO =====`)
-    console.log(`💾 [Salvar Completa] Número de controle: ${licitacaoBasica.numeroControlePNCP}`)
-    console.log(`💾 [Salvar Completa] User ID: ${userId}`)
-    console.log(`💾 [Salvar Completa] Supabase configurado: ${!!supabase}`)
     
     if (!supabase) {
-      console.error('❌ [Salvar Completa] Supabase não está configurado!')
       return null
     }
     
     // 1. Buscar detalhes completos da API (itens e documentos com links)
-    console.log(`📡 [Salvar Completa] Buscando detalhes da API...`)
     let detalhes = null
     try {
       detalhes = await buscarDetalhesContratacao(licitacaoBasica.numeroControlePNCP)
-      console.log(`✅ [Salvar Completa] Detalhes obtidos:`, {
-        itens: detalhes?.itens?.length || 0,
-        documentos: detalhes?.documentos?.length || 0,
-      })
     } catch (err) {
-      console.error(`❌ [Salvar Completa] Erro ao buscar detalhes:`, err)
       // Salvar apenas os dados básicos
       return await salvarLicitacaoBasica(licitacaoBasica, userId)
     }
     
     if (!detalhes) {
-      console.warn(`⚠️ [Salvar Completa] Nenhum detalhe retornado da API`)
       // Salvar apenas os dados básicos
       return await salvarLicitacaoBasica(licitacaoBasica, userId)
     }
@@ -172,10 +158,8 @@ export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
     const itens = detalhes.itens || []
     const documentos = detalhes.documentos || []
     
-    console.log(`✅ [Salvar Completa] Dados obtidos: ${itens.length} itens, ${documentos.length} documentos`)
     
     // 2. Salvar licitação principal
-    console.log(`💾 [Salvar Completa] Verificando se licitação já existe...`)
     const { data: existente, error: errorExistente } = await supabase
       .from('licitacoes')
       .select('id')
@@ -183,14 +167,9 @@ export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
       .maybeSingle()
     
     if (errorExistente) {
-      console.error('❌ [Salvar Completa] Erro ao verificar existente:', errorExistente)
-      console.error('❌ [Salvar Completa] Código:', errorExistente.code)
-      console.error('❌ [Salvar Completa] Mensagem:', errorExistente.message)
-      console.error('❌ [Salvar Completa] Detalhes:', errorExistente.details)
       return null
     }
     
-    console.log(`💾 [Salvar Completa] Licitação existente: ${!!existente}`)
 
     const dadosLicitacao = {
       numero_controle_pncp: licitacao.numeroControlePNCP,
@@ -225,7 +204,6 @@ export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
 
     let licitacaoId
     if (existente) {
-      console.log(`💾 [Salvar Completa] Atualizando licitação existente (ID: ${existente.id})...`)
       const { data: atualizada, error: errorUpdate } = await supabase
         .from('licitacoes')
         .update(dadosLicitacao)
@@ -234,16 +212,11 @@ export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
         .single()
       
       if (errorUpdate) {
-        console.error('❌ [Salvar Completa] Erro ao atualizar:', errorUpdate)
-        console.error('❌ [Salvar Completa] Código:', errorUpdate.code)
-        console.error('❌ [Salvar Completa] Mensagem:', errorUpdate.message)
         return null
       }
       
       licitacaoId = atualizada?.id || existente.id
-      console.log(`✅ [Salvar Completa] Licitação atualizada: ${licitacaoId}`)
     } else {
-      console.log(`💾 [Salvar Completa] Inserindo nova licitação...`)
       const { data: nova, error: errorInsert } = await supabase
         .from('licitacoes')
         .insert(dadosLicitacao)
@@ -251,26 +224,18 @@ export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
         .single()
       
       if (errorInsert) {
-        console.error('❌ [Salvar Completa] Erro ao inserir:', errorInsert)
-        console.error('❌ [Salvar Completa] Código:', errorInsert.code)
-        console.error('❌ [Salvar Completa] Mensagem:', errorInsert.message)
-        console.error('❌ [Salvar Completa] Detalhes:', errorInsert.details)
-        console.error('❌ [Salvar Completa] Hint:', errorInsert.hint)
         return null
       }
       
       licitacaoId = nova?.id
-      console.log(`✅ [Salvar Completa] Licitação inserida: ${licitacaoId}`)
     }
 
     if (!licitacaoId) {
-      console.error('❌ [Salvar Completa] Erro: licitacaoId é null após salvar')
       return null
     }
 
     // 3. Salvar itens (deletar existentes e inserir novos)
     if (itens.length > 0) {
-      console.log(`💾 [Salvar Completa] Salvando ${itens.length} itens...`)
       
       // Deletar itens existentes
       const { error: errorDeleteItens } = await supabase
@@ -279,9 +244,7 @@ export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
         .eq('licitacao_id', licitacaoId)
 
       if (errorDeleteItens) {
-        console.warn('⚠️ [Salvar Completa] Erro ao deletar itens antigos:', errorDeleteItens)
       } else {
-        console.log(`✅ [Salvar Completa] Itens antigos deletados`)
       }
 
       // Inserir novos itens
@@ -306,19 +269,13 @@ export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
         .select()
 
       if (errorItens) {
-        console.error('❌ [Salvar Completa] Erro ao salvar itens:', errorItens)
-        console.error('❌ [Salvar Completa] Código:', errorItens.code)
-        console.error('❌ [Salvar Completa] Mensagem:', errorItens.message)
       } else {
-        console.log(`✅ [Salvar Completa] ${itensSalvos?.length || itensParaSalvar.length} itens salvos com sucesso`)
       }
     } else {
-      console.log(`⚠️ [Salvar Completa] Nenhum item para salvar`)
     }
 
     // 4. Salvar documentos COM LINKS (deletar existentes e inserir novos)
     if (documentos.length > 0) {
-      console.log(`💾 [Salvar Completa] Salvando ${documentos.length} documentos (com links)...`)
       
       // Deletar documentos existentes
       const { error: errorDeleteDocs } = await supabase
@@ -327,9 +284,7 @@ export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
         .eq('licitacao_id', licitacaoId)
 
       if (errorDeleteDocs) {
-        console.warn('⚠️ [Salvar Completa] Erro ao deletar documentos antigos:', errorDeleteDocs)
       } else {
-        console.log(`✅ [Salvar Completa] Documentos antigos deletados`)
       }
 
       // Inserir novos documentos (INCLUINDO LINKS)
@@ -348,12 +303,9 @@ export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
         }
       })
 
-      console.log(`📎 [Salvar Completa] Preparando ${documentosParaSalvar.length} documentos com links:`)
       documentosParaSalvar.forEach((doc, idx) => {
         if (doc.url_documento) {
-          console.log(`   ${idx + 1}. ${doc.nome_arquivo}: ${doc.url_documento.substring(0, 80)}...`)
         } else {
-          console.warn(`   ⚠️ ${idx + 1}. ${doc.nome_arquivo}: SEM LINK`)
         }
       })
 
@@ -363,27 +315,18 @@ export async function salvarLicitacaoCompleta(licitacaoBasica, userId = null) {
         .select()
 
       if (errorDocs) {
-        console.error('❌ [Salvar Completa] Erro ao salvar documentos:', errorDocs)
-        console.error('❌ [Salvar Completa] Código:', errorDocs.code)
-        console.error('❌ [Salvar Completa] Mensagem:', errorDocs.message)
-        console.error('❌ [Salvar Completa] Detalhes:', errorDocs.details)
       } else {
-        console.log(`✅ [Salvar Completa] ${docsSalvos?.length || documentosParaSalvar.length} documentos salvos com sucesso (com links)`)
         // Log dos links salvos
         docsSalvos?.forEach((doc, idx) => {
           if (doc.url_documento) {
-            console.log(`   ✅ ${idx + 1}. ${doc.nome_arquivo}: Link salvo`)
           }
         })
       }
     } else {
-      console.log(`⚠️ [Salvar Completa] Nenhum documento para salvar`)
     }
 
-    console.log(`✅ [Salvar Completa] Licitação salva com sucesso: ${licitacaoId}`)
     return licitacaoId
   } catch (error) {
-    console.error('❌ [Salvar Completa] Erro:', error)
     return null
   }
 }
@@ -439,7 +382,6 @@ async function salvarLicitacaoBasica(licitacao, userId = null) {
       return data?.id
     }
   } catch (error) {
-    console.error('❌ [Salvar Básica] Erro:', error)
     return null
   }
 }
@@ -479,7 +421,6 @@ export async function buscarLicitacaoDoBanco(numeroControlePNCP) {
       documentos: documentos || [],
     }
   } catch (error) {
-    console.error('❌ [Buscar Banco] Erro:', error)
     return null
   }
 }
@@ -599,7 +540,6 @@ async function salvarLoteLicitacoes(licitacoes) {
             numerosSalvos.push(licitacao.numeroControlePNCP)
           }
         } catch (err) {
-          console.warn(`⚠️ [Salvar Lote] Erro ao salvar licitação ${licitacao.numeroControlePNCP}:`, err.message)
           // Continuar com as próximas mesmo se uma falhar
         }
       }
@@ -607,7 +547,6 @@ async function salvarLoteLicitacoes(licitacoes) {
 
     return { ids: idsSalvos, numeros: numerosSalvos }
   } catch (error) {
-    console.error('❌ [Salvar Lote] Erro ao salvar lote:', error)
     return { ids: idsSalvos, numeros: numerosSalvos }
   }
 }
@@ -646,7 +585,6 @@ export async function buscarESalvarLicitacoesEmLotes(filtros, userId, onProgress
 
     // Se cache válido encontrado, retornar do banco
     if (buscaExistente && buscaExistente.licitacoes_ids && buscaExistente.licitacoes_ids.length > 0) {
-      console.log('✅ [Buscar e Salvar] Cache encontrado! Retornando do banco...')
       
       const { data: licitacoesDoBanco } = await supabase
         .from('licitacoes')
@@ -665,7 +603,6 @@ export async function buscarESalvarLicitacoesEmLotes(filtros, userId, onProgress
     }
 
     // 2. Buscar da API em lotes
-    console.log('📡 [Buscar e Salvar] Buscando da API em lotes...')
     
     const { buscarContratacoesPorData } = await import('./pncp')
     
@@ -763,10 +700,8 @@ export async function buscarESalvarLicitacoesEmLotes(filtros, userId, onProgress
       .single()
 
     if (errorBusca) {
-      console.error('❌ [Buscar e Salvar] Erro ao salvar busca:', errorBusca)
     } else {
       buscaId = buscaSalva?.id
-      console.log('✅ [Buscar e Salvar] Busca salva:', buscaId)
     }
 
     // 4. Log da ação do usuário
@@ -785,7 +720,6 @@ export async function buscarESalvarLicitacoesEmLotes(filtros, userId, onProgress
           },
         })
     } catch (err) {
-      console.warn('⚠️ [Buscar e Salvar] Erro ao salvar log:', err)
     }
 
     return {
@@ -798,7 +732,6 @@ export async function buscarESalvarLicitacoesEmLotes(filtros, userId, onProgress
       tempoBusca,
     }
   } catch (error) {
-    console.error('❌ [Buscar e Salvar] Erro:', error)
     
     // Salvar busca com erro
     if (userId && supabase) {
@@ -819,7 +752,6 @@ export async function buscarESalvarLicitacoesEmLotes(filtros, userId, onProgress
             erro_mensagem: error.message,
           })
       } catch (err) {
-        console.error('❌ [Buscar e Salvar] Erro ao salvar busca com erro:', err)
       }
     }
 

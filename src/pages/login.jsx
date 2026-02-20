@@ -42,7 +42,12 @@ export function LoginPage() {
       await signIn(data.email, data.password)
       setLocation('/modulos')
     } catch (err) {
-      setError(err.message || 'Erro ao fazer login. Verifique suas credenciais.')
+      const msg = err.message || ''
+      if (/email not confirmed|email_not_confirmed/i.test(msg)) {
+        setError('Conta ainda não confirmada no Supabase. Faça os 2 passos em docs/SUPABASE-CADASTRO.md: (1) Desative "Confirm email" em Authentication → Providers → Email; (2) No SQL Editor, execute o UPDATE em auth.users para confirmar todos os usuários.')
+      } else {
+        setError(msg || 'Erro ao fazer login. Verifique suas credenciais.')
+      }
     } finally {
       setLoading(false)
     }

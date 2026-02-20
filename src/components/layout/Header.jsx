@@ -34,11 +34,9 @@ export function Header() {
         if (userStr) {
           const user = JSON.parse(userStr)
           if (user?.id) {
-            console.log('✅ [Header] ID encontrado na sessão:', user.id)
           }
         }
       } catch (e) {
-        console.warn('⚠️ [Header] Erro ao ler sessão:', e)
       }
     }
   }, [userId, isAuthenticated])
@@ -48,12 +46,10 @@ export function Header() {
     queryKey: ['perfil-header', userId],
     queryFn: async () => {
       if (!userId) {
-        console.warn('⚠️ [Header] Sem userId')
         return null
       }
       
       try {
-        console.log('🔍 [Header] Buscando perfil para id:', userId)
         const { data, error } = await supabase
           .from('profiles')
           .select('razao_social, nome_fantasia, email')
@@ -61,19 +57,15 @@ export function Header() {
           .maybeSingle()
         
         if (error) {
-          console.warn('⚠️ Erro ao buscar perfil no header:', error)
           return null
         }
         
         if (!data) {
-          console.warn('⚠️ [Header] Perfil não encontrado para id:', userId)
           return null
         }
         
-        console.log('✅ [Header] Perfil completo carregado:', data)
         return data
       } catch (err) {
-        console.error('❌ Erro ao buscar perfil no header:', err)
         return null
       }
     },
@@ -103,7 +95,6 @@ export function Header() {
       // Redirecionar para login usando o roteador do wouter (funciona melhor no Render)
       setLocation('/login')
     } catch (error) {
-      console.error('Erro ao fazer logout:', error)
     }
   }
 

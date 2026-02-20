@@ -78,7 +78,6 @@ export async function geocodificarEndereco(cep, logradouro, numero, municipio, u
       }
     }
   } catch (error) {
-    console.warn('Erro ao geocodificar endereço:', error)
   }
 
   return null
@@ -137,7 +136,6 @@ export async function geocodificarMunicipio(codigoIbge, municipioNome, uf) {
       return await geocodificarEndereco(null, null, null, municipioNome, uf)
     }
   } catch (error) {
-    console.warn('Erro ao geocodificar município:', error)
   }
 
   return null

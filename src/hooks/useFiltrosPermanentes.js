@@ -148,7 +148,6 @@ export function useFiltrosPermanentes() {
         }
       } catch (e) {
         // Campos não existem, usar estrutura antiga (já configurada acima)
-        console.warn('Usando estrutura JSONB para campos novos:', e.message)
       }
 
       const { data, error } = await supabase

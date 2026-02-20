@@ -26,13 +26,11 @@ export function useChatDocumento() {
         .maybeSingle()
       
       if (error) {
-        console.warn('⚠️ Erro ao buscar perfil:', error)
         return null
       }
       
       return data
     } catch (err) {
-      console.error('❌ Erro ao buscar dados da empresa:', err)
       return null
     }
   }, [user?.id])
@@ -43,7 +41,6 @@ export function useChatDocumento() {
     setErro(null)
 
     try {
-      console.log('📥 Processando documento:', nomeArquivo)
 
       const { data: session } = await supabase.auth.getSession()
       const token = session?.session?.access_token
@@ -70,13 +67,11 @@ export function useChatDocumento() {
         throw new Error(result.error || 'Erro ao processar documento')
       }
 
-      console.log('✅ Documento processado:', result.documento)
       setDocumentoProcessado(result.documento)
       
       return result.documento
 
     } catch (error) {
-      console.error('❌ Erro ao processar documento:', error)
       setErro(error.message)
       throw error
     } finally {
@@ -98,11 +93,9 @@ export function useChatDocumento() {
     setErro(null)
 
     try {
-      console.log('💬 Enviando pergunta:', pergunta)
 
       // Buscar dados da empresa para contexto
       const dadosEmpresa = await buscarDadosEmpresa()
-      console.log('🏢 Dados da empresa carregados:', dadosEmpresa ? 'Sim' : 'Não')
 
       // Adicionar mensagem do usuário
       const mensagemUsuario = {
@@ -144,7 +137,6 @@ export function useChatDocumento() {
         throw new Error(result.error || 'Erro ao processar pergunta')
       }
 
-      console.log('✅ Resposta recebida')
 
       // Adicionar resposta da IA
       const mensagemIA = {
@@ -159,7 +151,6 @@ export function useChatDocumento() {
       return result
 
     } catch (error) {
-      console.error('❌ Erro ao enviar pergunta:', error)
       setErro(error.message)
       
       // Remover mensagem do usuário em caso de erro

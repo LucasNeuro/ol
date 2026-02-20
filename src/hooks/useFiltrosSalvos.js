@@ -96,7 +96,6 @@ export function useFiltrosSalvos() {
           }
         } catch (e) {
           // Campos não existem, usar estrutura JSONB (já configurada acima)
-          console.warn('Usando estrutura JSONB para campos novos:', e.message)
         }
       } else if (permanente) {
         // Filtro permanente sem critérios estruturados (estrutura antiga)

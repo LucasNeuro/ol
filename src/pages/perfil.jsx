@@ -45,7 +45,6 @@ function PerfilContent() {
         .maybeSingle()
       
       if (error) {
-        console.error('❌ Erro ao buscar perfil completo:', error)
         throw error
       }
       

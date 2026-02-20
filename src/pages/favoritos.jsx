@@ -78,7 +78,6 @@ function FavoritosContent() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['favoritos'])
-      console.log('✅ Removido dos favoritos')
     }
   })
 
@@ -150,7 +149,6 @@ DOCUMENTOS: ${licitacao.anexos?.length || 0}
             : JSON.parse(user.cnaes_secundarios)
         }
       } catch (e) {
-        console.warn('Erro ao parsear CNAEs:', e)
         cnaesSecundarios = []
       }
       
@@ -218,7 +216,6 @@ REGRAS CRÍTICAS:
       }))
 
     } catch (error) {
-      console.error('❌ Erro ao gerar resumo:', error)
       setResumosIA(prev => ({
         ...prev,
         [licitacaoId]: { 

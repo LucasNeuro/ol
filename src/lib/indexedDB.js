@@ -21,7 +21,6 @@ function openDB() {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
 
     request.onerror = () => {
-      console.error('❌ [IndexedDB] Erro ao abrir database:', request.error)
       reject(request.error)
     }
 
@@ -36,7 +35,6 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         const store = db.createObjectStore(STORE_NAME, { keyPath: 'key' })
         store.createIndex('timestamp', 'timestamp', { unique: false })
-        console.log('✅ [IndexedDB] Object store criado')
       }
     }
   })
@@ -64,7 +62,6 @@ export async function setItem(key, value) {
     
     return Promise.resolve()
   } catch (error) {
-    console.error(`❌ [IndexedDB] Erro ao salvar ${key}:`, error)
     throw error
   }
 }
@@ -92,7 +89,6 @@ export async function getItem(key) {
       }
     })
   } catch (error) {
-    console.error(`❌ [IndexedDB] Erro ao carregar ${key}:`, error)
     return null
   }
 }
@@ -111,7 +107,6 @@ export async function removeItem(key) {
     await store.delete(key)
     return Promise.resolve()
   } catch (error) {
-    console.error(`❌ [IndexedDB] Erro ao remover ${key}:`, error)
     throw error
   }
 }
@@ -148,7 +143,6 @@ export async function clearByPrefix(prefix) {
       }
     })
   } catch (error) {
-    console.error(`❌ [IndexedDB] Erro ao limpar por prefixo ${prefix}:`, error)
     return 0
   }
 }
@@ -164,10 +158,8 @@ export async function clearAll() {
     const store = transaction.objectStore(STORE_NAME)
     
     await store.clear()
-    console.log('✅ [IndexedDB] Database limpo')
     return Promise.resolve()
   } catch (error) {
-    console.error('❌ [IndexedDB] Erro ao limpar database:', error)
     throw error
   }
 }

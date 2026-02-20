@@ -50,12 +50,10 @@ export const licitacaoSchema = z.object({
  */
 async function buscarLicitacoesDoBanco() {
   if (!supabase) {
-    console.warn('⚠️ Supabase não configurado')
     return []
   }
 
   try {
-    console.log('📡 [Collection] Buscando licitações do banco...')
     
     const { data, error } = await supabase
       .from('licitacoes')
@@ -77,11 +75,9 @@ async function buscarLicitacoesDoBanco() {
       .limit(50000) // Limite máximo para carregar tudo de uma vez
 
     if (error) {
-      console.error('❌ [Collection] Erro ao buscar licitações:', error)
       throw error
     }
 
-    console.log(`✅ [Collection] ${data?.length || 0} licitações carregadas do banco`)
 
     // Processar dados: garantir que anexos/itens sejam arrays
     const dadosProcessados = (data || []).map(licitacao => {
@@ -138,7 +134,6 @@ async function buscarLicitacoesDoBanco() {
 
     return dadosProcessados
   } catch (error) {
-    console.error('❌ [Collection] Erro ao buscar licitações:', error)
     return []
   }
 }

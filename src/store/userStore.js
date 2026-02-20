@@ -41,7 +41,6 @@ function limparCacheAntigo() {
       cacheKeys.forEach(key => localStorage.removeItem(key))
     }
   } catch (e) {
-    console.warn('⚠️ Erro ao limpar cache:', e)
   }
 }
 
@@ -53,7 +52,6 @@ const customStorage = {
     try {
       return localStorage.getItem(name)
     } catch (e) {
-      console.warn('⚠️ Erro ao ler do localStorage:', e)
       return null
     }
   },
@@ -62,14 +60,12 @@ const customStorage = {
       localStorage.setItem(name, value)
     } catch (e) {
       if (e.name === 'QuotaExceededError' || e.message?.includes('quota')) {
-        console.warn('⚠️ localStorage cheio, limpando cache antigo...')
         limparCacheAntigo()
         
         // Tentar novamente após limpar
         try {
           localStorage.setItem(name, value)
         } catch (e2) {
-          console.error('❌ Erro ao salvar após limpar cache:', e2)
           // Se ainda falhar, tentar salvar apenas dados essenciais do usuário
           if (name === 'user-storage') {
             try {
@@ -89,12 +85,10 @@ const customStorage = {
               }
               localStorage.setItem(name, JSON.stringify(minimalData))
             } catch (e3) {
-              console.error('❌ Erro ao salvar dados mínimos:', e3)
             }
           }
         }
       } else {
-        console.error('❌ Erro ao salvar no localStorage:', e)
       }
     }
   },
@@ -102,7 +96,6 @@ const customStorage = {
     try {
       localStorage.removeItem(name)
     } catch (e) {
-      console.warn('⚠️ Erro ao remover do localStorage:', e)
     }
   }
 }
@@ -162,9 +155,7 @@ export const useUserStore = create(
           const { limparCacheValidacaoIA } = await import('@/lib/validacaoIA')
           await limparCacheValidacaoIA()
 
-          console.log('✅ [Logout] IndexedDB completamente limpo (licitações + IA)')
         } catch (e) {
-          console.warn('⚠️ Erro ao limpar IndexedDB no logout:', e)
         }
         
         // Limpar estado
@@ -187,7 +178,6 @@ export const useUserStore = create(
           }
           keysToRemove.forEach((k) => localStorage.removeItem(k))
         } catch (e) {
-          console.warn('⚠️ Erro ao limpar localStorage no logout:', e)
         }
         
         // Não redirecionar aqui - deixar o componente fazer isso

@@ -25,7 +25,6 @@ export async function validarCorrespondenciaIAEdgeFunction(
   try {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
     if (!supabaseUrl) {
-      console.warn('⚠️ [IA] VITE_SUPABASE_URL não configurado')
       return null
     }
 
@@ -57,7 +56,6 @@ export async function validarCorrespondenciaIAEdgeFunction(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ error: 'Erro desconhecido' }))
-      console.warn('⚠️ [IA] Erro na Edge Function:', errorData.error || response.status)
       return null // Retornar null para usar filtro semântico como fallback
     }
 
@@ -70,7 +68,6 @@ export async function validarCorrespondenciaIAEdgeFunction(
 
     return result.resultado === true
   } catch (error) {
-    console.warn('⚠️ [IA] Erro ao validar com IA, usando filtro semântico:', error.message)
     return null // Retornar null para usar filtro semântico como fallback
   }
 }
@@ -144,9 +141,6 @@ export async function correspondeAtividadesHibrido(
 
       // Se IA confirmou, aceitar mesmo que filtro semântico tenha rejeitado
       if (validacaoIA === true) {
-        console.log('✅ [IA] Licitação aceita por IA (filtro semântico havia rejeitado):', {
-          objeto: objetoCompleto.substring(0, 100)
-        })
         return true
       }
 
@@ -158,7 +152,6 @@ export async function correspondeAtividadesHibrido(
       // Se IA retornou null (erro/indisponível), usar resultado do filtro semântico
       return resultadoSemantico
     } catch (error) {
-      console.warn('⚠️ [IA] Erro ao validar com IA, usando filtro semântico:', error)
       return resultadoSemantico
     }
   }
@@ -262,13 +255,11 @@ export async function limparCacheValidacaoIA() {
       const req = store.clear()
       req.onsuccess = () => {
         cacheDb = null
-        console.log('✅ [IA] Cache de validação IA limpo')
         resolve()
       }
       req.onerror = () => reject(req.error)
     })
   } catch (e) {
-    console.warn('⚠️ [IA] Erro ao limpar cache no logout:', e)
   }
 }
 
@@ -296,7 +287,6 @@ export async function validarCorrespondenciaIABatch(
 
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
   if (!supabaseUrl) {
-    console.warn('⚠️ [IA] VITE_SUPABASE_URL não configurado')
     return new Set()
   }
 
@@ -321,7 +311,6 @@ export async function validarCorrespondenciaIABatch(
   const totalOriginal = licitacoes.length
   const doCache = totalOriginal - licitacoesParaValidar.length
   if (doCache > 0) {
-    console.log(`✅ [IA Cache] ${doCache} licitações já validadas (cache), ${licitacoesParaValidar.length} para validar`)
   }
 
   if (licitacoesParaValidar.length === 0) {
@@ -376,9 +365,7 @@ export async function validarCorrespondenciaIABatch(
       } catch (fetchErr) {
         clearTimeout(timeoutId)
         if (fetchErr.name === 'AbortError') {
-          console.warn('⚠️ [IA] Timeout na Edge Function (validar-correspondencia-ia). Mantendo resultado do filtro semântico (fail-open).')
         } else {
-          console.warn('⚠️ [IA] Erro de rede na Edge Function:', fetchErr.message)
         }
         // Fail-open: aprovar as que ainda não foram validadas para não zerar a lista
         licitacoesParaValidar.slice(i).forEach(lic => idsAprovados.add(lic.id))
@@ -389,11 +376,9 @@ export async function validarCorrespondenciaIABatch(
       if (!response.ok) {
         const errorBody = await response.json().catch(() => ({}))
         const isRateLimit = response.status === 429 || (errorBody && (errorBody.error === 'RATE_LIMIT' || String(errorBody.error || '').includes('RATE_LIMIT')))
-        console.warn('⚠️ [IA] Edge Function retornou erro:', response.status, errorBody.error || response.statusText)
         // Fail-open: em RATE_LIMIT ou 500, aprovar as que ainda não foram validadas para não zerar a lista
         if (isRateLimit || response.status >= 500) {
           licitacoesParaValidar.slice(i).forEach(lic => idsAprovados.add(lic.id))
-          console.warn('⚠️ [IA] RATE_LIMIT/erro no servidor: mantendo resultado do filtro semântico (fail-open)')
         }
         break
       }
@@ -416,7 +401,6 @@ export async function validarCorrespondenciaIABatch(
 
     return idsAprovados
   } catch (error) {
-    console.warn('⚠️ [IA] Erro ao validar lote:', error.message)
     return idsAprovados // Retorna o que já foi aprovado (inclui cache)
   }
 }

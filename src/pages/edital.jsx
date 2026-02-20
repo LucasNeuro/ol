@@ -77,7 +77,6 @@ function EditalContent() {
             }
           }
         } catch (err) {
-          console.warn(`Erro ao buscar data ${dataStr}:`, err.message)
           continue
         }
       }
@@ -102,7 +101,6 @@ function EditalContent() {
         .maybeSingle()
 
       if (erroUsuario || !usuarioExiste) {
-        console.error('❌ Usuário não encontrado na tabela profiles:', erroUsuario)
         showError('Sua sessão expirou. Por favor, faça login novamente.')
         // Limpar sessão inválida
         const { clearUser } = useUserStore.getState()
@@ -165,7 +163,6 @@ function EditalContent() {
         success('Adicionado aos favoritos')
       }
     } catch (error) {
-      console.error('Erro ao atualizar favorito:', error)
       showError('Erro ao atualizar favorito. Tente novamente.')
     }
   }

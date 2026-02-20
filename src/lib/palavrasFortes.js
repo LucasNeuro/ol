@@ -57,12 +57,10 @@ export async function syncPalavrasFortesFromSetores(setoresAtividades, supabaseC
 
     if (error) {
       if (error.code === '42P01' || error.status === 404) return { ok: false }
-      console.warn('⚠️ [palavrasFortes] Erro ao sincronizar:', error)
       return { ok: false }
     }
     return { ok: true, inseridas: linhas.length }
   } catch (err) {
-    console.warn('⚠️ [palavrasFortes] Erro ao sincronizar:', err)
     return { ok: false }
   }
 }
@@ -90,12 +88,8 @@ export async function fetchPalavrasFortesPorSetor(supabaseClient) {
         error.code === 'PGRST301' ||
         (error.message && (error.message.includes('does not exist') || error.message.includes('relation')))
       if (tabelaNaoExiste) {
-        console.warn(
-          '⚠️ [palavrasFortes] Tabela setores_palavras_fortes não encontrada. Para filtros robustos, rode no Supabase (SQL Editor) o script: criar_tabela_setores_palavras_fortes.sql'
-        )
         return {}
       }
-      console.warn('⚠️ [palavrasFortes] Erro ao buscar:', error)
       return {}
     }
 
@@ -109,11 +103,9 @@ export async function fetchPalavrasFortesPorSetor(supabaseClient) {
     })
 
     if (Object.keys(porSetor).length > 0) {
-      console.log(`✅ [palavrasFortes] Carregadas ${Object.keys(porSetor).length} setores com palavras fortes do banco`)
     }
     return porSetor
   } catch (err) {
-    console.warn('⚠️ [palavrasFortes] Erro:', err)
     return {}
   }
 }

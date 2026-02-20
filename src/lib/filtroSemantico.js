@@ -336,23 +336,9 @@ export function extrairPalavrasChaveDosSetores(setoresAtividades, sinonimosPerso
   const principaisArray = Array.from(palavrasPrincipais)
   const secundariasArray = Array.from(palavrasSecundarias)
   
-  console.log(`🔍 [extrairPalavrasChaveDosSetores] Antes da expansão:`, {
-    principais: principaisArray.length,
-    secundarias: secundariasArray.length,
-    sinonimosPersonalizados: Object.keys(sinonimosPersonalizados || {}).length,
-    sinonimosBanco: Object.keys(sinonimosBanco || {}).length
-  })
-  
   // Expandir principais e secundárias (com sinônimos personalizados E do banco)
   const principaisExpandidas = expandirComSinonimos(principaisArray, sinonimosPersonalizados, sinonimosBanco)
   const secundariasExpandidas = expandirComSinonimos(secundariasArray, sinonimosPersonalizados, sinonimosBanco)
-  
-  console.log(`✅ [extrairPalavrasChaveDosSetores] Após expansão:`, {
-    principais: principaisExpandidas.length,
-    secundarias: secundariasExpandidas.length,
-    expandiuPrincipais: principaisExpandidas.length - principaisArray.length,
-    expandiuSecundarias: secundariasExpandidas.length - secundariasArray.length
-  })
   
   // Combinar todas
   const todas = [...new Set([...principaisExpandidas, ...secundariasExpandidas])]
@@ -825,29 +811,18 @@ export function correspondeAtividades(
             const temIncompativel = palavrasIncompativeis.some(palavra => 
               objetoNormalizado.includes(normalizarTexto(palavra))
             )
-            if (temIncompativel) {
-              const palavraEncontrada = palavrasIncompativeis.find(p => objetoNormalizado.includes(normalizarTexto(p)))
-              // Log com valores serializáveis (string) para aparecer corretamente no console quando rodar no Worker
-              console.log(`🚫 [Filtro] Licitação rejeitada por incompatibilidade: setor="${String(setor.setor)}" palavraIncompativel="${String(palavraEncontrada ?? '')}" objeto="${String(objetoCompleto).substring(0, 100)}"`)
-              return false  // Rejeitar imediatamente
-            }
+            if (temIncompativel) return false
           }
         }
         // Saúde: rejeitar "equipamento de áudio/som/informática" (não é equipamento médico/hospitalar)
         if (setorNormalizado.includes('saude')) {
           const temEquipamento = /\b(equipamento|equipamentos|peca|pecas)\b/.test(objetoNormalizado)
           const temNaoSaude = /\b(audio|som|informatica|informatico)\b/.test(objetoNormalizado)
-          if (temEquipamento && temNaoSaude) {
-            console.log(`🚫 [Filtro] Licitação rejeitada (equipamento não médico para Saúde): setor="${String(setor.setor)}" objeto="${String(objetoCompleto).substring(0, 100)}"`)
-            return false
-          }
+          if (temEquipamento && temNaoSaude) return false
           // Rejeitar manutenção/revisão de veículo (objeto é sobre veículo, não sobre produtos/serviços de saúde)
           const temaVeiculo = /\b(revisao|revisão|manutencao|manutenção)\s+(preventiva|de\s+veiculo|veicular|automotiva)\b/i.test(objetoCompleto) ||
             (/\b(veiculo|veículo|automovel|automóvel|frota|placa\s+[a-z]{3}\d{4})\b/i.test(objetoCompleto) && /\b(revisao|revisão|manutencao|manutenção|mecânica|mecanica)\b/i.test(objetoCompleto))
-          if (temaVeiculo) {
-            console.log(`🚫 [Filtro] Licitação rejeitada (manutenção/revisão de veículo para setor Saúde): setor="${String(setor.setor)}" objeto="${String(objetoCompleto).substring(0, 120)}"`)
-            return false
-          }
+          if (temaVeiculo) return false
         }
       }
     }
@@ -1253,13 +1228,7 @@ export function correspondeAtividades(
       return palavrasObjeto.some(po => correspondeParcial(palavraNormalizada, po))
     })
     
-    if (!temCorrespondenciaSecundaria) {
-      console.log(`🚫 [Filtro] Licitação não corresponde às palavras secundárias:`, {
-        palavrasSecundarias: palavrasSecundarias.slice(0, 5),
-        objeto: objetoCompleto.substring(0, 150)
-      })
-      return false
-    }
+    if (!temCorrespondenciaSecundaria) return false
     
     // Só aceitar se o objeto tiver pelo menos uma palavra forte do setor
     return exigePalavraForteDoSetor(objetoNormalizado, new Set(palavrasSecundarias), setoresAtividades, palavrasFortesMescladas)
@@ -1297,13 +1266,27 @@ export function correspondeAtividades(
 }
 
 /**
- * Calcula score de aderência (0–100) e label para exibição em cards.
- * Usa a mesma lógica de pontuação do filtro semântico (setores/subsetores).
+ * Verifica se um termo do perfil "bate" no objeto do edital (exato ou parcial).
+ */
+function termoBateNoObjeto(termoNorm, objetoNormalizado, palavrasObjeto) {
+  if (!termoNorm || termoNorm.length < 4) return false
+  if (objetoNormalizado.includes(termoNorm)) return true
+  if (palavrasObjeto.some(po => correspondeParcial(termoNorm, po))) return true
+  const raiz = extrairRaizPalavra(termoNorm)
+  if (raiz.length >= 4 && palavrasObjeto.some(po => extrairRaizPalavra(po) === raiz)) return true
+  return false
+}
+
+/**
+ * Calcula score de aderência como RÉGUA REAL (0–100): percentual de termos do perfil
+ * (setores + atividades + CNAEs) que aparecem no objeto do edital. Assim licitações
+ * variam de verdade (ex.: 75%, 89%, 100%) em vez de quase tudo 100%.
  * @param {Object} licitacao
- * @param {Object} palavrasChave - { principais, secundarias, todas } (ex.: extrairPalavrasChaveDosSetores)
+ * @param {Object} palavrasChave - { principais, secundarias, todas }
  * @param {Object} [sinonimosPersonalizados]
  * @param {Object} [sinonimosBanco]
  * @param {Array} [setoresAtividades]
+ * @param {Array<string>} [palavrasChaveCnae]
  * @returns {{ score: number, label: 'alta'|'média'|'baixa' }}
  */
 export function calcularScoreAderencia(
@@ -1311,15 +1294,19 @@ export function calcularScoreAderencia(
   palavrasChave,
   sinonimosPersonalizados = {},
   sinonimosBanco = {},
-  setoresAtividades = []
+  setoresAtividades = [],
+  palavrasChaveCnae = []
 ) {
   const objetoCompleto = obterObjetoCompleto(licitacao)
-  if (!objetoCompleto || !setoresAtividades?.length) {
+  const objetoNormalizado = objetoCompleto ? normalizarTexto(objetoCompleto) : ''
+  const palavrasObjeto = objetoNormalizado ? objetoNormalizado.split(/\s+/).filter(p => p.length >= 4) : []
+  const temSetores = setoresAtividades?.length > 0
+  const temCnae = Array.isArray(palavrasChaveCnae) && palavrasChaveCnae.length > 0
+  if (!objetoCompleto || (!temSetores && !temCnae)) {
     return { score: 0, label: 'baixa' }
   }
-  const objetoNormalizado = normalizarTexto(objetoCompleto)
-  const palavrasObjeto = objetoNormalizado.split(/\s+/).filter(p => p.length >= 4)
-  const palavrasContexto = extrairPalavrasContexto(setoresAtividades)
+
+  const palavrasContexto = temSetores ? extrairPalavrasContexto(setoresAtividades) : []
   const palavrasGenericas = [
     'servico', 'servicos', 'manutencao', 'manutenção', 'prestacao', 'prestação',
     'fornecimento', 'fornecer', 'material', 'materiais', 'escolar', 'escolares',
@@ -1327,74 +1314,66 @@ export function calcularScoreAderencia(
     'contratacao', 'contratação', 'publico', 'publica', 'municipal',
     'estadual', 'federal', 'governo', 'orgao', 'órgão'
   ]
-  let pontuacaoCorrespondencia = 0
-  const palavrasUnicasEncontradas = new Set()
 
-  for (const setor of setoresAtividades) {
-    if (setor.setor) {
-      const setorNormalizado = normalizarTexto(setor.setor)
-      if (objetoNormalizado.includes(setorNormalizado)) {
-        palavrasUnicasEncontradas.add(setorNormalizado)
-        pontuacaoCorrespondencia += 3
-      } else if (palavrasObjeto.some(po => correspondeParcial(setorNormalizado, po))) {
-        palavrasUnicasEncontradas.add(setorNormalizado)
-        pontuacaoCorrespondencia += 1
+  // 1) Termos só de SETORES/ATIVIDADES (não misturar com CNAE para não diluir o %)
+  const termosSetores = new Set()
+  if (temSetores) {
+    for (const setor of setoresAtividades) {
+      if (setor.setor) {
+        const s = normalizarTexto(setor.setor)
+        if (s.length >= 4) termosSetores.add(s)
       }
-    }
-    if (setor.subsetores && Array.isArray(setor.subsetores)) {
-      for (const subsetor of setor.subsetores) {
-        if (!subsetor) continue
-        const subsetorNormalizado = normalizarTexto(subsetor)
-        if (objetoNormalizado.includes(subsetorNormalizado)) {
-          palavrasUnicasEncontradas.add(subsetorNormalizado)
-          pontuacaoCorrespondencia += 5
-          continue
-        }
-        const palavrasSubsetor = extrairPalavrasChave(subsetor)
-        let palavrasEncontradas = 0
-        for (const palavraSubsetor of palavrasSubsetor) {
-          const palavraNormalizada = normalizarTexto(palavraSubsetor)
-          if (palavrasGenericas.includes(palavraNormalizada)) {
-            const temContexto = palavrasContexto.some(pc => {
-              const pcNorm = normalizarTexto(pc)
-              const idxPalavra = objetoNormalizado.indexOf(palavraNormalizada)
-              const idxContexto = objetoNormalizado.indexOf(pcNorm)
-              if (idxContexto === -1) return false
-              return Math.abs(idxPalavra - idxContexto) <= 130
-            })
-            if (temContexto) {
-              palavrasEncontradas++
-              palavrasUnicasEncontradas.add(palavraNormalizada)
-              pontuacaoCorrespondencia += 2
-            }
-            continue
-          }
-          if (objetoNormalizado.includes(palavraNormalizada)) {
-            palavrasEncontradas++
-            palavrasUnicasEncontradas.add(palavraNormalizada)
-            pontuacaoCorrespondencia += 2
-            continue
-          }
-          if (palavrasObjeto.some(po => correspondeParcial(palavraNormalizada, po))) {
-            palavrasEncontradas++
-            palavrasUnicasEncontradas.add(palavraNormalizada)
-            pontuacaoCorrespondencia += 1
-            continue
-          }
-          const raizSubsetor = extrairRaizPalavra(palavraNormalizada)
-          if (raizSubsetor.length >= 4 && palavrasObjeto.some(po => extrairRaizPalavra(po) === raizSubsetor)) {
-            palavrasEncontradas++
-            palavrasUnicasEncontradas.add(palavraNormalizada)
-            pontuacaoCorrespondencia += 1
+      if (setor.subsetores && Array.isArray(setor.subsetores)) {
+        for (const subsetor of setor.subsetores) {
+          if (!subsetor) continue
+          const sub = normalizarTexto(subsetor)
+          if (sub.length >= 4) termosSetores.add(sub)
+          for (const p of extrairPalavrasChave(subsetor)) {
+            const pn = normalizarTexto(p)
+            if (pn.length >= 4 && !palavrasGenericas.includes(pn)) termosSetores.add(pn)
           }
         }
-        if (palavrasEncontradas >= 2) pontuacaoCorrespondencia += 2
       }
     }
   }
 
-  const score = Math.min(100, Math.round(pontuacaoCorrespondencia * 10))
-  const label = score >= 70 ? 'alta' : score >= 40 ? 'média' : 'baixa'
+  // 2) Termos só de CNAE
+  const termosCnae = new Set()
+  if (temCnae) {
+    for (const p of palavrasChaveCnae) {
+      const t = (p || '').trim()
+      if (t.length >= 4) termosCnae.add(normalizarTexto(t))
+    }
+  }
+
+  function contarMatch(termos) {
+    let m = 0
+    for (const termo of termos) {
+      if (termoBateNoObjeto(termo, objetoNormalizado, palavrasObjeto)) m++
+      else if (palavrasGenericas.includes(termo) && palavrasContexto.some(pc => {
+        const pcNorm = normalizarTexto(pc)
+        const idxTermo = objetoNormalizado.indexOf(termo)
+        const idxContexto = objetoNormalizado.indexOf(pcNorm)
+        return idxContexto !== -1 && Math.abs(idxTermo - idxContexto) <= 130
+      })) m++
+    }
+    return m
+  }
+
+  // 3) Score por setores e por CNAE separados; usar o MAIOR para não diluir
+  let scoreSetores = 0
+  let scoreCnae = 0
+  if (termosSetores.size > 0) {
+    const matchedSetores = contarMatch(termosSetores)
+    scoreSetores = Math.round((matchedSetores / termosSetores.size) * 100)
+  }
+  if (termosCnae.size > 0) {
+    const matchedCnae = contarMatch(termosCnae)
+    scoreCnae = Math.round((matchedCnae / termosCnae.size) * 100)
+  }
+
+  const score = Math.min(100, Math.max(scoreSetores, scoreCnae))
+  const label = score >= 27 ? 'alta' : score >= 20 ? 'média' : 'baixa'
   return { score, label }
 }
 
@@ -1486,7 +1465,6 @@ function obterCacheIA() {
     
     return cacheLimpo
   } catch (error) {
-    console.warn('⚠️ Erro ao ler cache de IA:', error)
     return {}
   }
 }
@@ -1501,7 +1479,6 @@ function salvarCacheIA(hash, resultado) {
     }
     localStorage.setItem(CACHE_IA_KEY, JSON.stringify(cache))
   } catch (error) {
-    console.warn('⚠️ Erro ao salvar cache de IA:', error)
   }
 }
 
@@ -1617,13 +1594,11 @@ Responda APENAS com "SIM" ou "NÃO", sem explicações.`
       if (response.status === 429) {
         tentativa++
         if (tentativa < MAX_TENTATIVAS) {
-          console.warn(`⏸️ [IA] Rate limit atingido. Aguardando ${delayRetry}ms antes de tentar novamente... (tentativa ${tentativa}/${MAX_TENTATIVAS})`)
           await new Promise(resolve => setTimeout(resolve, delayRetry))
           delayRetry *= 2 // Backoff exponencial
           continue
         } else {
           // Se esgotou tentativas, usar filtro semântico como fallback
-          console.warn('⚠️ [IA] Rate limit persistente. Usando filtro semântico como fallback.')
           return null
         }
       }
@@ -1652,14 +1627,12 @@ Responda APENAS com "SIM" ou "NÃO", sem explicações.`
       
       // Se for erro de rede ou timeout, tentar novamente
       if (tentativa < MAX_TENTATIVAS && (error.message.includes('fetch') || error.message.includes('network'))) {
-        console.warn(`⚠️ [IA] Erro de rede. Tentando novamente em ${delayRetry}ms... (tentativa ${tentativa}/${MAX_TENTATIVAS})`)
         await new Promise(resolve => setTimeout(resolve, delayRetry))
         delayRetry *= 2
         continue
       }
       
       // Se esgotou tentativas ou erro definitivo, retornar null (usa filtro semântico)
-      console.warn('⚠️ [IA] Erro na validação. Usando filtro semântico como fallback:', error.message)
       return null
     }
   }
@@ -1809,7 +1782,6 @@ function obterMetricas() {
       ultimaAtualizacao: null
     }
   } catch (error) {
-    console.warn('⚠️ Erro ao ler métricas:', error)
     return {
       totalLicitacoesFiltradas: 0,
       totalLicitacoesMostradas: 0,
@@ -1827,7 +1799,6 @@ function salvarMetricas(metricas) {
     metricas.ultimaAtualizacao = new Date().toISOString()
     localStorage.setItem(METRICAS_KEY, JSON.stringify(metricas))
   } catch (error) {
-    console.warn('⚠️ Erro ao salvar métricas:', error)
   }
 }
 
@@ -1880,7 +1851,6 @@ export function limparMetricasFiltro() {
   try {
     localStorage.removeItem(METRICAS_KEY)
   } catch (error) {
-    console.warn('⚠️ Erro ao limpar métricas:', error)
   }
 }
 
@@ -1891,7 +1861,6 @@ export function limparCacheIA() {
   try {
     localStorage.removeItem(CACHE_IA_KEY)
   } catch (error) {
-    console.warn('⚠️ Erro ao limpar cache de IA:', error)
   }
 }
 

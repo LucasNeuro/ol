@@ -31,8 +31,6 @@ function DashboardContent() {
   }, [user, setLocation])
   
   // Debug: verificar user
-  console.log('🔍 Dashboard - User:', user)
-  console.log('🔍 Dashboard - User ID:', user?.id)
 
   // Calcular início e fim da semana atual
   const inicioSemana = startOfWeek(new Date(), { locale: ptBR })
@@ -138,12 +136,6 @@ function DashboardContent() {
       const sinonimosPersonalizados = perfilUsuario.sinonimos_personalizados || {}
       const palavrasChave = extrairPalavrasChaveDosSetores(setoresAtividades, sinonimosPersonalizados)
       
-      console.log('🔍 [Dashboard] Filtro semântico:', {
-        antesFiltro: resultado.length,
-        palavrasPrincipais: palavrasChave.principais?.length || 0,
-        palavrasSecundarias: palavrasChave.secundarias?.length || 0,
-        palavrasTodas: palavrasChave.todas?.length || 0
-      })
       
       if (palavrasChave.todas && palavrasChave.todas.length > 0) {
         // Usar a mesma função de correspondência (sem IA) para garantir consistência
@@ -159,13 +151,7 @@ function DashboardContent() {
           )
         })
         
-        console.log('✅ [Dashboard] Após filtro semântico:', {
-          antes: antesFiltroSemantico,
-          depois: resultado.length,
-          removidas: antesFiltroSemantico - resultado.length
-        })
       } else {
-        console.warn('⚠️ [Dashboard] Sem palavras-chave válidas, não aplicando filtro semântico')
       }
     }
 
@@ -181,31 +167,19 @@ function DashboardContent() {
   // Log para debug
   useEffect(() => {
     if (todasLicitacoes.length > 0) {
-      console.log('📊 [Dashboard] Debug:', {
-        todasLicitacoes: todasLicitacoes.length,
-        licitacoesFiltradas: totalLicitacoes,
-        temPerfil: !!perfilUsuario,
-        temSetores: perfilUsuario?.setores_atividades?.length > 0,
-        temEstados: perfilUsuario?.estados_interesse?.length > 0,
-        setores: perfilUsuario?.setores_atividades?.map(s => s.setor).join(', ') || 'nenhum',
-        estados: perfilUsuario?.estados_interesse?.join(', ') || 'nenhum'
-      })
     }
   }, [todasLicitacoes.length, totalLicitacoes, perfilUsuario])
   
   // Log para debug
-  console.log('📊 [Dashboard] Total de licitações filtradas:', totalLicitacoes)
 
   // Total de Favoritos do usuário
   const { data: totalFavoritos = 0, isLoading: loadingFavoritos } = useQuery({
     queryKey: ['dashboard', 'favoritos', user?.id],
     queryFn: async () => {
       if (!user?.id) {
-        console.log('⚠️ Dashboard - Sem user.id, retornando 0')
         return 0
       }
 
-      console.log('🔍 Dashboard - Buscando favoritos para usuário:', user.id)
       
       const { count, error } = await supabase
         .from('licitacoes_favoritas')
@@ -213,11 +187,9 @@ function DashboardContent() {
         .eq('usuario_id', user.id)
 
       if (error) {
-        console.error('❌ Dashboard - Erro ao buscar favoritos:', error)
         throw error
       }
       
-      console.log('✅ Dashboard - Total de favoritos encontrados:', count)
       return count || 0
     },
     enabled: !!user?.id,

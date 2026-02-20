@@ -18,7 +18,8 @@
     "trigger-alerta-whatsapp": "node scripts/trigger-alerta-whatsapp.js",
     "trigger-alerta-email": "node scripts/trigger-alerta-email.js",
     "trigger-alertas": "node scripts/trigger-alertas.js",
-    "classificar-licitacoes-por-setor": "node scripts/classificar-licitacoes-por-setor.js"
+    "classificar-licitacoes-por-setor": "node scripts/classificar-licitacoes-por-setor.js",
+    "atualizar-cnae": "node scripts/atualizar-cnae-ibge.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.2",

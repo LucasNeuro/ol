@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, startTransition } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
@@ -273,7 +273,6 @@ function LicitacoesContent() {
           .eq('id', user.id)
           .maybeSingle()
       if (error) {
-        console.warn('⚠️ Erro ao buscar perfil:', error.message, error.code)
         return null
       }
       return data ? { ...data, sinonimos_personalizados: {} } : null
@@ -318,7 +317,6 @@ function LicitacoesContent() {
         .eq('ativo', true)
 
       if (error) {
-        console.warn('⚠️ Erro ao buscar sinônimos do banco:', error)
         return {}
       }
 
@@ -346,7 +344,6 @@ function LicitacoesContent() {
         })
       }
 
-      console.log(`✅ [Sinônimos] Carregados ${Object.keys(sinonimosFormatados).length} palavras-base com sinônimos do banco`)
       return sinonimosFormatados
     },
     enabled: !!perfilUsuario?.setores_atividades && perfilUsuario.setores_atividades.length > 0,
@@ -415,7 +412,6 @@ function LicitacoesContent() {
         const restored = { ...filtrosDefaults, ...parsed }
         setFiltros(restored)
         setFiltrosAplicados(restored)
-        console.log('✅ [Filtros] Restaurados do cache:', Object.keys(parsed).filter(k => restored[k]))
       }
     } catch (e) { /* ignore */ }
   }, [user?.id])
@@ -455,10 +451,8 @@ function LicitacoesContent() {
         dataPublicacaoInicio: dataFormatada,
         dataPublicacaoFim: dataFormatada
       }))
-      console.log(`Filtrando licitações do dia: ${dataFormatada}`)
         } else {
       setDataFiltro('')
-      console.log('📅 [Filtro] Data: todas (sem período específico)')
     }
   }, [location])
   
@@ -518,7 +512,6 @@ function LicitacoesContent() {
         try {
           dadosCompletos = JSON.parse(dadosCompletos)
         } catch (e) {
-          console.warn('Erro ao parsear dados_completos:', e)
           return []
         }
       }
@@ -543,7 +536,6 @@ function LicitacoesContent() {
       
       setBaixandoDocumentos(prev => new Set(prev).add(licitacaoId))
       
-      console.log('📦 [Download ZIP] Chamando Edge Function para baixar e compactar documentos...')
       
       // Obter token de autenticação
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
@@ -583,7 +575,6 @@ function LicitacoesContent() {
         throw new Error(result.error || 'Erro ao processar ZIP')
       }
 
-      console.log(`✅ [Download ZIP] ZIP recebido! ${result.documentosBaixados} documentos baixados`)
 
       // Converter base64 para blob
       const binaryString = atob(result.zipBase64)
@@ -606,7 +597,6 @@ function LicitacoesContent() {
       // Limpar URL do blob após um tempo
       setTimeout(() => URL.revokeObjectURL(urlZip), 1000)
 
-      console.log(`✅ [Download ZIP] ZIP baixado com sucesso!`)
 
       if (result.documentosErros > 0) {
         success(`Download concluído! ${result.documentosBaixados} documentos baixados com sucesso, ${result.documentosErros} documentos não puderam ser baixados.`)
@@ -618,7 +608,6 @@ function LicitacoesContent() {
         return novo
       })
     } catch (error) {
-      console.error('❌ [Download ZIP] Erro ao baixar ZIP:', error)
       showError(`Erro ao baixar documentos: ${error.message}`)
       setBaixandoDocumentos(prev => {
         const novo = new Set(prev)
@@ -647,7 +636,6 @@ function LicitacoesContent() {
     
     // Se houver warning (rate limit não configurado), mostrar mas continuar
     if (rateCheck.warning) {
-      console.warn('Rate limit:', rateCheck.warning)
     }
     
     // Só bloquear se realmente excedeu limite (não em caso de erro)
@@ -698,7 +686,6 @@ function LicitacoesContent() {
           'success'
         )
       } catch (regError) {
-        console.warn('Não foi possível registrar envio:', regError)
       }
       
       if (!licitacaoOverride) {
@@ -714,7 +701,6 @@ function LicitacoesContent() {
         }
       }
     } catch (err) {
-      console.error('Erro ao enviar para WhatsApp:', err)
       
       // Registrar falha para auditoria (não conta no limite)
       try {
@@ -724,7 +710,6 @@ function LicitacoesContent() {
           'failed'
         )
       } catch (regError) {
-        console.warn('Não foi possível registrar falha:', regError)
       }
       
       showError(`Erro ao enviar: ${err.message}`)
@@ -768,7 +753,6 @@ function LicitacoesContent() {
         try {
           dadosCompletos = JSON.parse(dadosCompletos)
         } catch (e) {
-          console.warn('Erro ao parsear dados_completos:', e)
           return []
         }
       }
@@ -879,10 +863,8 @@ function LicitacoesContent() {
     queryKey: ['licitacoes-sessao-completa', user?.id, 'por-setor-v2'],
     queryFn: async () => {
       if (!user?.id) {
-        console.warn('⚠️ [Licitações] Query desabilitada: usuário não autenticado (user?.id ausente)')
         return []
       }
-      console.log('🔄 [Licitações] Buscando para user.id =', user.id)
       const {
         buscarLicitacoesDoBanco,
         salvarCacheLicitacoes,
@@ -935,7 +917,6 @@ function LicitacoesContent() {
         try {
           list = await buscarLicitacoesPorClassificacaoPrincipal(perfil)
         } catch (err) {
-          console.warn('[Licitações] Busca por setor falhou:', err?.message || err)
         }
         setProgressoPercentual(100)
         if (list.length > 0) {
@@ -953,7 +934,6 @@ function LicitacoesContent() {
         setProgressoPercentual(0)
         setMensagemProgresso('')
         addLogFiltro('Nenhuma licitação classificada para seu setor no momento. A classificação é feita no backend.')
-        console.warn('⚠️ [Licitações] Busca por setor retornou 0. Só exibimos editais já classificados (setor_principal_id/subsetor_principal_id em licitacoes).')
         return []
       } else {
         const { setLastLoadWasPreFiltered, setLastLoadWasFallbackAll } = await import('@/lib/collections/licitacoesStore')
@@ -1103,7 +1083,6 @@ function LicitacoesContent() {
             return
           }
         } catch (e) {
-          console.warn('⚠️ [Cache Resultado Final] Erro ao carregar:', e)
         }
       }
 
@@ -1126,7 +1105,6 @@ function LicitacoesContent() {
             return
           }
         } catch (e) {
-          console.warn('⚠️ [Cache] Erro ao carregar cache semântico:', e)
         }
       }
 
@@ -1151,7 +1129,6 @@ function LicitacoesContent() {
 
     // Se o botão "Mostrar Todas" foi clicado, pular filtro semântico
     if (mostrarTodasLicitacoes) {
-      console.log('📋 [Filtro] Modo "Mostrar Todas" ativo - pulando filtro semântico')
       resultado = licitacoes
       setProgressoPercentual(100)
       setMensagemProgresso('Exibindo lista (modo "Mostrar Todas", sem filtro por setor)')
@@ -1220,18 +1197,12 @@ function LicitacoesContent() {
         
         // REGRA RESTRITIVA: Se tem setores, DEVE ter palavras-chave válidas
         if (!palavrasChave.todas || palavrasChave.todas.length === 0) {
-          console.warn('⚠️ Setores cadastrados mas não foi possível extrair palavras-chave. NÃO MOSTRANDO licitações.')
           setLicitacoesFiltradas([]) // MUITO RESTRITIVO: Não mostra nada se não conseguiu extrair palavras
           return
         }
         
         // FILTRO OBRIGATÓRIO: Filtrar TODAS as licitações que não correspondem
         // Usando IA para validação precisa
-        console.log(`🔍 [Filtro] Aplicando filtro semântico com IA`)
-        console.log(`🔍 [Filtro] Palavras principais (${palavrasChave.principais.length}):`, palavrasChave.principais.slice(0, 10))
-        console.log(`🔍 [Filtro] Palavras secundárias (${palavrasChave.secundarias.length}):`, palavrasChave.secundarias.slice(0, 10))
-        console.log(`🔍 [Filtro] Setores cadastrados:`, setoresAtividades.map(s => s.setor).join(', '))
-        console.log(`🔍 [Filtro] Usando APENAS filtro semântico (sem IA)`)
         
         const antesFiltro = resultado.length
         
@@ -1317,7 +1288,6 @@ function LicitacoesContent() {
               } catch (_) { /* ignorar erro por item */ }
             }
           } catch (err) {
-            console.warn('⚠️ [IA] Erro ao validar duvidosos:', err)
           }
         }
 
@@ -1364,7 +1334,6 @@ function LicitacoesContent() {
             if (idsAprovados && idsAprovados.size > 0) {
               resultado = resultado.filter(lic => idsAprovados.has(lic.id))
               addLogFiltro(`✅ IA aprovou ${idsAprovados.size} licitações por significado`)
-              console.log(`✅ [IA Semântico] ${idsAprovados.size} licitações aprovadas por significado`)
             } else {
               resultado = resultadoAntesIA
               addLogFiltro('⚠️ IA indisponível (ex.: RATE_LIMIT); mantendo resultado do filtro semântico', 'warn')
@@ -1372,9 +1341,7 @@ function LicitacoesContent() {
           } catch (err) {
             if (err?.message === 'TIMEOUT_IA') {
               addLogFiltro(`⚠️ Tempo limite de ${MAX_SEGUNDOS_IA}s na IA; mantendo resultado do filtro semântico`, 'warn')
-              console.warn('⚠️ [IA] Timeout: usando resultado do filtro semântico')
             } else {
-              console.warn('⚠️ [IA] Erro no filtro semântico por IA:', err)
               addLogFiltro('⚠️ Erro ao validar com IA; mantendo resultado do filtro semântico', 'warn')
             }
             resultado = resultadoAntesIA
@@ -1399,10 +1366,8 @@ function LicitacoesContent() {
         
         const depoisFiltro = resultado.length
         const percentualRemovido = antesFiltro > 0 ? ((1 - depoisFiltro/antesFiltro) * 100).toFixed(1) : 0
-        console.log(`✅ [Filtro Semântico] Filtrado: ${antesFiltro} → ${depoisFiltro} licitações (${percentualRemovido}% removidas) - Salvo no cache`)
       } else {
         // Se NÃO tem setores cadastrados, NÃO MOSTRAR NADA (muito restritivo)
-        console.warn('⚠️ Empresa sem setores cadastrados. NÃO MOSTRANDO licitações até configurar setores.')
         setProgressoPercentual(100)
         setMensagemProgresso('⚠️ Configure setores e estados no seu perfil')
         addLogFiltro('⚠️ Configure setores e estados no seu perfil', 'warn')
@@ -1435,7 +1400,6 @@ function LicitacoesContent() {
         return status === filtrosAplicados.statusEdital
       })
       const depoisStatus = resultado.length
-      console.log(`📊 [Filtro Status] ${antesStatus - depoisStatus} licitações removidas. ${depoisStatus} restantes. Status: ${filtrosAplicados.statusEdital}`)
     }
 
     // Filtrar por UF
@@ -1444,7 +1408,6 @@ function LicitacoesContent() {
       resultado = resultado.filter(licitacao => {
         return licitacao.uf_sigla?.toUpperCase() === filtrosAplicados.uf.toUpperCase()
       })
-      console.log(`🗺️ [Filtro UF] ${antesUF - resultado.length} licitações removidas. ${resultado.length} restantes. UF: ${filtrosAplicados.uf}`)
     }
 
     // Excluir atividades: editais cuja atividade (subsetor) foi desmarcada pelo usuário
@@ -1459,7 +1422,6 @@ function LicitacoesContent() {
         return !excluirSet.has(String(subId).toLowerCase())
       })
       const removidas = antesAtiv - resultado.length
-      console.log(`📌 [Filtro Excluir Atividades] ${removidas} licitações removidas. ${resultado.length} restantes. Amostra subsetor_principal_id:`, amostraSubIds)
     }
 
     // Filtrar por valor (min e max)
@@ -1478,7 +1440,6 @@ function LicitacoesContent() {
         
         return true
       })
-      console.log(`💰 [Filtro Valor] ${antesValor - resultado.length} licitações removidas. ${resultado.length} restantes. Intervalo: ${filtrosAplicados.valorMin || 'min'} - ${filtrosAplicados.valorMax || 'max'}`)
     }
 
     // Filtrar por documentos (deve ter documentos)
@@ -1488,7 +1449,6 @@ function LicitacoesContent() {
         const docs = getDocumentos(licitacao)
         return docs && docs.length > 0
       })
-      console.log(`📄 [Filtro Com Documentos] ${antesDocs - resultado.length} licitações removidas. ${resultado.length} restantes.`)
     }
 
     // Filtrar por itens (deve ter itens)
@@ -1497,7 +1457,6 @@ function LicitacoesContent() {
       resultado = resultado.filter(licitacao => {
         return licitacao.itens && Array.isArray(licitacao.itens) && licitacao.itens.length > 0
       })
-      console.log(`📦 [Filtro Com Itens] ${antesItens - resultado.length} licitações removidas. ${resultado.length} restantes.`)
     }
 
     // Filtrar por valor (deve ter valor)
@@ -1507,7 +1466,6 @@ function LicitacoesContent() {
         const valor = licitacao.valor_total_estimado
         return valor && valor > 0
       })
-      console.log(`💵 [Filtro Com Valor] ${antesComValor - resultado.length} licitações removidas. ${resultado.length} restantes.`)
     }
 
     // Busca Rápida (INCLUIR) - FILTRO INTELIGENTE
@@ -1531,7 +1489,6 @@ function LicitacoesContent() {
       resultado = filtrarLicitacoesPorBusca(resultado, filtrosAplicados.buscaObjeto, 0.62)
       const encontradas = resultado.length
       const termos = filtrosAplicados.buscaObjeto.split(',').map(t => t.trim()).filter(t => t)
-      console.log(`🔍 [Busca Rápida INCLUIR] "${filtrosAplicados.buscaObjeto}" → ${encontradas}/${antesBusca} licitações encontradas (${termos.length} termo${termos.length > 1 ? 's' : ''})`)
     }
 
     // Excluir Palavras (EXCLUIR) - FILTRO INTELIGENTE DE EXCLUSÃO
@@ -1575,7 +1532,6 @@ function LicitacoesContent() {
         })
         const excluidas = antesExclusao - resultado.length
         const percentualExcluido = antesExclusao > 0 ? ((excluidas / antesExclusao) * 100).toFixed(1) : 0
-        console.log(`🚫 [Excluir Palavras EXCLUIR] "${filtrosAplicados.excluirPalavras}" → ${excluidas} excluídas (${percentualExcluido}%), ${resultado.length} licitações restantes`)
       }
     }
 
@@ -1647,21 +1603,9 @@ function LicitacoesContent() {
     
     if (temDataManual && (dataInicioNormalizada || dataFimNormalizada)) {
       // Debug: Log para entender o problema
-      console.log(`📅 [Filtro Data] Aplicando filtro:`, {
-        temDataManual,
-        dataInicioNormalizada,
-        dataFimNormalizada,
-        totalAntes: antesData
-      })
       
       // Debug: Verificar amostras de datas ANTES do filtro
       const amostrasAntes = resultado.slice(0, Math.min(5, antesData))
-      console.log(`📅 [Filtro Data] Amostras ANTES:`, amostrasAntes.map(l => ({
-        numero: l.numero_controle_pncp?.substring(0, 30),
-        dataOriginal: l.data_publicacao_pncp,
-        dataNormalizada: normalizarData(l.data_publicacao_pncp),
-        tipo: typeof l.data_publicacao_pncp
-      })))
       
       resultado = resultado.filter(licitacao => {
         if (!licitacao.data_publicacao_pncp) {
@@ -1699,23 +1643,12 @@ function LicitacoesContent() {
       const depoisData = resultado.length
       const removidas = antesData - depoisData
       const periodo = `${filtrosAplicados.dataPublicacaoInicio || 'início'} a ${filtrosAplicados.dataPublicacaoFim || 'fim'}`
-      console.log(`📅 [Filtro Data] ${removidas} licitações removidas. ${depoisData} restantes. Período: ${periodo}`)
       
       // Debug: Verificar amostras DEPOIS do filtro
       if (depoisData > 0) {
         const amostrasDepois = resultado.slice(0, Math.min(3, depoisData))
-        console.log(`📅 [Filtro Data] Amostras DEPOIS:`, amostrasDepois.map(l => ({
-          numero: l.numero_controle_pncp?.substring(0, 30),
-          dataOriginal: l.data_publicacao_pncp,
-          dataNormalizada: normalizarData(l.data_publicacao_pncp)
-        })))
       }
     } else if (temDataManual) {
-      console.warn('⚠️ [Filtro Data] Datas não normalizadas, pulando filtro:', {
-        temDataManual,
-        dataInicioNormalizada,
-        dataFimNormalizada
-      })
     }
 
     // Aplicar filtros finais
@@ -1724,12 +1657,7 @@ function LicitacoesContent() {
       addLogFiltro('Aplicando filtros finais...')
     }
 
-    // REMOVIDO: Cache final não é mais necessário
-    // Já temos cache semântico no IndexedDB que é suficiente
-    // O cache final estava causando problemas de quota no localStorage
-    // Todos os filtros agora funcionam diretamente no cache semântico do IndexedDB
-
-    setLicitacoesFiltradas(resultado)
+    startTransition(() => setLicitacoesFiltradas(resultado))
 
     // Salvar resultado final no IndexedDB para ao recarregar/navegar não refazer busca nem filtro
     if (user?.id && resultado) {
@@ -1737,7 +1665,6 @@ function LicitacoesContent() {
         const { salvarResultadoFinal, hashFiltrosAplicados } = await import('@/lib/collections/licitacoesStore')
         await salvarResultadoFinal(resultado, user.id, hashFiltrosAplicados(filtrosAplicados, mostrarTodasLicitacoes, perfilUsuario?.setores_atividades))
       } catch (e) {
-        console.warn('⚠️ [Cache Resultado Final] Erro ao salvar:', e)
       }
     }
     
@@ -1755,12 +1682,13 @@ function LicitacoesContent() {
       }, 1500)
     }
       } catch (err) {
-        console.error('[Filtro] Erro ao aplicar filtros:', err)
         addLogFiltro('Erro ao aplicar filtros. Exibindo resultado parcial.', 'warn')
-        setLicitacoesFiltradas(resultado ?? [])
-        setProcessandoFiltro(false)
-        setProgressoPercentual(0)
-        setMensagemProgresso('')
+        startTransition(() => {
+          setLicitacoesFiltradas(resultado ?? [])
+          setProcessandoFiltro(false)
+          setProgressoPercentual(0)
+          setMensagemProgresso('')
+        })
     }
   }
     
@@ -1801,7 +1729,7 @@ function LicitacoesContent() {
   // Palavras-chave do perfil para cálculo de score de aderência (Recomendadas + badge)
   const palavrasChaveParaScore = useMemo(() => {
     const setores = perfilUsuario?.setores_atividades
-    if (!setores?.length) return null
+    if (!setores?.length) return { principais: [], secundarias: [], todas: [] }
     return extrairPalavrasChaveDosSetores(
       setores,
       perfilUsuario?.sinonimos_personalizados || {},
@@ -1809,45 +1737,88 @@ function LicitacoesContent() {
     )
   }, [perfilUsuario?.setores_atividades, perfilUsuario?.sinonimos_personalizados, sinonimosBanco])
 
-  // Top 8 licitações por score de aderência (bloco "Recomendadas para você")
+  // Palavras-chave dos CNAEs da empresa (para incluir no score de aderência)
+  const palavrasChaveCnae = useMemo(() => {
+    if (!user) return []
+    const codigos = []
+    if (user.cnae_principal) {
+      const c = normalizarCodigoCnae(user.cnae_principal)
+      if (c) codigos.push(c)
+    }
+    try {
+      if (user.cnaes_secundarios) {
+        const arr = typeof user.cnaes_secundarios === 'string' ? JSON.parse(user.cnaes_secundarios) : user.cnaes_secundarios
+        if (Array.isArray(arr)) {
+          arr.forEach(cnae => {
+            const cod = typeof cnae === 'string' ? cnae : (cnae?.codigo ?? cnae)
+            const c = normalizarCodigoCnae(cod)
+            if (c && !codigos.includes(c)) codigos.push(c)
+          })
+        }
+      }
+    } catch (_) {}
+    const palavras = new Set()
+    codigos.forEach(cod => {
+      const nome = obterNomeAtividadeCnae(cod)
+      if (!nome || nome.startsWith('CNAE ')) return
+      normalizarTexto(nome).split(/\s+/).filter(p => p.length >= 4).forEach(p => palavras.add(p))
+    })
+    return Array.from(palavras)
+  }, [user?.id, user?.cnae_principal, user?.cnaes_secundarios])
+
+  const temPerfilParaScore = (palavrasChaveParaScore?.todas?.length > 0) || palavrasChaveCnae.length > 0
+
+  // Pool de licitações com score (para as 3 abas: Alta / Média / Baixa aderência)
   const recomendadas = useMemo(() => {
-    if (!palavrasChaveParaScore || !licitacoesFiltradas.length) return []
+    if (!temPerfilParaScore || !licitacoesFiltradas.length) return []
     const setores = perfilUsuario?.setores_atividades || []
     const comScore = licitacoesFiltradas.map(lic => {
       const { score, label } = calcularScoreAderencia(
         lic,
-        palavrasChaveParaScore,
+        palavrasChaveParaScore || { principais: [], secundarias: [], todas: [] },
         perfilUsuario?.sinonimos_personalizados || {},
         sinonimosBanco || {},
-        setores
+        setores,
+        palavrasChaveCnae
       )
       return { licitacao: lic, score, label }
     })
     return comScore
       .filter(r => r.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 8)
-  }, [licitacoesFiltradas, palavrasChaveParaScore, perfilUsuario?.sinonimos_personalizados, sinonimosBanco, perfilUsuario?.setores_atividades])
+      .slice(0, 60)
+  }, [licitacoesFiltradas, palavrasChaveParaScore, palavrasChaveCnae, temPerfilParaScore, perfilUsuario?.sinonimos_personalizados, sinonimosBanco, perfilUsuario?.setores_atividades])
 
-  // Score de aderência por licitação (só para as da página atual, para badge no card)
+  // Aba selecionada na seção Recomendadas: alta | media | baixa
+  const [abaAderencia, setAbaAderencia] = useState('alta')
+  const recomendadasNaAba = useMemo(() => {
+    const filtradas = recomendadas.filter(r => r.label === abaAderencia)
+    return filtradas.slice(0, 8)
+  }, [recomendadas, abaAderencia])
+  const contagemPorAba = useMemo(() => ({
+    alta: recomendadas.filter(r => r.label === 'alta').length,
+    média: recomendadas.filter(r => r.label === 'média').length,
+    baixa: recomendadas.filter(r => r.label === 'baixa').length
+  }), [recomendadas])
+
+  // Score de aderência por licitação (todas as da página atual; 0–100 para barra em todo card)
   const scorePorId = useMemo(() => {
     const map = new Map()
-    if (!palavrasChaveParaScore || !licitacoesPagina.length) return map
+    if (!temPerfilParaScore || !licitacoesPagina.length) return map
     const setores = perfilUsuario?.setores_atividades || []
     licitacoesPagina.forEach(lic => {
       const { score, label } = calcularScoreAderencia(
         lic,
-        palavrasChaveParaScore,
+        palavrasChaveParaScore || { principais: [], secundarias: [], todas: [] },
         perfilUsuario?.sinonimos_personalizados || {},
         sinonimosBanco || {},
-        setores
+        setores,
+        palavrasChaveCnae
       )
-      if (score > 0) {
-        map.set(lic.id ?? lic.numero_controle_pncp, { score, label })
-      }
+      map.set(lic.id ?? lic.numero_controle_pncp, { score, label })
     })
     return map
-  }, [licitacoesPagina, palavrasChaveParaScore, perfilUsuario?.sinonimos_personalizados, sinonimosBanco, perfilUsuario?.setores_atividades])
+  }, [licitacoesPagina, palavrasChaveParaScore, palavrasChaveCnae, temPerfilParaScore, perfilUsuario?.sinonimos_personalizados, sinonimosBanco, perfilUsuario?.setores_atividades])
 
   // Log para debug do filtro automático baseado no perfil (após todas as declarações)
   useEffect(() => {
@@ -1855,13 +1826,6 @@ function LicitacoesContent() {
       const estados = perfilUsuario.estados_interesse || []
       const setores = perfilUsuario.setores_atividades || []
       if (estados.length > 0 || setores.length > 0) {
-        console.log('🎯 Filtro automático baseado no perfil:', {
-          estados: estados.length,
-          setores: setores.length,
-          totalLicitacoes: licitacoes.length,
-          aposFiltroPerfil: licitacoesFiltradas.length,
-          licitacoesFinais: licitacoesFinais.length
-        })
       }
     }
   }, [perfilUsuario, licitacoes.length, licitacoesFiltradas.length, licitacoesFinais.length])
@@ -1941,7 +1905,6 @@ function LicitacoesContent() {
           .maybeSingle()
         
       if (erroUsuario || !usuarioExiste) {
-        console.error('❌ Usuário não encontrado na tabela profiles:', erroUsuario)
         showError('Sua sessão expirou. Por favor, faça login novamente.')
         // Limpar sessão inválida
         const { clearUser } = useUserStore.getState()
@@ -1955,7 +1918,6 @@ function LicitacoesContent() {
 
       if (isFavorito) {
         // Remover
-        console.log('🗑️ Removendo dos favoritos...')
         const { error } = await supabase
           .from('licitacoes_favoritas')
           .delete()
@@ -1963,13 +1925,10 @@ function LicitacoesContent() {
           .eq('licitacao_id', licitacao.id)
         
         if (error) {
-          console.error('Erro ao remover:', error)
           throw error
         }
-        console.log('Removido dos favoritos')
       } else {
         // Verificar se já existe (evitar 409)
-        console.log('Verificando se já existe...')
         const { data: existente } = await supabase
         .from('licitacoes_favoritas')
         .select('id')
@@ -1978,12 +1937,10 @@ function LicitacoesContent() {
         .maybeSingle()
 
         if (existente) {
-          console.log('Já existe nos favoritos')
           return { licitacaoId: licitacao.id, isFavorito: false }
         }
 
         // Adicionar
-        console.log('Adicionando aos favoritos...')
         const { error } = await supabase
           .from('licitacoes_favoritas')
           .insert({
@@ -1993,7 +1950,6 @@ function LicitacoesContent() {
           })
 
         if (error) {
-          console.error('Erro ao adicionar:', error)
           // Tratamento específico para erro de foreign key
           if (error.code === '23503') {
             showError('Erro ao favoritar: sua sessão pode ter expirado. Por favor, faça login novamente.')
@@ -2005,7 +1961,6 @@ function LicitacoesContent() {
           }
           throw error
         }
-        console.log('Adicionado aos favoritos')
       }
 
       return { licitacaoId: licitacao.id, isFavorito }
@@ -2025,7 +1980,6 @@ function LicitacoesContent() {
       success(isFavorito ? 'Removido dos favoritos' : 'Adicionado aos favoritos')
     },
     onError: (error) => {
-      console.error('❌ Erro ao atualizar favorito:', error)
       if (error.message !== 'Usuário não encontrado') {
         showError('Erro ao atualizar favorito. Tente novamente.')
       }
@@ -2082,7 +2036,6 @@ function LicitacoesContent() {
           try {
             cnaesSecundarios = JSON.parse(user.cnaes_secundarios)
           } catch (e) {
-            console.warn('Erro ao parsear CNAEs secundários como JSON:', e)
           }
         } else if (Array.isArray(user.cnaes_secundarios)) {
           cnaesSecundarios = user.cnaes_secundarios
@@ -2103,7 +2056,6 @@ function LicitacoesContent() {
         })
       }
     } catch (e) {
-      console.warn('Erro ao processar CNAEs secundários:', e)
     }
     
     return cnaes
@@ -2133,7 +2085,6 @@ function LicitacoesContent() {
         }
       })
     } catch (error) {
-      console.error('Erro ao obter lista de CNAEs da empresa:', error)
       return []
     }
   }, [cnaesEmpresa])
@@ -2187,7 +2138,6 @@ function LicitacoesContent() {
     // e aplicar no cache semântico que já está carregado
     
     window.history.pushState({}, '', '/licitacoes')
-    console.log('✅ [Limpar Filtros] Filtros resetados - aplicando no cache semântico (sem buscar do banco)')
   }
 
   const handleAplicarFiltros = () => {
@@ -2201,15 +2151,6 @@ function LicitacoesContent() {
     // NÃO invalidar queries - trabalhar apenas com cache
     // O useEffect vai automaticamente reagir e aplicar os filtros no cache
     
-    console.log('🔍 [Aplicar Filtros] Aplicando filtros no cache (incluindo busca rápida e exclusão):', {
-      buscaObjeto: filtros.buscaObjeto,
-      excluirPalavras: filtros.excluirPalavras,
-      outrosFiltros: {
-        uf: filtros.uf,
-        statusEdital: filtros.statusEdital,
-        // ... outros
-      }
-    })
   }
 
   const contarFiltrosAtivos = () => {
@@ -2250,7 +2191,6 @@ function LicitacoesContent() {
       await refetchNumerosWhatsApp()
       success('Números salvos.')
     } catch (err) {
-      console.error(err)
       showError('Erro ao salvar números: ' + (err.message || err))
     } finally {
       setWhatsAppSlotsSaving(false)
@@ -2306,7 +2246,6 @@ function LicitacoesContent() {
       queryClient.invalidateQueries({ queryKey: ['alerta-email', user.id] })
       success('Alerta por e-mail salvo.')
     } catch (err) {
-      console.error(err)
       showError('Erro ao salvar alerta: ' + (err.message || err))
     } finally {
       setAlertaEmailSaving(false)
@@ -2374,9 +2313,7 @@ function LicitacoesContent() {
                   onCheckedChange={(checked) => {
                     setMostrarTodasLicitacoes(checked)
                     if (checked) {
-                      console.log('[Filtro] Modo "Mostrar Todas" ATIVADO - usando cache do banco')
                     } else {
-                      console.log('[Filtro] Modo "Mostrar Todas" DESATIVADO - voltando ao cache semântico')
                     }
                   }}
                 className="flex-shrink-0 data-[state=checked]:bg-orange-500"
@@ -2885,38 +2822,87 @@ function LicitacoesContent() {
             </div>
           )}
 
-          {/* Recomendadas para você: grid compacto; ao clicar, mostra só o edital selecionado */}
+          {/* Recomendadas para você: 3 abas por aderência (Alta / Média / Baixa); clique no card mostra só o edital */}
           {!((isLoading || isFetching || processandoFiltro) && licitacoesFinais.length === 0) && recomendadas.length > 0 && !recomendadaSelecionada && (
             <div className="mb-6">
               <h2 className="text-lg font-semibold text-gray-800 mb-2 flex items-center gap-2">
                 <span className="text-orange-500">★</span> Recomendadas para você
               </h2>
-              <p className="text-sm text-gray-500 mb-3">Clique em um card para ver só esse edital.</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-                {recomendadas.map(({ licitacao, label }) => (
-                  <Card
-                    key={`rec-${licitacao.id ?? licitacao.numero_controle_pncp}`}
-                    className="rounded-lg border border-gray-200 bg-white hover:border-orange-300 hover:shadow-sm transition-all cursor-pointer"
-                    onClick={() => {
-                      setRecomendadaSelecionada(licitacao)
-                      setCardsExpandidos(prev => new Set([...prev, licitacao.id ?? licitacao.numero_controle_pncp]))
-                    }}
+              <p className="text-sm text-gray-500 mb-3">Filtre por aderência ao seu perfil (setores + CNAEs). Clique em um card para ver só esse edital.</p>
+
+              {/* Abas: Alta / Média / Baixa aderência */}
+              <div className="flex border-b border-gray-200 mb-4">
+                {[
+                  { id: 'alta', label: 'Alta aderência', desc: '27%+', count: contagemPorAba.alta, cor: 'green' },
+                  { id: 'média', label: 'Média aderência', desc: '20–26%', count: contagemPorAba.média, cor: 'amber' },
+                  { id: 'baixa', label: 'Baixa aderência', desc: 'abaixo de 20%', count: contagemPorAba.baixa, cor: 'gray' }
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setAbaAderencia(tab.id)}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                      abaAderencia === tab.id
+                        ? tab.cor === 'green'
+                          ? 'border-green-600 text-green-700'
+                          : tab.cor === 'amber'
+                          ? 'border-amber-600 text-amber-700'
+                          : 'border-gray-600 text-gray-700'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
                   >
-                    <CardContent className="p-3">
-                      <span
-                        className={
-                          label === 'alta'
-                            ? 'text-[10px] font-medium text-green-700 uppercase tracking-wide'
-                            : 'text-[10px] font-medium text-amber-700 uppercase tracking-wide'
-                        }
-                      >
-                        {label === 'alta' ? 'Alta' : 'Média'}
-                      </span>
-                      <p className="text-sm text-gray-900 line-clamp-2 mt-1">{licitacao.objeto_compra || licitacao.objeto_licitacao || '—'}</p>
-                      <p className="text-xs text-gray-500 mt-0.5 truncate">{licitacao.orgao_razao_social || '—'}</p>
-                    </CardContent>
-                  </Card>
+                    {tab.label} <span className="text-xs opacity-80">({tab.count})</span>
+                  </button>
                 ))}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                {recomendadasNaAba.length === 0 ? (
+                  <p className="col-span-full text-sm text-gray-500 py-4">
+                    Nenhuma licitação com {abaAderencia === 'alta' ? 'alta (27%+)' : abaAderencia === 'média' ? 'média (20–26%)' : 'baixa (abaixo de 20%)'} aderência nesta amostra.
+                  </p>
+                ) : (
+                  recomendadasNaAba.map(({ licitacao, score, label }) => (
+                    <Card
+                      key={`rec-${licitacao.id ?? licitacao.numero_controle_pncp}`}
+                      className="rounded-lg border border-gray-200 bg-white hover:border-orange-300 hover:shadow-sm transition-all cursor-pointer"
+                      onClick={() => {
+                        setRecomendadaSelecionada(licitacao)
+                        setCardsExpandidos(prev => new Set([...prev, licitacao.id ?? licitacao.numero_controle_pncp]))
+                      }}
+                    >
+                      <CardContent className="p-3">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="text-[10px] font-medium text-gray-500">Aderência</span>
+                          <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden min-w-[60px]">
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width: `${score}%`,
+                                backgroundColor: label === 'alta' ? '#16a34a' : label === 'média' ? '#d97706' : '#9ca3af'
+                              }}
+                            />
+                          </div>
+                          <span className="text-[10px] font-semibold text-gray-700 tabular-nums w-6">{score}%</span>
+                        </div>
+                        <span
+                          className={
+                            label === 'alta'
+                              ? 'inline-block text-[10px] font-semibold text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5'
+                              : label === 'média'
+                              ? 'inline-block text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5'
+                              : 'inline-block text-[10px] font-semibold text-gray-700 bg-gray-100 border border-gray-200 rounded px-1.5 py-0.5'
+                          }
+                          title={label === 'alta' ? 'Alta aderência (27%+)' : label === 'média' ? 'Média aderência (20–26%)' : 'Baixa aderência (abaixo de 20%)'}
+                        >
+                          {label === 'alta' ? 'Alta aderência' : label === 'média' ? 'Média aderência' : 'Baixa aderência'}
+                        </span>
+                        <p className="text-sm text-gray-900 line-clamp-2 mt-1">{licitacao.objeto_compra || licitacao.objeto_licitacao || '—'}</p>
+                        <p className="text-xs text-gray-500 mt-0.5 truncate">{licitacao.orgao_razao_social || '—'}</p>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
               </div>
             </div>
           )}
@@ -3059,9 +3045,26 @@ function LicitacoesContent() {
                     })()}
                             </div>
                   
+                  {/* Barra de aderência (setores + CNAE) — em todos os cards */}
+                  {temPerfilParaScore && (
+                    <div className="flex items-center gap-2 w-full sm:w-auto sm:min-w-[120px]">
+                      <span className="text-[10px] font-medium text-gray-500 whitespace-nowrap">Aderência</span>
+                      <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${(scoreInfo?.score ?? 0)}%`,
+                            backgroundColor: (scoreInfo?.label ?? 'baixa') === 'alta' ? '#16a34a' : (scoreInfo?.label === 'média' ? '#d97706' : '#9ca3af')
+                          }}
+                        />
+                      </div>
+                      <span className="text-[10px] font-semibold text-gray-700 tabular-nums w-7">{(scoreInfo?.score ?? 0)}%</span>
+                    </div>
+                  )}
+
                   {/* Badges de Status e Datas */}
                   <div className="flex flex-wrap items-center gap-2 justify-end">
-                    {/* Badge de aderência (filtro semântico) */}
+                    {/* Badge de aderência (filtro semântico) — opcional, complementa a barra */}
                     {scoreInfo && (scoreInfo.label === 'alta' || scoreInfo.label === 'média') && (
                       <Badge
                         variant="secondary"
@@ -3314,7 +3317,6 @@ function LicitacoesContent() {
                                   [anexoKey]: { loading: false, arquivos, erro: null }
                                 }))
                               } catch (error) {
-                                console.error('❌ Erro ao descompactar ZIP:', error)
                                 setArquivosZipDescompactados(prev => ({
                                   ...prev,
                                   [anexoKey]: { loading: false, arquivos: [], erro: error.message }

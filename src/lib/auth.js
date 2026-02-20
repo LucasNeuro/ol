@@ -21,7 +21,11 @@ async function getProfileByUserId(userId) {
   return profile
 }
 
-/** Cadastro: cria usuário no Auth + perfil em `profiles` */
+/**
+ * Cadastro: cria usuário no Auth + perfil em `profiles`.
+ * Para cadastro sem e-mail de confirmação (evitar rate limit), desative "Confirm email"
+ * no Supabase: Authentication → Providers → Email. Ver docs/SUPABASE-CADASTRO.md.
+ */
 export async function signUp(email, password, profileData) {
   if (!supabase) throw new Error(SUPABASE_NAO_CONFIGURADO_MSG)
 

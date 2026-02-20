@@ -30,20 +30,17 @@ const CACHE_DURATION_PARCIAL = 1000 * 60 * 15 // 15 min (checkpoint durante busc
 async function isCacheValid(userId) {
   try {
     if (!idb.isAvailable()) {
-      console.warn('⚠️ [Cache] IndexedDB não disponível')
       return false
     }
     
     const timestamp = await idb.getItem(getCacheTimestampKey(userId))
     if (!timestamp) {
-      console.log(`⚠️ [Cache] Timestamp não encontrado para usuário: ${userId}`)
       return false
     }
     
     // Garantir que timestamp seja número
     const timestampNum = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10)
     if (isNaN(timestampNum)) {
-      console.warn(`⚠️ [Cache] Timestamp inválido para usuário ${userId}:`, timestamp)
       return false
     }
     
@@ -51,14 +48,11 @@ async function isCacheValid(userId) {
     const isValid = cacheAge < CACHE_DURATION
     
     if (!isValid) {
-      console.log(`⚠️ [Cache] Cache expirado para usuário ${userId} (idade: ${Math.floor(cacheAge / 1000 / 60)} minutos, limite: ${Math.floor(CACHE_DURATION / 1000 / 60)} minutos)`)
     } else {
-      console.log(`✅ [Cache] Cache válido para usuário ${userId} (idade: ${Math.floor(cacheAge / 1000 / 60)} minutos)`)
     }
     
     return isValid
   } catch (e) {
-    console.warn('⚠️ [Cache] Erro ao verificar validade do cache:', e)
     return false
   }
 }
@@ -70,12 +64,10 @@ async function isCacheValid(userId) {
  */
 export async function salvarCacheLicitacoes(licitacoes, userId = null, carregadoPorSetor = false, setoresHash = '') {
   if (!userId) {
-    console.warn('⚠️ [Cache] userId não fornecido, não salvando cache')
     return
   }
   
   if (!idb.isAvailable()) {
-    console.warn('⚠️ [Cache] IndexedDB não disponível, não foi possível salvar cache')
     return
   }
   
@@ -91,9 +83,7 @@ export async function salvarCacheLicitacoes(licitacoes, userId = null, carregado
     await idb.setItem(getCacheKey(userId), dataToSave)
     await idb.setItem(getCacheTimestampKey(userId), Date.now())
     
-    console.log(`✅ [Cache] ${licitacoes.length} licitações salvas (usuário: ${userId}, por setor: ${!!carregadoPorSetor})`)
   } catch (e) {
-    console.warn('⚠️ [Cache] Erro ao salvar cache no IndexedDB:', e)
   }
 }
 
@@ -109,7 +99,6 @@ export async function salvarCacheParcialLicitacoes(licitacoes, userId = null) {
       userId,
     })
   } catch (e) {
-    console.warn('⚠️ [Cache Parcial] Erro ao salvar:', e)
   }
 }
 
@@ -128,10 +117,8 @@ export async function carregarCacheParcialLicitacoes(userId = null) {
       await idb.removeItem(getCachePartialKey(userId))
       return null
     }
-    console.log(`✅ [Cache Parcial] ${data.licitacoes.length} licitações (retomando busca)`)
     return { licitacoes: data.licitacoes }
   } catch (e) {
-    console.warn('⚠️ [Cache Parcial] Erro ao carregar:', e)
     return null
   }
 }
@@ -144,7 +131,6 @@ export async function removerCacheParcialLicitacoes(userId = null) {
   try {
     await idb.removeItem(getCachePartialKey(userId))
   } catch (e) {
-    console.warn('⚠️ [Cache Parcial] Erro ao remover:', e)
   }
 }
 
@@ -153,19 +139,16 @@ export async function removerCacheParcialLicitacoes(userId = null) {
  */
 export async function carregarCacheLicitacoes(userId = null) {
   if (!userId) {
-    console.log('⚠️ [Cache] userId não fornecido, não carregando cache')
     return null
   }
   
   if (!idb.isAvailable()) {
-    console.warn('⚠️ [Cache] IndexedDB não disponível')
     return null
   }
   
   try {
     const isValid = await isCacheValid(userId)
     if (!isValid) {
-      console.log('⚠️ [Cache] Cache expirado ou inexistente para usuário:', userId)
       return null
     }
 
@@ -174,19 +157,16 @@ export async function carregarCacheLicitacoes(userId = null) {
     
     // Validar se o cache pertence ao usuário atual
     if (data.userId !== userId) {
-      console.warn('⚠️ [Cache] Cache pertence a outro usuário, limpando...')
       await limparCacheLicitacoes(userId)
       return null
     }
     
-    console.log(`✅ [Cache] ${data.licitacoes?.length || 0} licitações carregadas do IndexedDB (usuário: ${userId})`)
     return {
       licitacoes: data.licitacoes,
       carregadoPorSetor: !!data.carregadoPorSetor,
       setoresHash: data.setoresHash || '',
     }
   } catch (e) {
-    console.warn('⚠️ [Cache] Erro ao carregar cache do IndexedDB:', e)
     return null
   }
 }
@@ -197,12 +177,10 @@ export async function carregarCacheLicitacoes(userId = null) {
  */
 export async function salvarCacheSemantico(licitacoes, userId = null, licitacoesTotalLength = null, setoresHash = '') {
   if (!userId) {
-    console.warn('⚠️ [Cache Semântico] userId não fornecido, não salvando cache')
     return
   }
   
   if (!idb.isAvailable()) {
-    console.warn('⚠️ [Cache Semântico] IndexedDB não disponível, não foi possível salvar cache')
     return
   }
   
@@ -216,9 +194,7 @@ export async function salvarCacheSemantico(licitacoes, userId = null, licitacoes
     }
     
     await idb.setItem(getCacheSemanticoKey(userId), dataToSave)
-    console.log(`✅ [Cache Semântico] ${licitacoes.length} licitações salvas após filtro semântico no IndexedDB (usuário: ${userId})`)
   } catch (e) {
-    console.warn('⚠️ [Cache Semântico] Erro ao salvar cache no IndexedDB:', e)
   }
 }
 
@@ -228,12 +204,10 @@ export async function salvarCacheSemantico(licitacoes, userId = null, licitacoes
  */
 export async function carregarCacheSemantico(userId = null, setoresHashAtual = '') {
   if (!userId) {
-    console.log('⚠️ [Cache Semântico] userId não fornecido, não carregando cache')
     return null
   }
   
   if (!idb.isAvailable()) {
-    console.warn('⚠️ [Cache Semântico] IndexedDB não disponível')
     return null
   }
   
@@ -242,29 +216,24 @@ export async function carregarCacheSemantico(userId = null, setoresHashAtual = '
     if (!data || !data.licitacoes) return null
     
     if (data.userId !== userId) {
-      console.warn('⚠️ [Cache Semântico] Cache pertence a outro usuário, limpando...')
       await limparCacheLicitacoes(userId)
       return null
     }
     
     if ((data.setoresHash || '') !== (setoresHashAtual || '')) {
-      console.log('⚠️ [Cache Semântico] Setores/atividades mudaram, ignorando cache antigo')
       return null
     }
     
     const cacheAge = Date.now() - (data.timestamp || 0)
     if (cacheAge > CACHE_DURATION_SEMANTICO) {
-      console.log('⚠️ [Cache Semântico] Cache expirado (idade:', Math.round(cacheAge / 60000), 'min)')
       return null
     }
 
-    console.log(`✅ [Cache Semântico] ${data.licitacoes?.length || 0} licitações do cache (usuário: ${userId})`)
     return {
       licitacoes: data.licitacoes,
       licitacoesTotalLength: data.licitacoesTotalLength ?? data.licitacoes?.length,
     }
   } catch (e) {
-    console.warn('⚠️ [Cache Semântico] Erro ao carregar cache do IndexedDB:', e)
     return null
   }
 }
@@ -276,9 +245,7 @@ export async function limparCacheSemantico(userId = null) {
   if (!userId || !idb.isAvailable()) return
   try {
     await idb.removeItem(getCacheSemanticoKey(userId))
-    console.log(`✅ [Cache] Cache semântico limpo para usuário: ${userId}`)
   } catch (e) {
-    console.warn('⚠️ [Cache] Erro ao limpar cache semântico:', e)
   }
 }
 
@@ -335,9 +302,7 @@ export async function salvarResultadoFinal(licitacoes, userId = null, filtrosHas
       timestamp: Date.now(),
       userId,
     })
-    console.log(`✅ [Cache Resultado Final] ${licitacoes?.length ?? 0} licitações salvas (usuário: ${userId})`)
   } catch (e) {
-    console.warn('⚠️ [Cache Resultado Final] Erro ao salvar:', e)
   }
 }
 
@@ -354,10 +319,8 @@ export async function carregarResultadoFinal(userId = null, filtrosHashAtual = '
     const age = Date.now() - (data.timestamp || 0)
     if (age > CACHE_DURATION_RESULTADO_FINAL) return null
     if ((data.filtrosHash || '') !== filtrosHashAtual) return null
-    console.log(`✅ [Cache Resultado Final] ${data.licitacoes.length} licitações carregadas (sem refazer busca/filtro)`)
     return { licitacoes: data.licitacoes, filtrosHash: data.filtrosHash }
   } catch (e) {
-    console.warn('⚠️ [Cache Resultado Final] Erro ao carregar:', e)
     return null
   }
 }
@@ -367,7 +330,6 @@ export async function carregarResultadoFinal(userId = null, filtrosHashAtual = '
  */
 export async function limparCacheLicitacoes(userId = null) {
   if (!idb.isAvailable()) {
-    console.warn('⚠️ [Cache] IndexedDB não disponível')
     return
   }
   
@@ -379,7 +341,6 @@ export async function limparCacheLicitacoes(userId = null) {
       await idb.removeItem(getCacheTimestampKey(userId))
       await idb.removeItem(getCacheResultadoFinalKey(userId))
       await idb.removeItem(getCachePartialKey(userId))
-      console.log(`✅ [Cache] Cache limpo para usuário: ${userId}`)
     } else {
       // Limpar TODOS os caches (útil no logout) - limpar por prefixo
       const count1 = await idb.clearByPrefix('licitacoes_cache_session_')
@@ -387,10 +348,8 @@ export async function limparCacheLicitacoes(userId = null) {
       const count3 = await idb.clearByPrefix('licitacoes_cache_timestamp_')
       const count4 = await idb.clearByPrefix('licitacoes_resultado_final_')
       const count5 = await idb.clearByPrefix('licitacoes_cache_parcial_')
-      console.log(`✅ [Cache] Todos os caches de licitações limpos (${count1 + count2 + count3 + count4 + count5} itens removidos)`)
     }
   } catch (e) {
-    console.warn('⚠️ [Cache] Erro ao limpar cache:', e)
   }
 }
 
@@ -551,12 +510,6 @@ export async function buscarLicitacoesPorClassificacaoPrincipal(perfil) {
   const { setorIds, subsetorIds } = await resolverSetoresAtividadesParaIds(perfil.setores_atividades)
   if (setorIds.length === 0) return []
 
-  console.log('🔍 [Licitações] Filtro por setor/subsetor (como cadastro):', {
-    setorIdsCount: setorIds.length,
-    subsetorIdsCount: subsetorIds.length,
-    setorIds: setorIds.slice(0, 5),
-    subsetorIds: subsetorIds.slice(0, 10),
-  })
 
   try {
     let q = supabase
@@ -579,16 +532,13 @@ export async function buscarLicitacoesPorClassificacaoPrincipal(perfil) {
     const { data, error } = await q.limit(10000)
 
     if (error) {
-      console.warn('⚠️ [licitacoes classificação] Erro:', error.message, error.code)
       return []
     }
     const todas = processarLoteLicitacoes(data || [])
     if (todas.length > 0) {
-      console.log(`✅ [licitacoes] ${todas.length} licitações por setor e subsetor (como no cadastro)`)
     }
     return todas
   } catch (e) {
-    console.warn('⚠️ [licitacoes classificação] Erro:', e.message)
     return []
   }
 }
@@ -603,7 +553,6 @@ export async function buscarLicitacoesPorClassificacaoPrincipal(perfil) {
  */
 export async function buscarLicitacoesDoBanco(onProgress = null, maxRegistros = 10000, opts = {}) {
   if (!supabase) {
-    console.warn('⚠️ Supabase não configurado')
     return []
   }
 
@@ -617,9 +566,7 @@ export async function buscarLicitacoesDoBanco(onProgress = null, maxRegistros = 
 
   try {
     if (todasLicitacoes.length > 0) {
-      console.log(`📡 [Banco] Retomando busca: ${todasLicitacoes.length} já em cache, buscando a partir de offset ${offset}...`)
     } else {
-      console.log(`📡 [Banco] Buscando até ${maxRegistros.toLocaleString('pt-BR')} licitações mais recentes (paginado)...`)
     }
 
     while (continuar && todasLicitacoes.length < maxRegistros) {
@@ -630,7 +577,6 @@ export async function buscarLicitacoesDoBanco(onProgress = null, maxRegistros = 
         .range(offset, offset + TAMANHO_LOTE - 1)
 
       if (error) {
-        console.error('❌ [Banco] Erro ao buscar licitações:', error)
         throw error
       }
 
@@ -641,7 +587,6 @@ export async function buscarLicitacoesDoBanco(onProgress = null, maxRegistros = 
         todasLicitacoes.push(...processados)
         offset += data.length
         if (onProgress) onProgress(todasLicitacoes.length, maxRegistros)
-        console.log(`📡 [Banco] ${todasLicitacoes.length} licitações carregadas...`)
         if (typeof onSavePartial === 'function') {
           await onSavePartial(todasLicitacoes)
         }
@@ -649,10 +594,8 @@ export async function buscarLicitacoesDoBanco(onProgress = null, maxRegistros = 
       }
     }
 
-    console.log(`✅ [Banco] ${todasLicitacoes.length} licitações carregadas do banco (total)`)
     return todasLicitacoes
   } catch (error) {
-    console.error('❌ [Banco] Erro ao buscar licitações:', error)
     return todasLicitacoes.length > 0 ? todasLicitacoes : []
   }
 }

@@ -57,7 +57,6 @@ export function useLicitacoesCache({ perfilUsuario, filtros, filtroSemantico }) 
         setLicitacoesIniciais(resultado)
         setFiltroSemanticoAplicado(true)
       } catch (error) {
-        console.error('Erro ao aplicar filtro semântico:', error)
         setLicitacoesIniciais(todasLicitacoes)
         setFiltroSemanticoAplicado(true)
       } finally {

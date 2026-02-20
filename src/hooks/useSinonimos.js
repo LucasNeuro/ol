@@ -9,7 +9,6 @@ export function useSinonimos(setoresIds = []) {
   return useQuery({
     queryKey: ['sinonimos', setoresIds],
     queryFn: async () => {
-      console.log('🔍 [useSinonimos] Buscando sinônimos do banco...')
       
       // Verificar se tabela existe tentando buscar
       let sinonimosGerais = []
@@ -23,7 +22,6 @@ export function useSinonimos(setoresIds = []) {
         if (errorGerais) {
           // Se tabela não existe (42P01) ou coluna não existe (42703), retornar vazio
           if (errorGerais.code === '42P01' || errorGerais.code === '42703') {
-            console.warn('⚠️ [useSinonimos] Tabela sinonimos não existe ainda, usando sinônimos base do código')
             return {} // Retornar objeto vazio, sistema usará sinônimos base
           }
           throw errorGerais
@@ -31,9 +29,7 @@ export function useSinonimos(setoresIds = []) {
         
         sinonimosGerais = data || []
 
-        console.log(`✅ [useSinonimos] ${sinonimosGerais?.length || 0} sinônimos gerais encontrados.`)
       } catch (error) {
-        console.warn('⚠️ [useSinonimos] Erro ao buscar sinônimos:', error)
         return {} // Retornar vazio, sistema usará sinônimos base
       }
 
@@ -58,18 +54,15 @@ export function useSinonimos(setoresIds = []) {
           if (errorSetores) {
             // Se tabela não existe, ignorar silenciosamente
             if (errorSetores.code !== '42P01' && errorSetores.code !== '42703') {
-              console.warn('⚠️ [useSinonimos] Erro ao buscar sinônimos por setor:', errorSetores)
             }
           } else {
             sinonimosPorSetor = (sinonimosSetores || [])
               .map(ss => ss.sinonimos)
               .filter(s => s && s.ativo)
-            console.log(`✅ [useSinonimos] ${sinonimosPorSetor.length} sinônimos específicos por setor encontrados.`)
           }
         } catch (error) {
           // Ignorar erros de tabela não existente
           if (error.code !== '42P01' && error.code !== '42703') {
-            console.warn('⚠️ [useSinonimos] Erro ao buscar sinônimos por setor:', error)
           }
         }
       }
@@ -107,11 +100,6 @@ export function useSinonimos(setoresIds = []) {
         sinonimosMap[palavra] = Array.from(unicos.values())
       })
 
-      console.log(`✅ [useSinonimos] ${Object.keys(sinonimosMap).length} palavras-base com sinônimos organizados.`)
-      console.log(`📊 [useSinonimos] Exemplo de sinônimos:`, Object.keys(sinonimosMap).slice(0, 5).map(k => ({
-        palavra: k,
-        sinonimos: sinonimosMap[k].length
-      })))
       return sinonimosMap
     },
     staleTime: 1000 * 60 * 60, // Cache por 1 hora

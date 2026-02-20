@@ -64,7 +64,6 @@ export async function buscarContratacoesPorData(params) {
   // Se não tiver modalidade válida, tentar buscar apenas as modalidades mais comuns
   // Em vez de todas as 13, vamos tentar apenas algumas para evitar problemas
   if (!modalidadeValida) {
-    console.log('🔍 Buscando modalidades mais comuns (6=Pregão Eletrônico, 8=Dispensa)...')
     
     // Modalidades mais comuns: 6 (Pregão Eletrônico), 8 (Dispensa), 4 (Concorrência Eletrônica)
     const modalidadesComuns = [6, 8, 4]
@@ -84,7 +83,6 @@ export async function buscarContratacoesPorData(params) {
         
         try {
           const url = `${PNCP_BASE_URL}/v1/contratacoes/publicacao?${paramsComModalidade}`
-          console.log(`  📡 Buscando modalidade ${mod}, página ${paginaAtual}...`)
           
           const response = await fetch(url, {
             method: 'GET',
@@ -96,11 +94,9 @@ export async function buscarContratacoesPorData(params) {
           
           if (!response.ok) {
             const errorText = await response.text().catch(() => '')
-            console.error(`❌ [PNCP] Erro ${response.status} ao buscar modalidade ${mod}, página ${paginaAtual}:`, errorText.substring(0, 200))
             
             // Se for 400, pode ser problema com parâmetros ou data
             if (response.status === 400) {
-              console.warn(`⚠️ [PNCP] Erro 400 - Verifique se a data ${dataInicial} é válida e se há licitações para esta data`)
               // Continuar com próxima modalidade
               continuar = false
               break
@@ -108,7 +104,6 @@ export async function buscarContratacoesPorData(params) {
             
             // Se for 429 (rate limit), aguardar mais
             if (response.status === 429) {
-              console.warn(`⏸️ [PNCP] Rate limit atingido. Aguardando...`)
               await new Promise(resolve => setTimeout(resolve, 2000))
               continue
             }
@@ -125,7 +120,6 @@ export async function buscarContratacoesPorData(params) {
               try {
                 const data = JSON.parse(text)
                 const count = data.data?.length || 0
-                console.log(`  ✅ Modalidade ${mod}, página ${paginaAtual}: ${count} licitações encontradas`)
                 
                 if (data.data && data.data.length > 0) {
                   todasLicitacoes.push(...data.data)
@@ -145,20 +139,16 @@ export async function buscarContratacoesPorData(params) {
                   paginaAtual++
                 }
               } catch (parseError) {
-                console.warn(`  ⚠️ Modalidade ${mod}, página ${paginaAtual}: Erro ao parsear JSON - ${parseError.message}`)
                 continuar = false
               }
             } else {
-              console.warn(`  ⚠️ Modalidade ${mod}, página ${paginaAtual}: Resposta vazia`)
               continuar = false
             }
           } else {
             const errorText = await response.text().catch(() => 'Erro desconhecido')
-            console.warn(`  ⚠️ Modalidade ${mod}, página ${paginaAtual}: Erro ${response.status}`)
             
             // Se for CORS ou 429, parar e retornar o que temos
             if (response.status === 429 || response.status === 0) {
-              console.warn(`  ⛔ Parando buscas devido a erro ${response.status}`)
               continuar = false
               break
             } else {
@@ -166,11 +156,9 @@ export async function buscarContratacoesPorData(params) {
             }
           }
         } catch (error) {
-          console.error(`  ❌ Erro ao buscar modalidade ${mod}, página ${paginaAtual}:`, error.message)
           
           // Se for erro de CORS, parar
           if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
-            console.error(`  ⛔ Erro de CORS detectado. A API do PNCP pode não permitir requisições diretas do navegador.`)
             continuar = false
             break
           } else {
@@ -184,7 +172,6 @@ export async function buscarContratacoesPorData(params) {
         }
       }
       
-      console.log(`  ✅ Modalidade ${mod}: Total de ${todasLicitacoes.length} licitações acumuladas`)
       
       // Delay entre modalidades
       if (mod !== modalidadesComuns[modalidadesComuns.length - 1]) {
@@ -192,18 +179,15 @@ export async function buscarContratacoesPorData(params) {
       }
     }
     
-    console.log(`📊 Total de licitações encontradas (antes de remover duplicatas): ${todasLicitacoes.length}`)
     
     // Remover duplicatas por numeroControlePNCP
     const unicas = Array.from(
       new Map(todasLicitacoes.map(item => [item.numeroControlePNCP, item])).values()
     )
     
-    console.log(`✅ Total de licitações únicas: ${unicas.length}`)
     
     // Se não encontrou nada, retornar vazio mas com estrutura correta
     if (unicas.length === 0) {
-      console.warn('⚠️ Nenhuma licitação encontrada. Pode ser problema de CORS ou a data não tem licitações.')
     }
     
     return {
@@ -235,7 +219,6 @@ export async function buscarContratacoesPorData(params) {
     paramsPagina.set('pagina', paginaAtual.toString())
     
     const url = `${PNCP_BASE_URL}/v1/contratacoes/publicacao?${paramsPagina}`
-    console.log(`🔍 [PNCP] Buscando modalidade ${modalidade}, página ${paginaAtual}...`)
     
     const response = await fetch(url, {
       method: 'GET',
@@ -247,25 +230,15 @@ export async function buscarContratacoesPorData(params) {
     
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'Erro desconhecido')
-      console.error(`❌ [PNCP] Erro ${response.status} na busca:`, errorText.substring(0, 200))
       
       // Se for 400, pode ser problema com parâmetros ou data
       if (response.status === 400) {
-        console.warn(`⚠️ [PNCP] Erro 400 - Verifique se a data ${dataInicial} é válida e se há licitações para esta data`)
-        console.warn(`⚠️ [PNCP] Parâmetros usados:`, {
-          dataInicial,
-          dataFinal,
-          modalidade: modalidade,
-          pagina: paginaAtual,
-          tamanhoPagina: tamanhoPaginaValido
-        })
         continuar = false
         break
       }
       
       // Se for 429, sugerir aguardar
       if (response.status === 429) {
-        console.warn('⏸️ [PNCP] Rate limit atingido. Aguardando...')
         await new Promise(resolve => setTimeout(resolve, 2000))
         continue
       }
@@ -277,14 +250,12 @@ export async function buscarContratacoesPorData(params) {
     // Verificar se a resposta tem conteúdo antes de fazer JSON.parse
     const contentType = response.headers.get('content-type')
     if (!contentType || !contentType.includes('application/json')) {
-      console.warn(`⚠️ Resposta não é JSON: ${contentType}`)
       continuar = false
       break
     }
 
     const text = await response.text()
     if (!text || !text.trim()) {
-      console.warn('⚠️ Resposta vazia da API')
       continuar = false
       break
     }
@@ -293,20 +264,17 @@ export async function buscarContratacoesPorData(params) {
     try {
       resultado = JSON.parse(text)
     } catch (parseError) {
-      console.error('❌ Erro ao parsear JSON:', parseError, 'Texto recebido:', text.substring(0, 200))
       continuar = false
       break
     }
 
     if (resultado.data && resultado.data.length > 0) {
       todasLicitacoes.push(...resultado.data)
-      console.log(`✅ Página ${paginaAtual}: ${resultado.data.length} licitações encontradas`)
       
       // Se tiver filtro de número de controle e encontramos, parar
       if (temFiltroNumeroControle) {
         const encontrada = todasLicitacoes.find(l => l.numeroControlePNCP === numeroControlePNCP)
         if (encontrada) {
-          console.log('✅ [Busca] Licitação encontrada pelo número de controle!')
           continuar = false
           break
         }
@@ -323,7 +291,6 @@ export async function buscarContratacoesPorData(params) {
     totalPaginas = resultado.totalPaginas || 1
     const totalRegistros = resultado.totalRegistros || 0
     
-    console.log(`📊 Total de páginas: ${totalPaginas}, Total de registros: ${totalRegistros}`)
     
     if (paginaAtual >= totalPaginas || resultado.data?.length === 0) {
       continuar = false
@@ -334,7 +301,6 @@ export async function buscarContratacoesPorData(params) {
     }
   }
   
-  console.log(`✅ Busca concluída: ${todasLicitacoes.length} licitações encontradas em ${paginaAtual - 1} página(s)`)
   
   // Remover duplicatas
   const unicas = Array.from(
@@ -437,13 +403,11 @@ export async function buscarContratacaoCompleta(numeroControlePNCP) {
     throw new Error('Número de controle PNCP é obrigatório')
   }
 
-  console.log('🔍 [Contratação Completa] Buscando:', numeroControlePNCP)
 
   try {
     const numeroEncoded = encodeURIComponent(numeroControlePNCP)
     const url = `${PNCP_BASE_URL}/v1/contratacoes/${numeroEncoded}`
     
-    console.log('📡 [Contratação Completa] URL:', url)
 
     const response = await fetch(url, {
       method: 'GET',
@@ -455,26 +419,21 @@ export async function buscarContratacaoCompleta(numeroControlePNCP) {
 
     if (!response.ok) {
       if (response.status === 404) {
-        console.warn('⚠️ [Contratação Completa] Contratação não encontrada')
         return null
       }
       const errorText = await response.text().catch(() => '')
-      console.error(`❌ [Contratação Completa] Erro ${response.status}:`, errorText.substring(0, 200))
       return null
     }
 
     const text = await response.text()
     if (!text || !text.trim()) {
-      console.warn('⚠️ [Contratação Completa] Resposta vazia')
       return null
     }
 
     const dados = JSON.parse(text)
-    console.log('✅ [Contratação Completa] Dados obtidos')
     
     return dados
   } catch (error) {
-    console.error('❌ [Contratação Completa] Erro:', error)
     return null
   }
 }
@@ -488,7 +447,6 @@ export async function buscarDetalhesContratacao(numeroControlePNCP) {
     throw new Error('Número de controle PNCP é obrigatório')
   }
 
-  console.log('🔍 [Detalhes] Buscando detalhes para:', numeroControlePNCP)
 
   try {
     // Segundo a documentação do PNCP, os endpoints são:
@@ -500,7 +458,6 @@ export async function buscarDetalhesContratacao(numeroControlePNCP) {
     const urlItens = `${PNCP_BASE_URL}/v1/contratacoes/${numeroEncoded}/itens`
     const urlDocs = `${PNCP_BASE_URL}/v1/contratacoes/${numeroEncoded}/documentos`
     
-    console.log('📡 [Detalhes] URLs:', { urlItens, urlDocs })
 
     // Buscar em paralelo
     const [responseItens, responseDocs] = await Promise.allSettled([
@@ -525,11 +482,9 @@ export async function buscarDetalhesContratacao(numeroControlePNCP) {
       if (responseItens.value.ok) {
         try {
           const textItens = await responseItens.value.text()
-          console.log('📄 [Detalhes] Resposta itens (primeiros 1000 chars):', textItens.substring(0, 1000))
           
           if (textItens && textItens.trim()) {
             const dadosItens = JSON.parse(textItens)
-            console.log('✅ [Detalhes] Itens parseados:', dadosItens)
             
             // A API pode retornar de várias formas
             if (Array.isArray(dadosItens)) {
@@ -544,20 +499,15 @@ export async function buscarDetalhesContratacao(numeroControlePNCP) {
               itens = dadosItens.resultado
             }
             
-            console.log(`📦 [Detalhes] ${itens.length} itens encontrados`)
           }
         } catch (error) {
-          console.warn('⚠️ [Detalhes] Erro ao parsear itens:', error)
         }
       } else {
         const status = responseItens.value.status
         const statusText = responseItens.value.statusText
-        console.warn(`⚠️ [Detalhes] Erro ao buscar itens: ${status} ${statusText}`)
         const errorText = await responseItens.value.text().catch(() => '')
-        console.warn('📄 [Detalhes] Resposta de erro itens:', errorText.substring(0, 200))
       }
     } else {
-      console.warn('⚠️ [Detalhes] Erro ao buscar itens:', responseItens.reason || 'Erro desconhecido')
     }
 
     let documentos = []
@@ -565,11 +515,9 @@ export async function buscarDetalhesContratacao(numeroControlePNCP) {
       if (responseDocs.value.ok) {
         try {
           const textDocs = await responseDocs.value.text()
-          console.log('📄 [Detalhes] Resposta documentos (primeiros 1000 chars):', textDocs.substring(0, 1000))
           
           if (textDocs && textDocs.trim()) {
             const dadosDocs = JSON.parse(textDocs)
-            console.log('✅ [Detalhes] Documentos parseados:', dadosDocs)
             
             // A API pode retornar de várias formas
             if (Array.isArray(dadosDocs)) {
@@ -594,28 +542,21 @@ export async function buscarDetalhesContratacao(numeroControlePNCP) {
               tipoDocumento: doc.tipoDocumento || doc.codigoTipoDocumento || null,
             }))
             
-            console.log(`📄 [Detalhes] ${documentos.length} documentos encontrados`)
             // Log dos links encontrados
             documentos.forEach((doc, idx) => {
               if (doc.urlDocumento) {
-                console.log(`   ✅ ${idx + 1}. ${doc.nomeArquivo}: ${doc.urlDocumento.substring(0, 80)}...`)
               } else {
-                console.warn(`   ⚠️ ${idx + 1}. ${doc.nomeArquivo}: SEM LINK`)
               }
             })
           }
         } catch (error) {
-          console.warn('⚠️ [Detalhes] Erro ao parsear documentos:', error)
         }
       } else {
         const status = responseDocs.value.status
         const statusText = responseDocs.value.statusText
-        console.warn(`⚠️ [Detalhes] Erro ao buscar documentos: ${status} ${statusText}`)
         const errorText = await responseDocs.value.text().catch(() => '')
-        console.warn('📄 [Detalhes] Resposta de erro documentos:', errorText.substring(0, 200))
       }
     } else {
-      console.warn('⚠️ [Detalhes] Erro ao buscar documentos:', responseDocs.reason || 'Erro desconhecido')
     }
 
     const resultado = {
@@ -623,10 +564,8 @@ export async function buscarDetalhesContratacao(numeroControlePNCP) {
       documentos: documentos
     }
 
-    console.log('✅ [Detalhes] Retornando:', { itens: itens.length, documentos: documentos.length })
     return resultado
   } catch (error) {
-    console.error('❌ [Detalhes] Erro ao buscar detalhes completos:', error)
     // Não lançar erro, retornar vazio para não quebrar a aplicação
     return {
       itens: [],

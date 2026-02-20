@@ -2,6 +2,9 @@
 // UTILITÁRIOS CNAE
 // ============================================
 // Funções para trabalhar com CNAEs e atividades econômicas
+// Dados completos: gerados pela API do IBGE (node scripts/atualizar-cnae-ibge.js)
+
+import cnaeIbge from './cnae-ibge.json'
 
 /**
  * Busca o nome da atividade econômica pelo código CNAE
@@ -27,7 +30,6 @@ export async function buscarNomeAtividadeCnae(codigoCnae) {
       return data.nome || data.descricao || null
     }
   } catch (error) {
-    console.warn('Erro ao buscar nome CNAE via API:', error)
   }
 
   // Fallback: retornar código se não encontrar
@@ -58,11 +60,10 @@ export function resumirNomeAtividade(nome, maxLength = 60) {
 }
 
 /**
- * Mapeamento completo de CNAEs (base de dados local)
- * Lista expandida com principais atividades econômicas
+ * Mapeamento local (fallback e sobrescritas quando cnae-ibge.json está vazio ou para ajustes)
  * Fonte: IBGE - Classificação Nacional de Atividades Econômicas (CNAE)
  */
-const MAPEAMENTO_CNAE_COMPLETO = {
+const MAPEAMENTO_MANUAL = {
   // Serviços de saúde e prótese
   '3250706': 'Serviços de prótese dentária',
   '3250709': 'Serviço de laboratório óptico',
@@ -153,7 +154,9 @@ const MAPEAMENTO_CNAE_COMPLETO = {
   '5611201': 'Restaurantes e similares',
   '5611203': 'Lanchonetes, casas de chá, de sucos e similares',
   '5611204': 'Bares e outros estabelecimentos especializados em servir bebidas, sem entretenimento',
+  '5612100': 'Restaurantes e outros estabelecimentos de serviço de alimentação e bebidas',
   '5620101': 'Fornecimento de alimentos preparados preponderantemente para empresas',
+  '5620102': 'Atividades de fornecimento de alimentos preparados preponderantemente para eventos',
   '5620103': 'Cantinas – serviços de alimentação privativos',
   '5620104': 'Fornecimento de alimentos preparados preponderantemente para consumo domiciliar',
   
@@ -399,6 +402,9 @@ const MAPEAMENTO_CNAE_COMPLETO = {
   '9609299': 'Outras atividades de serviços pessoais não especificadas anteriormente',
 }
 
+// API IBGE (scripts/atualizar-cnae-ibge.js) + mapeamento manual (sobrescreve quando houver conflito)
+const MAPEAMENTO_CNAE_COMPLETO = { ...(cnaeIbge || {}), ...MAPEAMENTO_MANUAL }
+
 /**
  * Normaliza código CNAE removendo hífens e barras
  * Ex: "6201-5/02" -> "6201502"
@@ -446,7 +452,6 @@ export async function obterNomeAtividadeCnaeAsync(codigoCnae) {
     const nome = await buscarNomeAtividadeCnae(codigoCnae)
     return nome || `CNAE ${codigoCnae}`
   } catch (error) {
-    console.warn(`Erro ao buscar nome do CNAE ${codigoCnae}:`, error)
     return `CNAE ${codigoCnae}`
   }
 }
@@ -491,7 +496,6 @@ export function obterListaCompletaCnaes(cnaesEmpresa = []) {
     return Array.from(todosCnaes.values())
       .sort((a, b) => a.prioridade - b.prioridade || a.nome.localeCompare(b.nome))
   } catch (error) {
-    console.error('Erro ao obter lista completa de CNAEs:', error)
     return []
   }
 }

@@ -83,14 +83,12 @@ export function useWhatsAppRateLimit() {
         resetIn: 0
       }
     } catch (error) {
-      console.error('Erro ao verificar rate limit:', error)
       // Se erro ao verificar (ex: tabela não existe), permitir envio mas avisar
       // Melhor permitir envio do que bloquear usuário por erro técnico
       const errorMsg = error?.message || ''
       const isTableMissing = errorMsg.includes('relation') || errorMsg.includes('does not exist') || errorMsg.includes('not found')
       
       if (isTableMissing) {
-        console.warn('⚠️ Tabela whatsapp_rate_limit não existe. Rate limiting desabilitado.')
       }
       
       return {
@@ -128,7 +126,6 @@ export function useWhatsAppRateLimit() {
 
       if (error) throw error
     } catch (error) {
-      console.error('Erro ao registrar envio:', error)
     }
   }, [user])
 
@@ -150,7 +147,6 @@ export function useWhatsAppRateLimit() {
       if (error) throw error
       return data || []
     } catch (error) {
-      console.error('Erro ao buscar histórico:', error)
       return []
     }
   }, [user])

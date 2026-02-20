@@ -134,7 +134,6 @@ function ModulosContent() {
       setMensagem('')
       setFeedbackOpen(false)
     } catch (error) {
-      console.error('Erro ao enviar feedback:', error)
       alert(`Erro ao enviar feedback: ${error.message}. Por favor, tente novamente.`)
     } finally {
       setEnviando(false)

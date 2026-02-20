@@ -8,7 +8,6 @@ export function useSetores() {
   return useQuery({
     queryKey: ['setores'],
     queryFn: async () => {
-      console.log('🔍 Buscando setores do banco...')
       
       // Buscar setores ativos ordenados
       const { data: setores, error: errorSetores } = await supabase
@@ -18,11 +17,9 @@ export function useSetores() {
         .order('ordem', { ascending: true })
 
       if (errorSetores) {
-        console.error('❌ Erro ao buscar setores:', errorSetores)
         throw errorSetores
       }
 
-      console.log('✅ Setores encontrados:', setores?.length || 0)
 
       // Buscar subsetores ativos ordenados
       const { data: subsetores, error: errorSubsetores } = await supabase
@@ -32,11 +29,9 @@ export function useSetores() {
         .order('ordem', { ascending: true })
 
       if (errorSubsetores) {
-        console.error('❌ Erro ao buscar subsetores:', errorSubsetores)
         throw errorSubsetores
       }
 
-      console.log('✅ Subsetores encontrados:', subsetores?.length || 0)
 
       // Organizar subsetores por setor
       const setoresComSubsetores = (setores || []).map(setor => ({
@@ -47,7 +42,6 @@ export function useSetores() {
           .map(sub => sub.nome)
       }))
 
-      console.log('✅ Setores organizados:', setoresComSubsetores.length)
       return setoresComSubsetores
     },
     staleTime: 1000 * 60 * 60, // Cache por 1 hora

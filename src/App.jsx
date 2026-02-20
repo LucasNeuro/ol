@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, lazy, Suspense } from 'react'
 import { Route, Switch, Redirect } from 'wouter'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from '@/lib/queryClient'
@@ -8,22 +8,22 @@ import { FiltroProvider } from '@/contexts/FiltroContext'
 import { useAuth } from '@/hooks/useAuth'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 
-// Páginas públicas
+// Páginas públicas (carregamento imediato)
 import { LandingPage } from '@/pages/landing'
 import { LoginPage } from '@/pages/login'
 import { CadastroPage } from '@/pages/cadastro'
 import { RecuperarSenhaPage } from '@/pages/recuperar-senha'
 import { RedefinirSenhaPage } from '@/pages/redefinir-senha'
 
-// Páginas protegidas
-import { ModulosPage } from '@/pages/modulos'
-import { DashboardPage } from '@/pages/dashboard'
-import { BoletimPage } from '@/pages/boletim'
-import { BoletimDiaPage } from '@/pages/boletim-dia'
-import { FavoritosPage } from '@/pages/favoritos'
-import { EditalPage } from '@/pages/edital'
-import { PerfilPage } from '@/pages/perfil'
-import { AdminUsuariosPage } from '@/pages/admin/usuarios'
+// Páginas protegidas (lazy: melhor tempo de navegação e primeiro clique)
+const ModulosPage = lazy(() => import('@/pages/modulos').then(m => ({ default: m.ModulosPage })))
+const DashboardPage = lazy(() => import('@/pages/dashboard').then(m => ({ default: m.DashboardPage })))
+const BoletimPage = lazy(() => import('@/pages/boletim').then(m => ({ default: m.BoletimPage })))
+const BoletimDiaPage = lazy(() => import('@/pages/boletim-dia').then(m => ({ default: m.BoletimDiaPage })))
+const FavoritosPage = lazy(() => import('@/pages/favoritos').then(m => ({ default: m.FavoritosPage })))
+const EditalPage = lazy(() => import('@/pages/edital').then(m => ({ default: m.EditalPage })))
+const PerfilPage = lazy(() => import('@/pages/perfil').then(m => ({ default: m.PerfilPage })))
+const AdminUsuariosPage = lazy(() => import('@/pages/admin/usuarios').then(m => ({ default: m.AdminUsuariosPage })))
 
 /**
  * Função para limpar cache antigo do localStorage ao iniciar a aplicação
@@ -46,7 +46,6 @@ function limparCacheInicial() {
     
     // Se o tamanho total for maior que 3MB, limpar cache de filtros
     if (tamanhoTotal > 3 * 1024 * 1024) {
-      console.warn(`⚠️ localStorage muito grande (${(tamanhoTotal / 1024 / 1024).toFixed(2)}MB), limpando cache...`)
       
       // Limpar cache de filtros semânticos (manter apenas os 3 mais recentes)
       const cacheKeys = Object.keys(localStorage).filter(key => key.startsWith('filtro_semantico_'))
@@ -64,11 +63,9 @@ function limparCacheInicial() {
         caches.slice(3).forEach(({ key }) => {
           localStorage.removeItem(key)
         })
-        console.log(`✅ [Inicialização] ${caches.length - 3} caches antigos removidos`)
       }
     }
   } catch (e) {
-    console.warn('⚠️ Erro ao limpar cache inicial:', e)
   }
 }
 
@@ -82,10 +79,19 @@ function ProtectedFavoritos() { return <ProtectedRoute><FavoritosPage /></Protec
 function ProtectedEdital() { return <ProtectedRoute><EditalPage /></ProtectedRoute> }
 function ProtectedAdminUsuarios() { return <ProtectedRoute><AdminUsuariosPage /></ProtectedRoute> }
 
+function PageFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="animate-pulse text-gray-500">Carregando...</div>
+    </div>
+  )
+}
+
 function AppContent() {
   useAuth()
 
   return (
+    <Suspense fallback={<PageFallback />}>
     <Switch>
       {/* Rotas Públicas */}
       <Route path="/" component={LandingPage} />
@@ -111,6 +117,7 @@ function AppContent() {
         <Redirect to="/" />
       </Route>
     </Switch>
+    </Suspense>
   )
 }
 

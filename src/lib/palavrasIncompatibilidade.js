@@ -28,12 +28,8 @@ export async function fetchPalavrasIncompatibilidadePorSetor(supabaseClient) {
         error.code === '42703' ||
         (error.message && (error.message.includes('does not exist') || error.message.includes('relation')))
       if (tabelaNaoExiste) {
-        console.warn(
-          '⚠️ [palavrasIncompatibilidade] Tabela setores_palavras_incompatibilidade não encontrada. Rode criar_tabela_setores_palavras_incompatibilidade.sql no Supabase.'
-        )
         return {}
       }
-      console.warn('⚠️ [palavrasIncompatibilidade] Erro ao buscar:', error)
       return {}
     }
 
@@ -47,11 +43,9 @@ export async function fetchPalavrasIncompatibilidadePorSetor(supabaseClient) {
     })
 
     if (Object.keys(porSetor).length > 0) {
-      console.log(`✅ [palavrasIncompatibilidade] Carregadas ${Object.keys(porSetor).length} setores do banco`)
     }
     return porSetor
   } catch (err) {
-    console.warn('⚠️ [palavrasIncompatibilidade] Erro:', err)
     return {}
   }
 }
