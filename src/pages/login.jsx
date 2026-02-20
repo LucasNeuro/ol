@@ -30,11 +30,10 @@ export function LoginPage() {
     resolver: zodResolver(loginSchema),
   })
 
-  // Redirecionar se já estiver logado
-  if (user) {
-    setLocation('/modulos')
-    return null
-  }
+  // Redirecionar se já estiver logado (em useEffect para não atualizar Route durante o render)
+  useEffect(() => {
+    if (user) setLocation('/modulos')
+  }, [user, setLocation])
 
   const onSubmit = async (data) => {
     setError('')

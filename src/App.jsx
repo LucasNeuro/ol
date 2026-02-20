@@ -72,6 +72,16 @@ function limparCacheInicial() {
   }
 }
 
+// Wrappers estáveis (evitam "Maximum update depth" ao usar () => no Route)
+function ProtectedModulos() { return <ProtectedRoute><ModulosPage /></ProtectedRoute> }
+function ProtectedDashboard() { return <ProtectedRoute><DashboardPage /></ProtectedRoute> }
+function ProtectedPerfil() { return <ProtectedRoute><PerfilPage /></ProtectedRoute> }
+function ProtectedBoletim() { return <ProtectedRoute><BoletimPage /></ProtectedRoute> }
+function ProtectedLicitacoes() { return <ProtectedRoute><BoletimDiaPage /></ProtectedRoute> }
+function ProtectedFavoritos() { return <ProtectedRoute><FavoritosPage /></ProtectedRoute> }
+function ProtectedEdital() { return <ProtectedRoute><EditalPage /></ProtectedRoute> }
+function ProtectedAdminUsuarios() { return <ProtectedRoute><AdminUsuariosPage /></ProtectedRoute> }
+
 function AppContent() {
   useAuth()
 
@@ -85,16 +95,16 @@ function AppContent() {
       <Route path="/redefinir-senha" component={RedefinirSenhaPage} />
       
       {/* Rotas Protegidas - Exigem Autenticação */}
-      <Route path="/modulos" component={() => <ProtectedRoute><ModulosPage /></ProtectedRoute>} />
-      <Route path="/dashboard" component={() => <ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-      <Route path="/perfil" component={() => <ProtectedRoute><PerfilPage /></ProtectedRoute>} />
-      <Route path="/boletim" component={() => <ProtectedRoute><BoletimPage /></ProtectedRoute>} />
-      <Route path="/licitacoes" component={() => <ProtectedRoute><BoletimDiaPage /></ProtectedRoute>} />
-      <Route path="/favoritos" component={() => <ProtectedRoute><FavoritosPage /></ProtectedRoute>} />
-      <Route path="/edital/:numeroControle" component={() => <ProtectedRoute><EditalPage /></ProtectedRoute>} />
+      <Route path="/modulos" component={ProtectedModulos} />
+      <Route path="/dashboard" component={ProtectedDashboard} />
+      <Route path="/perfil" component={ProtectedPerfil} />
+      <Route path="/boletim" component={ProtectedBoletim} />
+      <Route path="/licitacoes" component={ProtectedLicitacoes} />
+      <Route path="/favoritos" component={ProtectedFavoritos} />
+      <Route path="/edital/:numeroControle" component={ProtectedEdital} />
       
-      {/* Rotas Administrativas - Exigem Autenticação */}
-      <Route path="/admin/usuarios" component={() => <ProtectedRoute><AdminUsuariosPage /></ProtectedRoute>} />
+      {/* Rotas Administrativas */}
+      <Route path="/admin/usuarios" component={ProtectedAdminUsuarios} />
       
       {/* Rota não encontrada - redirecionar para landing page */}
       <Route>

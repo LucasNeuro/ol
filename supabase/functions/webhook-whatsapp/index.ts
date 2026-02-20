@@ -289,6 +289,113 @@ function normalizarNumero(num: string): string {
   return digits.startsWith('55') ? digits : `55${digits}`
 }
 
+// Extrai número do remetente do payload do webhook
+function extrairNumeroWebhook(webhook: Record<string, any>): string {
+  const mensagem = webhook.mensagem || webhook.message || webhook.data?.message || webhook.data || {}
+  const chat = webhook.chat || webhook.data?.chat || {}
+  const fromRaw = (webhook.from || webhook.chatId || webhook.sender || webhook.participant ||
+    mensagem.from || webhook.data?.from || webhook.contactId || mensagem.senderId ||
+    chat.lead_phone || chat.phone || chat.id || '') as string
+  let from = fromRaw ? String(fromRaw).replace(/@c\.us$|@s\.whatsapp\.net$/i, '').trim() : ''
+  if (from && /^[a-z0-9]{10,}$/i.test(from) && !/^\d+$/.test(from)) {
+    from = (chat.lead_phone || chat.phone || webhook.from || mensagem.from || '') as string
+  }
+  return from ? normalizarNumero(from) : ''
+}
+
+// ============================================
+// FLUXO RECUPERAÇÃO DE SENHA VIA WHATSAPP (Sim/Não + digitar nova senha)
+// Retorna true se tratou a mensagem (não chamar processarClique).
+// ============================================
+async function processarPasswordReset(webhook: Record<string, any>, supabase: any): Promise<boolean> {
+  const numero = extrairNumeroWebhook(webhook)
+  if (!numero) return false
+
+  const mensagem = webhook.mensagem || webhook.message || webhook.data?.message || webhook.data || {}
+  const buttonId = (mensagem.buttonId || mensagem.button_id || webhook.buttonId || mensagem.selectedId || '') as string
+  const textoMsg = (
+    mensagem.text || mensagem.body || mensagem.content || mensagem.caption ||
+    webhook.data?.text || webhook.data?.body || webhook.text || webhook.body || ''
+  ) as string
+  const texto = typeof textoMsg === 'string' ? textoMsg.trim() : ''
+
+  const { data: row } = await supabase
+    .from('password_reset_pendente')
+    .select('id, user_id, estado, created_at')
+    .eq('telefone', numero)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!row) return false
+
+  const token = Deno.env.get('UAZAPI_TOKEN') ?? Deno.env.get('UAZAPI_BEARER_TOKEN')
+  if (!token) return false
+  const tokenValue = token.replace(/^Bearer\s+/i, '').trim()
+  const instanceId = Deno.env.get('UAZAPI_INSTANCE_ID')?.trim()
+
+  const EXPIRA_MIN = 15
+  const criado = new Date(row.created_at).getTime()
+  if (Date.now() - criado > EXPIRA_MIN * 60 * 1000) {
+    await supabase.from('password_reset_pendente').delete().eq('id', row.id)
+    await enviarTexto(numero, '⏱ Solicitação expirada. Solicite novamente pelo site em "Esqueci minha senha".', tokenValue, instanceId)
+    return true
+  }
+
+  if (row.estado === 'aguardando_confirmacao') {
+    const idOuTexto = `${buttonId} ${texto}`.trim()
+    const ehSim = buttonId === 'sim_redefinir' || /sim, redefinir/i.test(buttonId) || /^sim$/i.test(texto) || /sim, redefinir/i.test(texto) || /sim, redefinir senha/i.test(idOuTexto)
+    const ehNao = buttonId === 'nao_redefinir' || /n[aã]o, encerrar/i.test(buttonId) || /^n[aã]o$/i.test(texto) || /n[aã]o, encerrar/i.test(texto)
+
+    if (ehNao) {
+      await supabase.from('password_reset_pendente').delete().eq('id', row.id)
+      await enviarTexto(
+        numero,
+        '📋 *Encerrado*\n\nPara redefinir a senha depois, entre em contato com o administrador da conta.',
+        tokenValue,
+        instanceId
+      )
+      return true
+    }
+    if (ehSim) {
+      await supabase.from('password_reset_pendente').update({ estado: 'aguardando_senha' }).eq('id', row.id)
+      const msgSenha =
+        '🔐 *Nova senha*\n\n' +
+        'Digite sua nova senha *nesta conversa*, seguindo as regras:\n\n' +
+        '• Mínimo *6 caracteres*\n' +
+        '• Use letras e números\n\n' +
+        'Toque no campo de mensagem e digite a senha desejada.'
+      await enviarTexto(numero, msgSenha, tokenValue, instanceId)
+      return true
+    }
+    await enviarTexto(
+      numero,
+      '🔐 *Redefinir senha*\n\nToque em uma das opções: *Sim, redefinir senha* ou *Não, encerrar*.',
+      tokenValue,
+      instanceId
+    )
+    return true
+  }
+
+  if (row.estado === 'aguardando_senha') {
+    const novaSenha = texto
+    if (!novaSenha || novaSenha.length < 6) {
+      await enviarTexto(numero, 'Senha deve ter no mínimo 6 caracteres. Tente novamente.', tokenValue, instanceId)
+      return true
+    }
+    const { error: updateError } = await supabase.auth.admin.updateUserById(row.user_id, { password: novaSenha })
+    await supabase.from('password_reset_pendente').delete().eq('id', row.id)
+    if (updateError) {
+      await enviarTexto(numero, 'Não foi possível alterar a senha. Tente novamente ou entre em contato com o suporte.', tokenValue, instanceId)
+      return true
+    }
+    await enviarTexto(numero, '✅ *Senha alterada com sucesso!*\n\nAgora você pode fazer login com a nova senha no site.', tokenValue, instanceId)
+    return true
+  }
+
+  return false
+}
+
 // Reconhece "Sim, tenho interesse" pelo texto da mensagem (quando UAZAPI envia como mensagem, não como buttonId)
 function ehSimInteresse(texto: string): boolean {
   if (!texto || typeof texto !== 'string') return false
@@ -541,10 +648,16 @@ serve(async (req) => {
       console.log('[Webhook] Payload "messages" (até 1200 chars):', logPayload.slice(0, 1200))
     }
 
-    // Disparar processamento quando:
-    // 1) for evento de clique em botão (button_click ou payload com buttonId), ou
-    // 2) for evento de mensagem recebida (messages) e o texto for a resposta do botão "Sim...", ou
-    // 3) for EventType "messages" (sempre processar; dentro de processarClique usamos track_id da tabela como fallback)
+    // 1) Fluxo de recuperação de senha (Sim/Não + nova senha) tem prioridade
+    const tratouReset = await processarPasswordReset(body, supabase)
+    if (tratouReset) {
+      return new Response(
+        JSON.stringify({ success: true, message: 'Webhook processado (reset senha)' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // 2) Clique em botão / resposta de edital (Sim interesse, etc.)
     const pareceCliqueBotao = tipo === 'button_click' || !!body.mensagem?.buttonId || !!body.message?.button_id
     const pareceRespostaSim = (tipo === 'messages' || tipo === 'message' || !tipo) && ehSimInteresse(textoRecebido)
     const ehEventoMessages = tipo === 'messages' || tipo === 'message'

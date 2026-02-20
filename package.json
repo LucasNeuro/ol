@@ -15,7 +15,10 @@
     "testar-filtro-semantico": "node scripts/testar-filtro-semantico.js",
     "certificar-filtros": "node scripts/testar-filtro-semantico.js",
     "testar-filtro-por-cadastro-id": "node scripts/testar-filtro-por-cadastro-id.js",
-    "trigger-alerta-whatsapp": "node scripts/trigger-alerta-whatsapp.js"
+    "trigger-alerta-whatsapp": "node scripts/trigger-alerta-whatsapp.js",
+    "trigger-alerta-email": "node scripts/trigger-alerta-email.js",
+    "trigger-alertas": "node scripts/trigger-alertas.js",
+    "classificar-licitacoes-por-setor": "node scripts/classificar-licitacoes-por-setor.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.2",

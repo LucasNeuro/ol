@@ -43,26 +43,13 @@ function DashboardContent() {
     queryKey: ['perfil-usuario', user?.id],
     queryFn: async () => {
       if (!user?.id) return null
-      
-      let { data, error } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
-        .select('setores_atividades, estados_interesse, sinonimos_personalizados')
+        .select('setores_atividades, estados_interesse')
         .eq('id', user.id)
         .maybeSingle()
-      
-      if (error && error.code === '42703') {
-        const { data: dataSemSinonimos, error: errorSemSinonimos } = await supabase
-          .from('profiles')
-          .select('setores_atividades, estados_interesse')
-          .eq('id', user.id)
-          .maybeSingle()
-        
-        if (errorSemSinonimos) return null
-        return { ...dataSemSinonimos, sinonimos_personalizados: {} }
-      }
-      
       if (error) return null
-      return { ...data, sinonimos_personalizados: data?.sinonimos_personalizados || {} }
+      return data ? { ...data, sinonimos_personalizados: {} } : null
     },
     enabled: !!user?.id,
     staleTime: 1000 * 60 * 60,

@@ -38,7 +38,8 @@ import {
   Send,
   Phone,
   Search,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Mail
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { format } from 'date-fns'
@@ -62,7 +63,8 @@ import { obterNomeAtividadeCnae, obterListaCompletaCnaes, resumirNomeAtividade }
 import { 
   extrairPalavrasChaveDosSetores, 
   obterObjetoCompleto,
-  normalizarTexto
+  normalizarTexto,
+  calcularScoreAderencia
 } from '@/lib/filtroSemantico'
 import { filtrarLicitacoesPorBusca, buscarEmLicitacao } from '@/lib/buscaFuzzy'
 import { useFiltroContext } from '@/contexts/FiltroContext'
@@ -169,20 +171,24 @@ function LicitacoesContent() {
   const [whatsAppNovoNumero, setWhatsAppNovoNumero] = useState('')
   const [whatsAppNovoLabel, setWhatsAppNovoLabel] = useState('')
   const [whatsAppSlotsSaving, setWhatsAppSlotsSaving] = useState(false)
-  const [alertaWhatsAppAtivo, setAlertaWhatsAppAtivo] = useState(false)
-  const [alertaWhatsAppHorario, setAlertaWhatsAppHorario] = useState('08:00')
-  const [alertaWhatsAppSaving, setAlertaWhatsAppSaving] = useState(false)
+  const [alertaEmailAtivo, setAlertaEmailAtivo] = useState(false)
+  const [alertaEmailHorario, setAlertaEmailHorario] = useState('08:00')
+  const [alertaResumoSemanalAtivo, setAlertaResumoSemanalAtivo] = useState(false)
+  // Quando o usuário clica em um card "Recomendadas", exibe só esse edital na tela
+  const [recomendadaSelecionada, setRecomendadaSelecionada] = useState(null)
+  const [alertaEmailDestino, setAlertaEmailDestino] = useState('')
+  const [alertaEmailSaving, setAlertaEmailSaving] = useState(false)
 
-  // Buscar alerta WhatsApp do usuário (tipo whatsapp)
-  const { data: alertaWhatsApp } = useQuery({
-    queryKey: ['alerta-whatsapp', user?.id],
+  // Buscar alerta E-mail do usuário (tipo email)
+  const { data: alertaEmail } = useQuery({
+    queryKey: ['alerta-email', user?.id],
     queryFn: async () => {
       if (!user?.id) return null
       const { data, error } = await supabase
         .from('alertas_usuario')
-        .select('id, ativo, horario_verificacao, filtros')
+        .select('id, ativo, horario_verificacao, filtros, email_notificacao, resumo_semanal_ativo')
         .eq('usuario_id', user.id)
-        .eq('tipo', 'whatsapp')
+        .eq('tipo', 'email')
         .maybeSingle()
       if (error) throw error
       return data
@@ -191,12 +197,14 @@ function LicitacoesContent() {
   })
 
   useEffect(() => {
-    if (alertaWhatsApp) {
-      setAlertaWhatsAppAtivo(!!alertaWhatsApp.ativo)
-      const t = alertaWhatsApp.horario_verificacao
-      if (t) setAlertaWhatsAppHorario(String(t).slice(0, 5))
+    if (alertaEmail) {
+      setAlertaEmailAtivo(!!alertaEmail.ativo)
+      const t = alertaEmail.horario_verificacao
+      if (t) setAlertaEmailHorario(String(t).slice(0, 5))
+      setAlertaEmailDestino(alertaEmail.email_notificacao ?? '')
+      setAlertaResumoSemanalAtivo(!!alertaEmail.resumo_semanal_ativo)
     }
-  }, [alertaWhatsApp])
+  }, [alertaEmail])
 
   // Números WhatsApp cadastrados (sidebar – até 3)
   const { data: numerosWhatsApp = [], refetch: refetchNumerosWhatsApp } = useQuery({
@@ -250,42 +258,25 @@ function LicitacoesContent() {
   }
   // Hook para notificações customizadas
   const { success, error: showError, warning, confirm } = useNotifications()
-  
+
   // Hook para rate limiting de WhatsApp
   const { checkRateLimit, registerSend, LIMITE_POR_HORA } = useWhatsAppRateLimit()
 
-  // Buscar perfil do usuário com setores, estados e sinônimos personalizados
+  // Buscar perfil do usuário (setores e estados — essenciais para trazer licitações já filtradas do banco)
   const { data: perfilUsuario } = useQuery({
     queryKey: ['perfil-usuario', user?.id],
     queryFn: async () => {
       if (!user?.id) return null
-      
-      // Tentar buscar com sinônimos personalizados primeiro
-      let { data, error } = await supabase
-        .from('profiles')
-        .select('setores_atividades, estados_interesse, sinonimos_personalizados')
-        .eq('id', user.id)
-          .maybeSingle()
-
-      // Se a primeira query falhou (ex.: coluna sinonimos_personalizados não existe), tentar sem ela
-      if (error) {
-        console.log('ℹ️ Buscando perfil sem sinonimos_personalizados...', error.code || error.message)
-        const { data: dataSemSinonimos, error: errorSemSinonimos } = await supabase
+      const { data, error } = await supabase
           .from('profiles')
-          .select('setores_atividades, estados_interesse')
+          .select('setores_atividades, estados_interesse, email')
           .eq('id', user.id)
           .maybeSingle()
-        
-        if (errorSemSinonimos) {
-          console.warn('⚠️ Erro ao buscar perfil:', errorSemSinonimos)
-          return null
-        }
-        
-        return dataSemSinonimos ? { ...dataSemSinonimos, sinonimos_personalizados: {} } : null
+      if (error) {
+        console.warn('⚠️ Erro ao buscar perfil:', error.message, error.code)
+        return null
       }
-      
-      // Garantir que sinonimos_personalizados existe (mesmo que vazio)
-      return { ...data, sinonimos_personalizados: data?.sinonimos_personalizados || {} }
+      return data ? { ...data, sinonimos_personalizados: {} } : null
     },
     enabled: !!user?.id,
     staleTime: 1000 * 60 * 60, // Cache por 1 hora
@@ -366,12 +357,22 @@ function LicitacoesContent() {
   const { data: palavrasFortesPorSetor = {} } = usePalavrasFortes()
   const { data: palavrasIncompatibilidadePorSetor = {} } = usePalavrasIncompatibilidade()
 
+  // Atividades (subsetores) com IDs para o filtro "Excluir atividades"
+  const { data: atividadesComIds = [] } = useQuery({
+    queryKey: ['atividades-com-ids', perfilUsuario?.setores_atividades],
+    queryFn: async () => {
+      const { resolverSubsetoresComIds } = await import('@/lib/collections/licitacoesStore')
+      return resolverSubsetoresComIds(perfilUsuario?.setores_atividades || [])
+    },
+    enabled: !!perfilUsuario?.setores_atividades?.length,
+    staleTime: 1000 * 60 * 60,
+  })
+
   // Valores padrão dos filtros (reutilizado para restauração)
   const filtrosDefaults = {
     buscaObjeto: '',
     excluirPalavras: '',
     uf: '',
-    modalidade: '',
     dataPublicacaoInicio: '',
     dataPublicacaoFim: '',
     valorMin: '',
@@ -387,6 +388,7 @@ function LicitacoesContent() {
     filtrosExclusaoAtivo: false,
     excluirUfs: [],
     excluirPalavrasObjeto: [],
+    excluirAtividadesIds: [],
   }
 
   // Estados dos Filtros – restaura do localStorage ao recarregar
@@ -456,7 +458,7 @@ function LicitacoesContent() {
       console.log(`Filtrando licitações do dia: ${dataFormatada}`)
         } else {
       setDataFiltro('')
-      console.log('Mostrando todas as licitações')
+      console.log('📅 [Filtro] Data: todas (sem período específico)')
     }
   }, [location])
   
@@ -471,8 +473,8 @@ function LicitacoesContent() {
       // Manter buscaObjeto, excluirPalavras, dataPublicacaoInicio e dataPublicacaoFim como estão (só mudam ao clicar em "Aplicar")
       // Atualizar apenas filtros não-texto e não-data
       uf: filtros.uf,
-      modalidade: filtros.modalidade,
       statusEdital: filtros.statusEdital,
+      excluirAtividadesIds: filtros.excluirAtividadesIds || [],
       valorMin: filtros.valorMin,
       valorMax: filtros.valorMax,
       comDocumentos: filtros.comDocumentos,
@@ -485,8 +487,8 @@ function LicitacoesContent() {
     }))
   }, [
     filtros.uf, 
-    filtros.modalidade, 
     filtros.statusEdital, 
+    filtros.excluirAtividadesIds,
     filtros.valorMin, 
     filtros.valorMax, 
     filtros.comDocumentos, 
@@ -874,9 +876,13 @@ function LicitacoesContent() {
   const [ultimoUserId, setUltimoUserId] = useState(null)
   
   const { data: licitacoes = [], isLoading, isFetching, error } = useQuery({
-    queryKey: ['licitacoes-sessao-completa', user?.id],
+    queryKey: ['licitacoes-sessao-completa', user?.id, 'por-setor-v2'],
     queryFn: async () => {
-      if (!user?.id) return []
+      if (!user?.id) {
+        console.warn('⚠️ [Licitações] Query desabilitada: usuário não autenticado (user?.id ausente)')
+        return []
+      }
+      console.log('🔄 [Licitações] Buscando para user.id =', user.id)
       const {
         buscarLicitacoesDoBanco,
         salvarCacheLicitacoes,
@@ -892,18 +898,82 @@ function LicitacoesContent() {
         await limparCacheLicitacoes(ultimoUserId)
       }
       setUltimoUserId(user.id)
-      const cached = await carregarCacheLicitacoes(user.id)
-      if (cached?.length) {
-        const LIMITE_RECENTES = 10000
-        const licitacoesLimitadas = cached.length > LIMITE_RECENTES ? cached.slice(0, LIMITE_RECENTES) : cached
-        if (licitacoesLimitadas.length < cached.length) {
-          addLogFiltro(`Cache reutilizado: ${licitacoesLimitadas.length} licitações (limite dos 10 mil mais recentes)`)
-        } else {
-          addLogFiltro(`Cache reutilizado: ${licitacoesLimitadas.length} licitações (sem novo carregamento)`)
+      
+      // Perfil primeiro: se usuário tem setores, SÓ trazemos do banco as licitações que batem com setores (zero processamento no front)
+      const { data: perfil } = await supabase
+        .from('profiles')
+        .select('setores_atividades, estados_interesse')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (perfil?.setores_atividades?.length) {
+        const { buscarLicitacoesPorClassificacaoPrincipal, setLastLoadWasPreFiltered, setLastLoadWasFallbackAll, hashSetoresAtividades } = await import('@/lib/collections/licitacoesStore')
+        setLastLoadWasFallbackAll(false)
+        const setoresHashAtual = hashSetoresAtividades(perfil.setores_atividades)
+        const cached = await carregarCacheLicitacoes(user.id)
+        if (cached?.licitacoes?.length && cached.carregadoPorSetor && (cached.setoresHash || '') === setoresHashAtual) {
+          setLastLoadWasPreFiltered(true)
+          setProcessandoFiltro(false)
+          setProgressoPercentual(0)
+          setMensagemProgresso('')
+          addLogFiltro(`${cached.licitacoes.length} licitações do seu setor (cache, mesmo perfil de setores)`)
+          return cached.licitacoes
         }
-        return licitacoesLimitadas
+        if (cached?.licitacoes?.length && cached.carregadoPorSetor && (cached.setoresHash || '') !== setoresHashAtual) {
+      await limparCacheLicitacoes(user.id)
+        }
+        if (cached?.licitacoes?.length && !cached.carregadoPorSetor) {
+          await limparCacheLicitacoes(user.id)
+          await removerCacheParcialLicitacoes(user.id)
+        }
+        setProgressoPercentual(20)
+        setProcessandoFiltro(true)
+        setMensagemProgresso('Carregando licitações do seu setor...')
+        addLogFiltro('Buscando no banco só licitações dos seus setores/atividades...')
+        setProgressoPercentual(50)
+        let list = []
+        try {
+          list = await buscarLicitacoesPorClassificacaoPrincipal(perfil)
+        } catch (err) {
+          console.warn('[Licitações] Busca por setor falhou:', err?.message || err)
+        }
+        setProgressoPercentual(100)
+        if (list.length > 0) {
+          setLastLoadWasPreFiltered(true)
+          setProcessandoFiltro(false)
+          setProgressoPercentual(0)
+          setMensagemProgresso('')
+          await salvarCacheLicitacoes(list, user.id, true, setoresHashAtual)
+          await salvarCacheSemantico(list, user.id, list.length, hashSetoresAtividades(perfil.setores_atividades))
+          addLogFiltro(`${list.length} licitações do seu setor (veio do banco, sem processamento no front)`)
+          return list
+        }
+        setLastLoadWasPreFiltered(false)
+        setProcessandoFiltro(false)
+        setProgressoPercentual(0)
+        setMensagemProgresso('')
+        addLogFiltro('Nenhuma licitação classificada para seu setor no momento. A classificação é feita no backend.')
+        console.warn('⚠️ [Licitações] Busca por setor retornou 0. Só exibimos editais já classificados (setor_principal_id/subsetor_principal_id em licitacoes).')
+        return []
+      } else {
+        const { setLastLoadWasPreFiltered, setLastLoadWasFallbackAll } = await import('@/lib/collections/licitacoesStore')
+        setLastLoadWasPreFiltered(false)
+        setLastLoadWasFallbackAll(false)
+        const cached = await carregarCacheLicitacoes(user.id)
+        if (cached?.licitacoes?.length) {
+          const LIMITE_RECENTES = 10000
+          const licitacoesLimitadas = cached.licitacoes.length > LIMITE_RECENTES ? cached.licitacoes.slice(0, LIMITE_RECENTES) : cached.licitacoes
+          addLogFiltro(`Cache reutilizado: ${licitacoesLimitadas.length} licitações`)
+          return licitacoesLimitadas
+        }
       }
+
       setProcessandoFiltro(true)
+      const { setLastLoadWasPreFiltered, setLastLoadWasFallbackAll } = await import('@/lib/collections/licitacoesStore')
+      if (!perfil?.setores_atividades?.length) {
+        setLastLoadWasPreFiltered(false)
+        setLastLoadWasFallbackAll(false)
+      }
       const parcial = await carregarCacheParcialLicitacoes(user.id)
       const mensagemInicial = parcial?.licitacoes?.length
         ? `Retomando busca: ${parcial.licitacoes.length} já carregadas...`
@@ -933,18 +1003,25 @@ function LicitacoesContent() {
       return todasLicitacoes
     },
     enabled: !!user?.id,
-    staleTime: Infinity,
+    staleTime: 1000 * 60 * 5,
     gcTime: 1000 * 60 * 60 * 24,
-    refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
     refetchOnReconnect: false,
   })
 
   // Estado para licitações filtradas (filtro semântico síncrono)
   const [licitacoesFiltradas, setLicitacoesFiltradas] = useState([])
   
-  // Estado para desativar filtro semântico e mostrar todas as licitações
+  // Estado para desativar filtro semântico e mostrar todas as licitações (só usado quando usuário NÃO tem setores)
   const [mostrarTodasLicitacoes, setMostrarTodasLicitacoes] = useState(false)
+  
+  // Quem tem setores sempre vê só editais classificados; desligar "Mostrar Todas" se estiver ON
+  useEffect(() => {
+    if (perfilUsuario?.setores_atividades?.length && mostrarTodasLicitacoes) {
+      setMostrarTodasLicitacoes(false)
+    }
+  }, [perfilUsuario?.setores_atividades?.length, mostrarTodasLicitacoes])
   
   // Limpar blob URLs quando cards fecharem ou componente desmontar
   useEffect(() => {
@@ -968,6 +1045,49 @@ function LicitacoesContent() {
         return
       }
       
+      // Lista veio do banco já por setor (classificação no backend): aplicar UF do perfil e depois os filtros do painel
+      let resultado = licitacoes
+      let pularFiltroSemantico = false
+      const { getLastLoadWasPreFiltered, setLastLoadWasPreFiltered } = await import('@/lib/collections/licitacoesStore')
+      if (getLastLoadWasPreFiltered()) {
+        setLastLoadWasPreFiltered(false)
+        if (perfilUsuario?.estados_interesse?.length) {
+          const temNacional = perfilUsuario.estados_interesse.some(e => String(e).toUpperCase() === 'NACIONAL')
+          if (!temNacional) {
+            resultado = licitacoes.filter(lic => {
+              const uf = lic.uf_sigla?.toUpperCase()
+              return perfilUsuario.estados_interesse.some(estado => String(estado).toUpperCase() === uf)
+            })
+          }
+        }
+        pularFiltroSemantico = true
+        setProcessandoFiltro(false)
+        setProgressoPercentual(0)
+        setMensagemProgresso('')
+        addLogFiltro(resultado.length ? `Base do setor (banco): ${resultado.length} licitações — aplicando filtros do painel` : 'Nenhuma licitação do seu setor no momento.')
+      }
+
+      // Usuário tem setores: base já veio do banco (setor/subsetor); aplicar UF do perfil e depois os filtros do painel
+      if (!pularFiltroSemantico && perfilUsuario?.setores_atividades?.length) {
+        resultado = licitacoes || []
+        if (resultado.length > 0 && perfilUsuario.estados_interesse?.length) {
+          const temNacional = perfilUsuario.estados_interesse.some(e => String(e).toUpperCase() === 'NACIONAL')
+          if (!temNacional) {
+            resultado = resultado.filter(lic => {
+              const uf = lic.uf_sigla?.toUpperCase()
+              return perfilUsuario.estados_interesse.some(estado => String(estado).toUpperCase() === uf)
+            })
+          }
+        }
+        pularFiltroSemantico = true
+        setProcessandoFiltro(false)
+        setProgressoPercentual(0)
+        setMensagemProgresso('')
+        addLogFiltro(resultado.length ? `Base do setor (banco): ${resultado.length} licitações — aplicando filtros do painel` : 'Nenhuma licitação do seu setor no momento.')
+      }
+
+      try {
+      if (!pularFiltroSemantico) {
       // Prioridade: reutilizar resultado final do IndexedDB ao recarregar/navegar (sem refazer busca nem filtro)
       if (user?.id) {
         try {
@@ -1018,8 +1138,7 @@ function LicitacoesContent() {
         return
       }
       
-      let resultado = licitacoes
-      try {
+      resultado = licitacoes
       // Iniciar processamento do filtro semântico (sempre ao logar)
       if (!mostrarTodasLicitacoes) {
       setProcessandoFiltro(true)
@@ -1035,8 +1154,8 @@ function LicitacoesContent() {
       console.log('📋 [Filtro] Modo "Mostrar Todas" ativo - pulando filtro semântico')
       resultado = licitacoes
       setProgressoPercentual(100)
-      setMensagemProgresso('Mostrando todas as licitações')
-      addLogFiltro('Mostrando todas as licitações (sem filtro por setor)')
+      setMensagemProgresso('Exibindo lista (modo "Mostrar Todas", sem filtro por setor)')
+      addLogFiltro('Modo "Mostrar Todas": exibindo lista sem filtro por setor')
     } else {
       // SEMPRE aplicar filtro semântico ao logar (garantir dados corretos do perfil)
     // FILTRO AUTOMÁTICO BASEADO NO PERFIL DA EMPRESA
@@ -1300,7 +1419,9 @@ function LicitacoesContent() {
     }
     } // Fim do else do mostrarTodasLicitacoes
 
-    // Filtrar por status do edital
+      } // Fim do if (!pularFiltroSemantico)
+
+    // Filtrar por status do edital (sempre: aplica filtros do painel sobre a base em cache)
     if (filtrosAplicados.statusEdital) {
       const antesStatus = resultado.length
       resultado = resultado.filter(licitacao => {
@@ -1326,13 +1447,19 @@ function LicitacoesContent() {
       console.log(`🗺️ [Filtro UF] ${antesUF - resultado.length} licitações removidas. ${resultado.length} restantes. UF: ${filtrosAplicados.uf}`)
     }
 
-    // Filtrar por modalidade
-    if (filtrosAplicados.modalidade && filtrosAplicados.modalidade.trim()) {
-      const antesModalidade = resultado.length
-        resultado = resultado.filter(licitacao => {
-        return licitacao.modalidade_nome === filtrosAplicados.modalidade
+    // Excluir atividades: editais cuja atividade (subsetor) foi desmarcada pelo usuário
+    const excluirIds = filtrosAplicados.excluirAtividadesIds || []
+    if (excluirIds.length > 0) {
+      const excluirSet = new Set(excluirIds.map(id => String(id).toLowerCase()))
+      const antesAtiv = resultado.length
+      const amostraSubIds = resultado.slice(0, 5).map(l => l.subsetor_principal_id)
+      resultado = resultado.filter(lic => {
+        const subId = lic.subsetor_principal_id ?? lic.dados_completos?.subsetor_principal_id
+        if (!subId) return true // manter se não tem classificação
+        return !excluirSet.has(String(subId).toLowerCase())
       })
-      console.log(`📋 [Filtro Modalidade] ${antesModalidade - resultado.length} licitações removidas. ${resultado.length} restantes. Modalidade: ${filtrosAplicados.modalidade}`)
+      const removidas = antesAtiv - resultado.length
+      console.log(`📌 [Filtro Excluir Atividades] ${removidas} licitações removidas. ${resultado.length} restantes. Amostra subsetor_principal_id:`, amostraSubIds)
     }
 
     // Filtrar por valor (min e max)
@@ -1454,8 +1581,8 @@ function LicitacoesContent() {
 
     // Filtros de exclusão removidos temporariamente - será repensado
 
-    // Filtro automático: Apenas licitações dos últimos 7 dias
-    // Trabalhando exclusivamente com dados do cache IndexedDB (não busca no banco)
+    // Filtro por data: só aplica quando o usuário preenche Data Publicação na sidebar.
+    // Vazio = sem filtro por data (mostra tudo que já veio do banco).
     const antesData = resultado.length
     
     // Função auxiliar para normalizar data (apenas data, sem hora)
@@ -1501,33 +1628,24 @@ function LicitacoesContent() {
       }
     }
     
-    // Verificar se campos de data foram preenchidos manualmente
+    // Só filtrar por data quando o usuário preencheu Data Publicação na sidebar (ferramenta de filtro na interface).
+    // Vazio = não aplicar filtro por data; mostra tudo que já veio do banco.
     const temDataManual = filtrosAplicados.dataPublicacaoInicio || filtrosAplicados.dataPublicacaoFim
     
     let dataInicioNormalizada = null
     let dataFimNormalizada = null
     
     if (temDataManual) {
-      // Usar datas do filtro manual
       dataInicioNormalizada = filtrosAplicados.dataPublicacaoInicio 
         ? normalizarData(filtrosAplicados.dataPublicacaoInicio)
         : null
       dataFimNormalizada = filtrosAplicados.dataPublicacaoFim
         ? normalizarData(filtrosAplicados.dataPublicacaoFim)
         : null
-        } else {
-      // Filtro automático: Apenas licitações dos últimos 7 dias
-      const hoje = new Date()
-      hoje.setHours(0, 0, 0, 0) // Resetar hora para comparar apenas data
-      const seteDiasAtras = new Date(hoje)
-      seteDiasAtras.setDate(hoje.getDate() - 7)
-      
-      // Normalizar data mínima para YYYY-MM-DD
-      dataInicioNormalizada = normalizarData(seteDiasAtras.toISOString().split('T')[0])
-      dataFimNormalizada = normalizarData(hoje.toISOString().split('T')[0])
     }
+    // Se temDataManual é false: não setar dataInicio/Fim (vazio = sem filtro por data)
     
-    if (dataInicioNormalizada || dataFimNormalizada) {
+    if (temDataManual && (dataInicioNormalizada || dataFimNormalizada)) {
       // Debug: Log para entender o problema
       console.log(`📅 [Filtro Data] Aplicando filtro:`, {
         temDataManual,
@@ -1580,9 +1698,7 @@ function LicitacoesContent() {
       
       const depoisData = resultado.length
       const removidas = antesData - depoisData
-      const periodo = temDataManual 
-        ? `${filtrosAplicados.dataPublicacaoInicio || 'início'} a ${filtrosAplicados.dataPublicacaoFim || 'fim'}`
-        : `últimos 7 dias (${dataInicioNormalizada} a ${dataFimNormalizada})`
+      const periodo = `${filtrosAplicados.dataPublicacaoInicio || 'início'} a ${filtrosAplicados.dataPublicacaoFim || 'fim'}`
       console.log(`📅 [Filtro Data] ${removidas} licitações removidas. ${depoisData} restantes. Período: ${periodo}`)
       
       // Debug: Verificar amostras DEPOIS do filtro
@@ -1594,7 +1710,7 @@ function LicitacoesContent() {
           dataNormalizada: normalizarData(l.data_publicacao_pncp)
         })))
       }
-    } else {
+    } else if (temDataManual) {
       console.warn('⚠️ [Filtro Data] Datas não normalizadas, pulando filtro:', {
         temDataManual,
         dataInicioNormalizada,
@@ -1649,15 +1765,15 @@ function LicitacoesContent() {
   }
     
     aplicarFiltros()
+    // palavrasFortesPorSetor e palavrasIncompatibilidadePorSetor omitidos de propósito: são objetos
+    // que mudam de referência a cada render e causariam loop (Maximum update depth). Usados dentro do effect.
   }, [
-    licitacoes,
+    licitacoes, 
     filtrosAplicados,
-    perfilUsuario,
+    perfilUsuario, 
     mostrarTodasLicitacoes,
     sinonimosBanco,
     dataFiltro,
-    palavrasFortesPorSetor,
-    palavrasIncompatibilidadePorSetor,
   ])
 
   // Licitações finais (sem filtros permanentes)
@@ -1679,6 +1795,59 @@ function LicitacoesContent() {
     () => licitacoesParaExibir.slice(0, limitePagina),
     [licitacoesParaExibir, limitePagina]
   )
+  // Se um card "Recomendadas" foi clicado, a lista mostra só esse edital
+  const licitacoesNaTela = recomendadaSelecionada ? [recomendadaSelecionada] : licitacoesPagina
+
+  // Palavras-chave do perfil para cálculo de score de aderência (Recomendadas + badge)
+  const palavrasChaveParaScore = useMemo(() => {
+    const setores = perfilUsuario?.setores_atividades
+    if (!setores?.length) return null
+    return extrairPalavrasChaveDosSetores(
+      setores,
+      perfilUsuario?.sinonimos_personalizados || {},
+      sinonimosBanco || {}
+    )
+  }, [perfilUsuario?.setores_atividades, perfilUsuario?.sinonimos_personalizados, sinonimosBanco])
+
+  // Top 8 licitações por score de aderência (bloco "Recomendadas para você")
+  const recomendadas = useMemo(() => {
+    if (!palavrasChaveParaScore || !licitacoesFiltradas.length) return []
+    const setores = perfilUsuario?.setores_atividades || []
+    const comScore = licitacoesFiltradas.map(lic => {
+      const { score, label } = calcularScoreAderencia(
+        lic,
+        palavrasChaveParaScore,
+        perfilUsuario?.sinonimos_personalizados || {},
+        sinonimosBanco || {},
+        setores
+      )
+      return { licitacao: lic, score, label }
+    })
+    return comScore
+      .filter(r => r.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+  }, [licitacoesFiltradas, palavrasChaveParaScore, perfilUsuario?.sinonimos_personalizados, sinonimosBanco, perfilUsuario?.setores_atividades])
+
+  // Score de aderência por licitação (só para as da página atual, para badge no card)
+  const scorePorId = useMemo(() => {
+    const map = new Map()
+    if (!palavrasChaveParaScore || !licitacoesPagina.length) return map
+    const setores = perfilUsuario?.setores_atividades || []
+    licitacoesPagina.forEach(lic => {
+      const { score, label } = calcularScoreAderencia(
+        lic,
+        palavrasChaveParaScore,
+        perfilUsuario?.sinonimos_personalizados || {},
+        sinonimosBanco || {},
+        setores
+      )
+      if (score > 0) {
+        map.set(lic.id ?? lic.numero_controle_pncp, { score, label })
+      }
+    })
+    return map
+  }, [licitacoesPagina, palavrasChaveParaScore, perfilUsuario?.sinonimos_personalizados, sinonimosBanco, perfilUsuario?.setores_atividades])
 
   // Log para debug do filtro automático baseado no perfil (após todas as declarações)
   useEffect(() => {
@@ -1743,6 +1912,18 @@ function LicitacoesContent() {
     return diasRestantes > 0 && diasRestantes <= 7
   }
 
+  // Statuses presentes nos editais carregados (para popular o dropdown dinamicamente)
+  const statusesPresentesNosEditais = useMemo(() => {
+    if (!licitacoes?.length) return []
+    const set = new Set()
+    licitacoes.forEach(lic => {
+      const s = getStatusEdital(lic)
+      if (s) set.add(s)
+      if (isUrgente(lic)) set.add('urgente')
+    })
+    const ordem = ['proximo', 'andamento', 'encerrando', 'urgente', 'encerrado']
+    return ordem.filter(s => set.has(s))
+  }, [licitacoes, getStatusEdital])
 
   // Toggle favorito
   const toggleFavorito = useMutation({
@@ -1967,7 +2148,6 @@ function LicitacoesContent() {
       buscaObjeto: '',
       excluirPalavras: '',
       uf: '',
-      modalidade: '',
       statusEdital: '',
       dataPublicacaoInicio: '',
       dataPublicacaoFim: '',
@@ -1982,6 +2162,7 @@ function LicitacoesContent() {
       amparoLegal: '',
       excluirUfs: [],
       excluirPalavrasObjeto: [],
+      excluirAtividadesIds: [],
       filtrosExclusaoAtivo: false
     }
     
@@ -2025,7 +2206,6 @@ function LicitacoesContent() {
       excluirPalavras: filtros.excluirPalavras,
       outrosFiltros: {
         uf: filtros.uf,
-        modalidade: filtros.modalidade,
         statusEdital: filtros.statusEdital,
         // ... outros
       }
@@ -2037,13 +2217,13 @@ function LicitacoesContent() {
     if (filtros.buscaObjeto) count++
     if (filtros.excluirPalavras) count++
     if (filtros.uf) count++
-    if (filtros.modalidade) count++
     if (filtros.statusEdital) count++
     if (filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim) count++
     if (filtros.valorMin || filtros.valorMax) count++
     if (filtros.comDocumentos) count++
     if (filtros.comItens) count++
     if (filtros.comValor) count++
+    if ((filtros.excluirAtividadesIds || []).length > 0) count++
     if (dataFiltro) count++
     return count
   }
@@ -2091,42 +2271,45 @@ function LicitacoesContent() {
     setListaNumerosWhatsApp((prev) => prev.filter((_, i) => i !== index))
   }
 
-  const salvarAlertaWhatsApp = async () => {
+  const salvarAlertaEmail = async () => {
     if (!user?.id) return
-    if (alertaWhatsAppAtivo && !numerosWhatsApp?.length) {
-      warning('Cadastre pelo menos um número acima antes de ativar o envio automático.')
+    const emailParaAlerta = alertaEmailDestino.trim() || perfilUsuario?.email
+    if (alertaEmailAtivo && !emailParaAlerta) {
+      warning('Informe um e-mail abaixo ou cadastre no seu perfil para ativar o envio automático.')
       return
     }
-    setAlertaWhatsAppSaving(true)
+    setAlertaEmailSaving(true)
     try {
-      const horario = alertaWhatsAppHorario.trim() || '08:00'
+      const horario = alertaEmailHorario.trim() || '08:00'
       const horarioFull = horario.length === 5 ? `${horario}:00` : horario
       const payload = {
         usuario_id: user.id,
-        nome_alerta: 'Envio WhatsApp',
-        tipo: 'whatsapp',
+        nome_alerta: 'Envio E-mail',
+        tipo: 'email',
         filtros: filtrosAplicados,
         horario_verificacao: horarioFull,
-        ativo: alertaWhatsAppAtivo,
+        ativo: alertaEmailAtivo,
         frequencia: 'diario',
+        email_notificacao: emailParaAlerta || null,
+        resumo_semanal_ativo: alertaResumoSemanalAtivo,
       }
-      if (alertaWhatsApp?.id) {
+      if (alertaEmail?.id) {
         const { error } = await supabase
           .from('alertas_usuario')
-          .update({ ativo: payload.ativo, horario_verificacao: payload.horario_verificacao, filtros: payload.filtros, updated_at: new Date().toISOString() })
-          .eq('id', alertaWhatsApp.id)
+          .update({ ativo: payload.ativo, horario_verificacao: payload.horario_verificacao, filtros: payload.filtros, email_notificacao: payload.email_notificacao, resumo_semanal_ativo: payload.resumo_semanal_ativo, updated_at: new Date().toISOString() })
+          .eq('id', alertaEmail.id)
         if (error) throw error
       } else {
         const { error } = await supabase.from('alertas_usuario').insert(payload)
         if (error) throw error
       }
-      queryClient.invalidateQueries({ queryKey: ['alerta-whatsapp', user.id] })
-      success('Alerta agendado salvo.')
+      queryClient.invalidateQueries({ queryKey: ['alerta-email', user.id] })
+      success('Alerta por e-mail salvo.')
     } catch (err) {
       console.error(err)
       showError('Erro ao salvar alerta: ' + (err.message || err))
     } finally {
-      setAlertaWhatsAppSaving(false)
+      setAlertaEmailSaving(false)
     }
   }
 
@@ -2179,7 +2362,8 @@ function LicitacoesContent() {
             </div>
           </div>
 
-            {/* Toggle Mostrar Todas - uma linha; switch sempre visível */}
+            {/* Toggle Mostrar Todas - só para quem NÃO tem setores; quem tem setores vê só editais classificados (rápido) */}
+            {(!perfilUsuario?.setores_atividades?.length) && (
             <div className="rounded-lg bg-white border border-border/80 shadow-sm px-3 py-2.5 flex items-center gap-3 min-w-0">
               <Label htmlFor="mostrar-todas" title="Exibe todas as licitações do banco, sem filtro por setor" className="text-xs font-medium text-gray-800 cursor-pointer min-w-0 flex-1 truncate">
                 Mostrar Todas (sem filtro por setor)
@@ -2196,8 +2380,9 @@ function LicitacoesContent() {
                     }
                   }}
                 className="flex-shrink-0 data-[state=checked]:bg-orange-500"
-              />
-            </div>            {/* Accordion: Busca Rápida + Filtros avançados + Envio WhatsApp */}
+                />
+            </div>
+            )}            {/* Accordion: Busca Rápida + Filtros avançados + Envio WhatsApp */}
             <Accordion type="multiple" defaultValue={['busca', 'filtros', 'whatsapp']} className="rounded-lg border border-border/80 bg-white shadow-sm overflow-hidden">
               <AccordionItem value="busca" className="border-0 border-b border-border/60">
                 <AccordionTrigger className="px-3 py-2.5 text-xs font-semibold text-gray-900 hover:no-underline bg-gradient-to-r from-orange-50 to-orange-100/70 hover:from-orange-100/80 hover:to-orange-100/60 [&[data-state=open]]:from-orange-50 [&[data-state=open]]:to-orange-100/70 flex items-center justify-between w-full">
@@ -2245,7 +2430,7 @@ function LicitacoesContent() {
                 <AccordionTrigger className="px-3 py-2.5 text-xs font-semibold text-gray-900 hover:no-underline bg-gradient-to-r from-orange-50 to-orange-100/70 hover:from-orange-100/80 hover:to-orange-100/60 [&[data-state=open]]:from-orange-50 [&[data-state=open]]:to-orange-100/70 flex items-center justify-between w-full">
                   <span className="flex items-center gap-2 text-left flex-1 min-w-0">
                     <SlidersHorizontal className="w-4 h-4 flex-shrink-0 text-black" />
-                    <span className="truncate">Data, UF, Modalidade e mais</span>
+                    <span className="truncate">Data, UF e mais</span>
                   </span>
                 </AccordionTrigger>
                 <AccordionContent className="px-3 pb-3 pt-1 space-y-3 border-t border-border/60">
@@ -2266,7 +2451,7 @@ function LicitacoesContent() {
                         className="h-8 rounded-md text-xs border-border/80"
                       />
           </div>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">Vazio = últimos 7 dias</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Vazio = sem filtro por data (mostra todos)</p>
                 </div>
                 
                   {/* UF */}
@@ -2285,34 +2470,8 @@ function LicitacoesContent() {
                     </Select>
                   </div>
 
-                  {/* Modalidade */}
+                  {/* Status do Edital — opções dinâmicas conforme statuses presentes nos editais */}
                   <div>
-                    <Label className="text-[11px] font-medium text-gray-600 mb-1 block">Modalidade</Label>
-                    <Select value={filtros.modalidade || "TODAS"} onValueChange={(value) => setFiltros({ ...filtros, modalidade: value === "TODAS" ? "" : value })}>
-                      <SelectTrigger className="h-8 rounded-md text-xs border-border/80">
-                        <SelectValue placeholder="Selecione a modalidade" />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-60">
-                        <SelectItem value="TODAS">Todas as Modalidades</SelectItem>
-                        <SelectItem value="Pregão Eletrônico">Pregão Eletrônico</SelectItem>
-                        <SelectItem value="Pregão Presencial">Pregão Presencial</SelectItem>
-                        <SelectItem value="Concorrência Eletrônica">Concorrência Eletrônica</SelectItem>
-                        <SelectItem value="Concorrência">Concorrência</SelectItem>
-                        <SelectItem value="Dispensa Eletrônica">Dispensa Eletrônica</SelectItem>
-                        <SelectItem value="Dispensa de Licitação">Dispensa de Licitação</SelectItem>
-                        <SelectItem value="Inexigibilidade">Inexigibilidade</SelectItem>
-                        <SelectItem value="Leilão">Leilão</SelectItem>
-                        <SelectItem value="Leilão - Eletrônico">Leilão - Eletrônico</SelectItem>
-                        <SelectItem value="Tomada de Preços">Tomada de Preços</SelectItem>
-                        <SelectItem value="Convite">Convite</SelectItem>
-                        <SelectItem value="Concurso">Concurso</SelectItem>
-                        <SelectItem value="Diálogo Competitivo">Diálogo Competitivo</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Status do Edital */}
-                <div>
                     <Label className="text-[11px] font-medium text-gray-600 mb-1 block">Status do Edital</Label>
                     <Select value={filtros.statusEdital || "TODOS"} onValueChange={(value) => setFiltros({ ...filtros, statusEdital: value === "TODOS" ? "" : value })}>
                       <SelectTrigger className="h-8 rounded-md text-xs border-border/80">
@@ -2320,11 +2479,15 @@ function LicitacoesContent() {
                     </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="TODOS">Todos os Status</SelectItem>
-                        <SelectItem value="proximo">Próximo (Ainda não abriu)</SelectItem>
-                        <SelectItem value="andamento">Em Andamento</SelectItem>
-                        <SelectItem value="encerrando">Encerrando (≤ 3 dias)</SelectItem>
-                        <SelectItem value="encerrado">Encerrado</SelectItem>
-                        <SelectItem value="urgente">Urgente (≤ 7 dias)</SelectItem>
+                        {statusesPresentesNosEditais.map(s => (
+                          <SelectItem key={s} value={s}>
+                            {s === 'proximo' ? 'Próximo (Ainda não abriu)' :
+                             s === 'andamento' ? 'Em Andamento' :
+                             s === 'encerrando' ? 'Encerrando (≤ 3 dias)' :
+                             s === 'encerrado' ? 'Encerrado' :
+                             s === 'urgente' ? 'Urgente (≤ 7 dias)' : s}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                   </Select>
                 </div>
@@ -2382,6 +2545,57 @@ function LicitacoesContent() {
                   </div>
               </AccordionContent>
             </AccordionItem>
+            {atividadesComIds.length > 0 && (
+              <AccordionItem value="atividades" className="border-0 border-b border-border/60">
+                <AccordionTrigger className="px-3 py-2.5 text-xs font-semibold text-gray-900 hover:no-underline bg-gradient-to-r from-orange-50 to-orange-100/70 hover:from-orange-100/80 hover:to-orange-100/60 [&[data-state=open]]:from-orange-50 [&[data-state=open]]:to-orange-100/70 flex items-center justify-between w-full">
+                  <span className="flex items-center gap-2 text-left flex-1 min-w-0">
+                    <Filter className="w-4 h-4 flex-shrink-0 text-black" />
+                    <span className="truncate">Excluir atividades</span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="px-3 pb-3 pt-1 space-y-3 border-t border-border/60">
+                  <p className="text-[11px] text-muted-foreground">
+                    Desmarque as atividades que deseja excluir dos resultados. Editais dessas atividades não serão exibidos.
+                  </p>
+                  <div className="space-y-3 max-h-48 overflow-y-auto">
+                    {(() => {
+                      const porSetor = atividadesComIds.reduce((acc, a) => {
+                        (acc[a.setor] = acc[a.setor] || []).push(a)
+                        return acc
+                      }, {})
+                      const excluidos = filtros.excluirAtividadesIds || []
+                      const toggleAtividade = (atividadeId, checked) => {
+                        const next = checked
+                          ? excluidos.filter(id => id !== atividadeId)
+                          : [...excluidos, atividadeId]
+                        setFiltros(prev => ({ ...prev, excluirAtividadesIds: next }))
+                        setFiltrosAplicados(prev => ({ ...prev, excluirAtividadesIds: next }))
+                      }
+                      return Object.entries(porSetor).map(([setor, atividades]) => (
+                        <div key={setor} className="space-y-1.5">
+                          <p className="text-[11px] font-medium text-gray-700">{setor}</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {atividades.map(a => (
+                              <div key={a.id} className="flex items-center gap-1.5">
+                                <Checkbox
+                                  id={`atividade-${a.id}`}
+                                  checked={!excluidos.includes(a.id)}
+                                  onCheckedChange={(checked) => toggleAtividade(a.id, !!checked)}
+                                  className="rounded-md"
+                                />
+                                <Label htmlFor={`atividade-${a.id}`} className="text-[11px] cursor-pointer text-gray-600 truncate max-w-[180px]">
+                                  {a.nome}
+                                </Label>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))
+                    })()}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            )}
               <AccordionItem value="whatsapp" className="border-0">
                 <AccordionTrigger className="px-3 py-2.5 text-xs font-semibold text-gray-900 hover:no-underline bg-gradient-to-r from-orange-50 to-orange-100/70 hover:from-orange-100/80 hover:to-orange-100/60 [&[data-state=open]]:from-orange-50 [&[data-state=open]]:to-orange-100/70 flex items-center justify-between w-full">
                   <span className="flex items-center gap-2 text-left flex-1 min-w-0">
@@ -2451,38 +2665,78 @@ function LicitacoesContent() {
                   >
                     {whatsAppSlotsSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Salvar números'}
                   </Button>
-                  <div className="border-t border-border/60 pt-2.5 mt-2.5 space-y-2">
+                </AccordionContent>
+              </AccordionItem>
+
+
+              <AccordionItem value="email" className="border-0">
+                <AccordionTrigger className="px-3 py-2.5 text-xs font-semibold text-gray-900 hover:no-underline bg-gradient-to-r from-orange-50 to-orange-100/70 hover:from-orange-100/80 hover:to-orange-100/60 [&[data-state=open]]:from-orange-50 [&[data-state=open]]:to-orange-100/70 flex items-center justify-between w-full">
+                  <span className="flex items-center gap-2 text-left flex-1 min-w-0">
+                    <Mail className="w-4 h-4 flex-shrink-0 text-gray-700" />
+                    <span className="truncate">Envio por E-mail</span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="px-3 pb-3 pt-1 space-y-2.5 border-t border-border/60">
+                  <p className="text-[11px] text-muted-foreground">
+                    Receba diariamente as licitações novas no horário configurado. Informe o e-mail abaixo ou use o cadastrado no perfil.
+                  </p>
+                  <div className="space-y-2">
+                    <Label className="text-[11px] font-medium text-gray-700">E-mail para receber os alertas</Label>
+                    <Input
+                      type="email"
+                      placeholder="ex: seu@email.com (ou use o do perfil)"
+                      value={alertaEmailDestino}
+                      onChange={(e) => setAlertaEmailDestino(e.target.value)}
+                      className="h-8 rounded-md border-border/80 text-xs"
+                    />
+                  </div>
+                  <div className="border-t border-border/60 pt-2.5 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <Label className="text-[11px] font-medium text-gray-700">Enviar automaticamente no horário</Label>
                       <Switch
-                        checked={alertaWhatsAppAtivo}
-                        onCheckedChange={setAlertaWhatsAppAtivo}
+                        checked={alertaEmailAtivo}
+                        onCheckedChange={setAlertaEmailAtivo}
                         className="data-[state=checked]:bg-green-600 flex-shrink-0"
                       />
                     </div>
-                    {alertaWhatsAppAtivo && (
+                    {alertaEmailAtivo && (
                       <div className="flex gap-2 items-center">
                         <Input
                           type="time"
-                          value={alertaWhatsAppHorario}
-                          onChange={(e) => setAlertaWhatsAppHorario(e.target.value || '08:00')}
+                          value={alertaEmailHorario}
+                          onChange={(e) => setAlertaEmailHorario(e.target.value || '08:00')}
                           className="h-8 rounded-md border-border/80 text-xs flex-1"
                         />
                         <Button
                           size="sm"
                           variant="outline"
                           className="h-8 text-xs rounded-lg border-border"
-                          onClick={salvarAlertaWhatsApp}
-                          disabled={alertaWhatsAppSaving}
+                          onClick={salvarAlertaEmail}
+                          disabled={alertaEmailSaving}
                         >
-                          {alertaWhatsAppSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Salvar'}
+                          {alertaEmailSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Salvar'}
                         </Button>
                       </div>
                     )}
-                    {alertaWhatsAppAtivo && (
-                      <p className="text-[10px] text-muted-foreground">
-                        Diferente do botão no card: um job roda no <strong>minuto configurado</strong> (ex.: 10:01), usa os <strong>filtros salvos</strong> desta tela, busca licitações dos <strong>últimos 2 dias</strong> (até 50) e envia cada uma para cada número cadastrado.
-                      </p>
+                    {alertaEmailAtivo && (
+                      <>
+                        <div className="flex items-center justify-between gap-2">
+                          <Label className="text-[11px] font-medium text-gray-700">Receber também resumo semanal</Label>
+                          <Switch
+                            checked={alertaResumoSemanalAtivo}
+                            onCheckedChange={setAlertaResumoSemanalAtivo}
+                            className="data-[state=checked]:bg-orange-500 flex-shrink-0"
+                          />
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                          Um job roda no <strong>minuto configurado</strong>, usa os <strong>filtros salvos</strong> desta tela, busca licitações dos <strong>últimos 2 dias</strong> e envia um resumo para o seu e-mail.
+                        </p>
+                        {alertaResumoSemanalAtivo && (
+                          <p className="text-[10px] text-orange-600">
+                            Resumo semanal: envio com editais dos <strong>últimos 7 dias</strong> (geralmente às segundas).
+                          </p>
+                        )}
+                      </>
                     )}
                   </div>
                 </AccordionContent>
@@ -2493,71 +2747,56 @@ function LicitacoesContent() {
 
         {/* Conteúdo Principal */}
         <div className="flex-1 overflow-y-auto p-6">
-        {/* Header */}
         <div className="mb-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                {dataFiltro ? `Licitações de ${format(new Date(dataFiltro), "dd/MM/yyyy", { locale: ptBR })}` : 'Todas as Licitações'}
-              </h1>
-              <p className="text-gray-600">
-                {dataFiltro 
-                  ? 'Licitações publicadas nesta data' 
-                  : 'Visualize todas as licitações públicas do Brasil'
-                }
-              </p>
-            </div>
-          </div>
-
-          {/* Badges de Filtros Ativos */}
+          {/* Marcadores de filtragem: filtros aplicados (remover pelo X aplica na hora) */}
           {contarFiltrosAtivos() > 0 && (
               <div className="flex flex-wrap gap-2 mt-4">
-                {filtros.buscaObjeto && (
+                {filtrosAplicados.buscaObjeto && (
                   <Badge variant="secondary" className="gap-1">
-                    Busca: {filtros.buscaObjeto}
-                    <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, buscaObjeto: '' })} />
+                    Busca: {filtrosAplicados.buscaObjeto}
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, buscaObjeto: '' }; setFiltros(n); setFiltrosAplicados(n); }} />
                   </Badge>
                 )}
-                {filtros.excluirPalavras && (
+                {filtrosAplicados.excluirPalavras && (
                   <Badge variant="secondary" className="gap-1 bg-red-50 text-red-700 border-red-200">
-                    Excluir: {filtros.excluirPalavras}
-                    <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, excluirPalavras: '' })} />
+                    Excluir: {filtrosAplicados.excluirPalavras}
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, excluirPalavras: '' }; setFiltros(n); setFiltrosAplicados(n); }} />
                   </Badge>
                 )}
-                {filtros.uf && (
+                {filtrosAplicados.uf && (
                   <Badge variant="secondary" className="gap-1">
-                    UF: {filtros.uf}
-                    <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, uf: '' })} />
+                    UF: {filtrosAplicados.uf}
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, uf: '' }; setFiltros(n); setFiltrosAplicados(n); }} />
                   </Badge>
                 )}
-                {filtros.modalidade && (
-                  <Badge variant="secondary" className="gap-1">
-                    Modalidade: {filtros.modalidade}
-                    <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, modalidade: '' })} />
+                {(filtrosAplicados.excluirAtividadesIds || []).length > 0 && (
+                  <Badge variant="secondary" className="gap-1 bg-amber-50 text-amber-800 border-amber-200">
+                    {(filtrosAplicados.excluirAtividadesIds || []).length} atividade{(filtrosAplicados.excluirAtividadesIds || []).length > 1 ? 's' : ''} excluída{(filtrosAplicados.excluirAtividadesIds || []).length > 1 ? 's' : ''}
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, excluirAtividadesIds: [] }; setFiltros(n); setFiltrosAplicados(n); }} />
                   </Badge>
                 )}
-                {filtros.statusEdital && (
+                {filtrosAplicados.statusEdital && (
                   <Badge variant="secondary" className="gap-1">
                     Status: {
-                      filtros.statusEdital === 'proximo' ? 'Próximo' :
-                      filtros.statusEdital === 'andamento' ? 'Em Andamento' :
-                      filtros.statusEdital === 'encerrando' ? 'Encerrando' :
-                      filtros.statusEdital === 'urgente' ? 'Urgente' :
+                      filtrosAplicados.statusEdital === 'proximo' ? 'Próximo' :
+                      filtrosAplicados.statusEdital === 'andamento' ? 'Em Andamento' :
+                      filtrosAplicados.statusEdital === 'encerrando' ? 'Encerrando' :
+                      filtrosAplicados.statusEdital === 'urgente' ? 'Urgente' :
                       'Encerrado'
                     }
-                    <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, statusEdital: '' })} />
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, statusEdital: '' }; setFiltros(n); setFiltrosAplicados(n); }} />
                   </Badge>
                 )}
-                {(filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim) && (
+                {(filtrosAplicados.dataPublicacaoInicio || filtrosAplicados.dataPublicacaoFim) && (
                   <Badge variant="secondary" className="gap-1">
-                    Data: {filtros.dataPublicacaoInicio ? formatarData(filtros.dataPublicacaoInicio) : '...'} - {filtros.dataPublicacaoFim ? formatarData(filtros.dataPublicacaoFim) : '...'}
-                    <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, dataPublicacaoInicio: '', dataPublicacaoFim: '' })} />
+                    Data: {filtrosAplicados.dataPublicacaoInicio ? formatarData(filtrosAplicados.dataPublicacaoInicio) : '...'} - {filtrosAplicados.dataPublicacaoFim ? formatarData(filtrosAplicados.dataPublicacaoFim) : '...'}
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, dataPublicacaoInicio: '', dataPublicacaoFim: '' }; setFiltros(n); setFiltrosAplicados(n); }} />
                   </Badge>
                 )}
-                {(filtros.valorMin || filtros.valorMax) && (
+                {(filtrosAplicados.valorMin || filtrosAplicados.valorMax) && (
                   <Badge variant="secondary" className="gap-1">
-                    Valor: R$ {filtros.valorMin || '0'} - {filtros.valorMax || '∞'}
-                    <X className="w-3 h-3 cursor-pointer" onClick={() => setFiltros({ ...filtros, valorMin: '', valorMax: '' })} />
+                    Valor: R$ {filtrosAplicados.valorMin || '0'} - {filtrosAplicados.valorMax || '∞'}
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, valorMin: '', valorMax: '' }; setFiltros(n); setFiltrosAplicados(n); }} />
                   </Badge>
                 )}
                 {dataFiltro && (
@@ -2567,6 +2806,24 @@ function LicitacoesContent() {
                       setDataFiltro('')
                       window.history.pushState({}, '', '/licitacoes')
                     }} />
+                  </Badge>
+                )}
+                {filtrosAplicados.comDocumentos && (
+                  <Badge variant="secondary" className="gap-1">
+                    Com documentos
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, comDocumentos: false }; setFiltros(n); setFiltrosAplicados(n); }} />
+                  </Badge>
+                )}
+                {filtrosAplicados.comItens && (
+                  <Badge variant="secondary" className="gap-1">
+                    Com itens
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, comItens: false }; setFiltros(n); setFiltrosAplicados(n); }} />
+                  </Badge>
+                )}
+                {filtrosAplicados.comValor && (
+                  <Badge variant="secondary" className="gap-1">
+                    Com valor
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, comValor: false }; setFiltros(n); setFiltrosAplicados(n); }} />
                   </Badge>
                               )}
                             </div>
@@ -2593,35 +2850,98 @@ function LicitacoesContent() {
             </Card>
           )}
 
-          {/* Resultados - Ocultar durante loading para evitar "0 licitações" antes do skeleton */}
+          {/* Marcadores de filtragem e contagem — feedback visual claro */}
           {!error && !((isLoading || isFetching || processandoFiltro) && licitacoesFinais.length === 0) && (
-            <div className="mb-4">
-              <p className="text-sm text-gray-600">
-                {licitacoesParaExibir.length === licitacoesPagina.length
-                  ? licitacoesParaExibir.length
-                  : `${licitacoesPagina.length} de ${licitacoesParaExibir.length}`} {licitacoesParaExibir.length === 1 ? 'licitação encontrada' : 'licitações encontradas'}
-                {perfilUsuario?.setores_atividades?.length > 0 && (
-                  <span className="text-xs text-gray-500 ml-2">
-                    (filtradas por setores e estados cadastrados)
+            <div className="mb-4 flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-base font-semibold text-gray-800">
+                  {recomendadaSelecionada
+                    ? '1 edital recomendado'
+                    : licitacoesParaExibir.length === 0
+                    ? '0 editais encontrados'
+                    : licitacoesParaExibir.length === 1
+                    ? '1 edital encontrado'
+                    : `${licitacoesParaExibir.length} editais encontrados`}
+                </span>
+                {!recomendadaSelecionada && licitacoesParaExibir.length !== licitacoesPagina.length && (
+                  <span className="text-sm text-gray-500">
+                    (exibindo {licitacoesPagina.length} de {licitacoesParaExibir.length})
                   </span>
                 )}
-              </p>
-              {(filtros.buscaObjeto || filtros.excluirPalavras || filtros.uf || filtros.modalidade || filtros.statusEdital || 
+                {perfilUsuario?.setores_atividades?.length > 0 && (
+                  <Badge variant="secondary" className="bg-orange-50 text-orange-700 border-orange-200 font-normal">
+                    Do seu setor
+                  </Badge>
+                )}
+              </div>
+              {(filtros.buscaObjeto || filtros.excluirPalavras || filtros.uf || filtros.statusEdital || 
                 filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim || filtros.valorMin || 
                 filtros.valorMax || filtros.comDocumentos || 
                 filtros.comItens || filtros.comValor || dataFiltro) && licitacoesParaExibir.length > 100 && (
-                <p className="text-xs text-orange-600 mt-1">
-                  ⚠️ Muitos resultados encontrados ({licitacoesParaExibir.length}). Considere adicionar mais filtros para refinar a busca.
+                <p className="text-xs text-orange-600">
+                  ⚠️ Muitos resultados ({licitacoesParaExibir.length}). Use mais filtros na sidebar para refinar.
                 </p>
               )}
             </div>
           )}
 
-          {/* Cards de Licitações */}
+          {/* Recomendadas para você: grid compacto; ao clicar, mostra só o edital selecionado */}
+          {!((isLoading || isFetching || processandoFiltro) && licitacoesFinais.length === 0) && recomendadas.length > 0 && !recomendadaSelecionada && (
+            <div className="mb-6">
+              <h2 className="text-lg font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                <span className="text-orange-500">★</span> Recomendadas para você
+              </h2>
+              <p className="text-sm text-gray-500 mb-3">Clique em um card para ver só esse edital.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                {recomendadas.map(({ licitacao, label }) => (
+                  <Card
+                    key={`rec-${licitacao.id ?? licitacao.numero_controle_pncp}`}
+                    className="rounded-lg border border-gray-200 bg-white hover:border-orange-300 hover:shadow-sm transition-all cursor-pointer"
+                    onClick={() => {
+                      setRecomendadaSelecionada(licitacao)
+                      setCardsExpandidos(prev => new Set([...prev, licitacao.id ?? licitacao.numero_controle_pncp]))
+                    }}
+                  >
+                    <CardContent className="p-3">
+                      <span
+                        className={
+                          label === 'alta'
+                            ? 'text-[10px] font-medium text-green-700 uppercase tracking-wide'
+                            : 'text-[10px] font-medium text-amber-700 uppercase tracking-wide'
+                        }
+                      >
+                        {label === 'alta' ? 'Alta' : 'Média'}
+                      </span>
+                      <p className="text-sm text-gray-900 line-clamp-2 mt-1">{licitacao.objeto_compra || licitacao.objeto_licitacao || '—'}</p>
+                      <p className="text-xs text-gray-500 mt-0.5 truncate">{licitacao.orgao_razao_social || '—'}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* Barra "Ver todos" quando um recomendado está selecionado */}
+          {recomendadaSelecionada && (
+            <div className="mb-4 flex items-center gap-3 rounded-lg border border-orange-200 bg-orange-50/50 px-4 py-2">
+              <span className="text-sm font-medium text-gray-800">Exibindo 1 edital recomendado</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-orange-300 text-orange-700 hover:bg-orange-100"
+                onClick={() => setRecomendadaSelecionada(null)}
+              >
+                Ver todos os editais
+              </Button>
+            </div>
+          )}
+
+          {/* Cards de Licitações (ou só o edital recomendado selecionado) */}
           {!((isLoading || isFetching || processandoFiltro) && licitacoesFinais.length === 0) && (
               <div className="space-y-4">
-              {licitacoesParaExibir.length > 0 ? (
-                licitacoesPagina.map((licitacao) => {
+              {licitacoesParaExibir.length > 0 || recomendadaSelecionada ? (
+                licitacoesNaTela.map((licitacao) => {
+                  const scoreInfo = scorePorId.get(licitacao.id ?? licitacao.numero_controle_pncp)
                   return (
             <Card 
               key={licitacao.id} 
@@ -2741,6 +3061,19 @@ function LicitacoesContent() {
                   
                   {/* Badges de Status e Datas */}
                   <div className="flex flex-wrap items-center gap-2 justify-end">
+                    {/* Badge de aderência (filtro semântico) */}
+                    {scoreInfo && (scoreInfo.label === 'alta' || scoreInfo.label === 'média') && (
+                      <Badge
+                        variant="secondary"
+                        className={
+                          scoreInfo.label === 'alta'
+                            ? 'bg-green-100 text-green-800 border-green-200 text-xs'
+                            : 'bg-amber-100 text-amber-800 border-amber-200 text-xs'
+                        }
+                      >
+                        {scoreInfo.label === 'alta' ? 'Alta aderência' : 'Média aderência'}
+                      </Badge>
+                    )}
                     {/* Badge URGENTE */}
                     {isUrgente(licitacao) && (
                       <Badge variant="destructive" className="bg-red-500 animate-pulse text-xs font-semibold">

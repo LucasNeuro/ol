@@ -1,11 +1,12 @@
 import { useRoute, useLocation } from 'wouter'
 import { useQuery } from '@tanstack/react-query'
+import { useMemo } from 'react'
 import { Header } from '@/components/layout/Header'
 import { Footer } from '@/components/layout/Footer'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, FileText, Calendar, DollarSign, MapPin, Building2 } from 'lucide-react'
+import { ArrowLeft, FileText, Calendar, DollarSign, MapPin, Building2, AlertTriangle } from 'lucide-react'
 import { buscarContratacoesPorData } from '@/lib/pncp'
 import { formatarData, formatarMoeda } from '@/lib/utils'
 import { Star } from 'lucide-react'
@@ -13,6 +14,8 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useUserStore } from '@/store/userStore'
+import { usePalavrasIncompatibilidade } from '@/hooks/usePalavrasIncompatibilidade'
+import { termosIncompatibilidadeEncontrados } from '@/lib/filtroSemantico'
 
 function EditalContent() {
   const [, params] = useRoute('/edital/:numeroControle')
@@ -20,6 +23,18 @@ function EditalContent() {
   const { user } = useAuth()
   const { warning, showError, success } = useNotifications()
   const numeroControle = params?.numeroControle || ''
+
+  const { data: palavrasIncompatibilidadePorSetor = {} } = usePalavrasIncompatibilidade()
+  const { data: perfilUsuario } = useQuery({
+    queryKey: ['perfil-usuario', user?.id],
+    queryFn: async () => {
+      if (!user?.id || !supabase) return null
+      const { data, error } = await supabase.from('profiles').select('setores_atividades').eq('id', user.id).maybeSingle()
+      if (error) return null
+      return data
+    },
+    enabled: !!user?.id,
+  })
 
   // Buscar a licitação específica
   // Como não temos endpoint direto, vamos buscar pela data de publicação
@@ -203,6 +218,12 @@ function EditalContent() {
   }
 
   const licitacao = data
+  const setoresAtividades = perfilUsuario?.setores_atividades || []
+  const resumoIncompatibilidade = useMemo(() => {
+    const objetoTexto = [licitacao.objetoCompra, licitacao.informacaoComplementar].filter(Boolean).join('\n')
+    return termosIncompatibilidadeEncontrados(objetoTexto, setoresAtividades, palavrasIncompatibilidadePorSetor)
+  }, [licitacao.objetoCompra, licitacao.informacaoComplementar, setoresAtividades, palavrasIncompatibilidadePorSetor])
+  const temIncompatibilidade = resumoIncompatibilidade.encontrados.length > 0
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -244,6 +265,31 @@ function EditalContent() {
             </CardHeader>
 
             <CardContent className="space-y-6">
+              {/* Resumo de incompatibilidade (termos do edital x setores do perfil) */}
+              {temIncompatibilidade && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-amber-900">Atenção: termos de incompatibilidade encontrados</p>
+                      <p className="text-sm text-amber-800 mt-1">
+                        O texto deste edital contém termos que costumam indicar escopo fora do seu perfil de setores. Revise antes de participar.
+                      </p>
+                      <ul className="mt-2 list-disc list-inside text-sm text-amber-800 space-y-0.5">
+                        {resumoIncompatibilidade.encontrados.map((termo, i) => (
+                          <li key={i}>{termo}</li>
+                        ))}
+                      </ul>
+                      {resumoIncompatibilidade.porSetor.length > 0 && (
+                        <p className="text-xs text-amber-700 mt-2">
+                          Por setor: {resumoIncompatibilidade.porSetor.map(({ setor, termos }) => `${setor} (${termos.join(', ')})`).join(' • ')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Informações Básicas */}
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="flex items-start gap-3">

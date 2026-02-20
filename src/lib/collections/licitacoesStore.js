@@ -1,11 +1,13 @@
 /**
  * Store para cache de licitações usando IndexedDB
  * IndexedDB oferece muito mais espaço (GBs) comparado ao sessionStorage (MBs)
- * 
- * Funcionalidades:
- * 1. Carrega licitações do banco uma vez
- * 2. Armazena em cache (IndexedDB) - específico por usuário
- * 3. Todos os filtros funcionam no cliente
+ *
+ * Nova dinâmica (usuário com setores):
+ * - Lista vem só do banco (setor_principal_id), sem processamento no front.
+ * - Cache é usado só se carregadoPorSetor === true (lista já filtrada no backend).
+ * - Cache antigo (10k) é ignorado ou limpo; nunca reutilizamos para quem tem setores.
+ *
+ * Usuário sem setores: cache da lista completa (até 10k), filtros no cliente.
  */
 
 import { supabase } from '../supabase'
@@ -62,9 +64,11 @@ async function isCacheValid(userId) {
 }
 
 /**
- * Salva licitações no cache (IndexedDB) - específico por usuário
+ * Salva licitações no cache (IndexedDB) - específico por usuário.
+ * @param {boolean} [carregadoPorSetor=false] - true se a lista veio filtrada por setor/subsetor
+ * @param {string} [setoresHash=''] - hash dos setores do perfil (obrigatório quando carregadoPorSetor); usado para não reutilizar cache de outro perfil de setores
  */
-export async function salvarCacheLicitacoes(licitacoes, userId = null) {
+export async function salvarCacheLicitacoes(licitacoes, userId = null, carregadoPorSetor = false, setoresHash = '') {
   if (!userId) {
     console.warn('⚠️ [Cache] userId não fornecido, não salvando cache')
     return
@@ -79,14 +83,15 @@ export async function salvarCacheLicitacoes(licitacoes, userId = null) {
     const dataToSave = {
       licitacoes,
       timestamp: Date.now(),
-      userId, // Incluir userId no cache para validação
+      userId,
+      carregadoPorSetor: !!carregadoPorSetor,
+      setoresHash: carregadoPorSetor ? (setoresHash || '') : '',
     }
     
-    // Salvar dados e timestamp no IndexedDB
     await idb.setItem(getCacheKey(userId), dataToSave)
     await idb.setItem(getCacheTimestampKey(userId), Date.now())
     
-    console.log(`✅ [Cache] ${licitacoes.length} licitações salvas no IndexedDB (usuário: ${userId})`)
+    console.log(`✅ [Cache] ${licitacoes.length} licitações salvas (usuário: ${userId}, por setor: ${!!carregadoPorSetor})`)
   } catch (e) {
     console.warn('⚠️ [Cache] Erro ao salvar cache no IndexedDB:', e)
   }
@@ -175,7 +180,11 @@ export async function carregarCacheLicitacoes(userId = null) {
     }
     
     console.log(`✅ [Cache] ${data.licitacoes?.length || 0} licitações carregadas do IndexedDB (usuário: ${userId})`)
-    return data.licitacoes
+    return {
+      licitacoes: data.licitacoes,
+      carregadoPorSetor: !!data.carregadoPorSetor,
+      setoresHash: data.setoresHash || '',
+    }
   } catch (e) {
     console.warn('⚠️ [Cache] Erro ao carregar cache do IndexedDB:', e)
     return null
@@ -293,12 +302,13 @@ export function hashSetoresAtividades(setoresAtividades = null) {
  * Inclui setores_atividades para que mudança no perfil invalide o cache.
  */
 export function hashFiltrosAplicados(filtros = {}, mostrarTodasLicitacoes = false, setoresAtividades = null) {
+  const excluirAtiv = Array.isArray(filtros.excluirAtividadesIds) ? filtros.excluirAtividadesIds.sort() : []
   const o = {
     buscaObjeto: (filtros.buscaObjeto || '').trim(),
     excluirPalavras: (filtros.excluirPalavras || '').trim(),
     uf: (filtros.uf || '').trim(),
-    modalidade: (filtros.modalidade || '').trim(),
     statusEdital: (filtros.statusEdital || '').trim(),
+    excluirAtividadesIds: JSON.stringify(excluirAtiv),
     dataPublicacaoInicio: (filtros.dataPublicacaoInicio || '').trim(),
     dataPublicacaoFim: (filtros.dataPublicacaoFim || '').trim(),
     valorMin: (filtros.valorMin || '').trim(),
@@ -417,6 +427,172 @@ function processarLoteLicitacoes(data) {
   })
 }
 
+const LICITACOES_SELECT = `
+  id,
+  numero_controle_pncp,
+  objeto_compra,
+  data_publicacao_pncp,
+  data_atualizacao,
+  uf_sigla,
+  modalidade_nome,
+  orgao_razao_social,
+  valor_total_estimado,
+  subsetor_principal_id,
+  dados_completos,
+  anexos,
+  itens
+`
+
+/** Flag: última carga veio filtrada por classificação no backend. Front não deve rodar filtro semântico. */
+let _lastLoadWasPreFiltered = false
+export function setLastLoadWasPreFiltered(value) {
+  _lastLoadWasPreFiltered = !!value
+}
+export function getLastLoadWasPreFiltered() {
+  return _lastLoadWasPreFiltered
+}
+
+/** Flag: última carga foi fallback (todas de licitacoes, sem classificação). Exibir direto, sem filtro semântico. */
+let _lastLoadWasFallbackAll = false
+export function setLastLoadWasFallbackAll(value) {
+  _lastLoadWasFallbackAll = !!value
+}
+export function getLastLoadWasFallbackAll() {
+  return _lastLoadWasFallbackAll
+}
+
+/**
+ * Resolve setores_atividades do perfil para IDs (setores.id e subsetores.id).
+ * O cadastro pode salvar com nomes: { setor: "Alimentação", subsetores: ["Gêneros alimentícios", ...] }.
+ * Retorna { setorIds: uuid[], subsetorIds: uuid[] } para usar em licitacoes.setor_principal_id e subsetor_principal_id.
+ */
+async function resolverSetoresAtividadesParaIds(setoresAtividades) {
+  if (!supabase || !setoresAtividades?.length) return { setorIds: [], subsetorIds: [] }
+  const setorIds = setoresAtividades.map(s => s.setor_id || s.id).filter(Boolean)
+  const subsetorIds = []
+  setoresAtividades.forEach(s => {
+    if (Array.isArray(s.subsetor_ids) && s.subsetor_ids.length) subsetorIds.push(...s.subsetor_ids)
+  })
+  if (setorIds.length > 0) {
+    return { setorIds, subsetorIds: [...new Set(subsetorIds)] }
+  }
+  const { data: setores } = await supabase.from('setores').select('id, nome').eq('ativo', true)
+  const { data: subsetores } = await supabase.from('subsetores').select('id, setor_id, nome').eq('ativo', true)
+  if (!setores?.length) return { setorIds: [], subsetorIds: [] }
+  const byNomeSetor = Object.fromEntries((setores || []).map(s => [String(s.nome).trim().toLowerCase(), s.id]))
+  const byNomeSubsetor = {}
+  ;(subsetores || []).forEach(sub => {
+    const k = String(sub.nome).trim().toLowerCase()
+    if (!byNomeSubsetor[k]) byNomeSubsetor[k] = []
+    byNomeSubsetor[k].push({ id: sub.id, setor_id: sub.setor_id })
+  })
+  const resolvedSetorIds = []
+  const resolvedSubsetorIds = []
+  setoresAtividades.forEach(item => {
+    const nomeSetor = (item.setor || '').trim()
+    const idSetor = byNomeSetor[nomeSetor.toLowerCase()]
+    if (idSetor) {
+      resolvedSetorIds.push(idSetor)
+      const nomesSub = Array.isArray(item.subsetores) ? item.subsetores : []
+      nomesSub.forEach(nomeSub => {
+        const subs = byNomeSubsetor[String(nomeSub).trim().toLowerCase()]
+        if (subs) {
+          const subDoSetor = subs.find(s => s.setor_id === idSetor)
+          if (subDoSetor) resolvedSubsetorIds.push(subDoSetor.id)
+        }
+      })
+    }
+  })
+  return {
+    setorIds: [...new Set(resolvedSetorIds)],
+    subsetorIds: [...new Set(resolvedSubsetorIds)]
+  }
+}
+
+/**
+ * Retorna lista de subsetores (atividades) com IDs para os setores_atividades do perfil.
+ * Usado no filtro "Excluir atividades" para mapear nome -> id.
+ * @param {Array} setoresAtividades - Ex.: [{ setor: "Alimentação", subsetores: ["Gêneros alimentícios", ...] }]
+ * @returns {Promise<Array<{ nome: string, id: string, setor: string }>>}
+ */
+export async function resolverSubsetoresComIds(setoresAtividades) {
+  if (!supabase || !setoresAtividades?.length) return []
+  const { data: setores } = await supabase.from('setores').select('id, nome').eq('ativo', true)
+  const { data: subsetores } = await supabase.from('subsetores').select('id, setor_id, nome').eq('ativo', true)
+  if (!setores?.length || !subsetores?.length) return []
+  const byNomeSetor = Object.fromEntries((setores || []).map(s => [String(s.nome).trim().toLowerCase(), s]))
+  const bySetorId = Object.fromEntries((subsetores || []).map(sub => [sub.id, sub]))
+  const resultado = []
+  setoresAtividades.forEach(item => {
+    const nomeSetor = (item.setor || '').trim()
+    const setorObj = byNomeSetor[nomeSetor.toLowerCase()]
+    if (!setorObj) return
+    const nomesSub = Array.isArray(item.subsetores) ? item.subsetores : []
+    const subsDoSetor = (subsetores || []).filter(s => s.setor_id === setorObj.id)
+    nomesSub.forEach(nomeSub => {
+      const sub = subsDoSetor.find(s => String(s.nome).trim().toLowerCase() === String(nomeSub).trim().toLowerCase())
+      if (sub) resultado.push({ nome: sub.nome, id: sub.id, setor: nomeSetor })
+    })
+  })
+  return resultado
+}
+
+/**
+ * Busca licitações já classificadas na tabela licitacoes.
+ * Filtra sempre por setor E subsetor (como no cadastro da empresa): setor_principal_id (FK setores.id),
+ * subsetor_principal_id (FK subsetores.id). Aceita perfil com setores_atividades em nomes (setor, subsetores)
+ * ou em IDs (setor_id, subsetor_ids). Ordenação: mais recentes primeiro. Nenhum processamento no front.
+ *
+ * @param {{ setores_atividades: Array, estados_interesse?: Array }} perfil
+ * @returns {Promise<Array>} Lista no mesmo formato de buscarLicitacoesDoBanco
+ */
+export async function buscarLicitacoesPorClassificacaoPrincipal(perfil) {
+  if (!supabase || !perfil?.setores_atividades?.length) return []
+  const { setorIds, subsetorIds } = await resolverSetoresAtividadesParaIds(perfil.setores_atividades)
+  if (setorIds.length === 0) return []
+
+  console.log('🔍 [Licitações] Filtro por setor/subsetor (como cadastro):', {
+    setorIdsCount: setorIds.length,
+    subsetorIdsCount: subsetorIds.length,
+    setorIds: setorIds.slice(0, 5),
+    subsetorIds: subsetorIds.slice(0, 10),
+  })
+
+  try {
+    let q = supabase
+      .from('licitacoes')
+      .select(LICITACOES_SELECT)
+      .in('setor_principal_id', setorIds)
+      .order('data_publicacao_pncp', { ascending: false })
+
+    if (subsetorIds.length > 0) {
+      q = q.in('subsetor_principal_id', subsetorIds)
+    }
+
+    const estadosInteresse = perfil.estados_interesse || []
+    const temNacional = estadosInteresse.some(e => String(e).toUpperCase() === 'NACIONAL')
+    if (!temNacional && estadosInteresse.length > 0) {
+      const ufList = estadosInteresse.map(e => String(e).toUpperCase())
+      q = q.in('uf_sigla', ufList)
+    }
+
+    const { data, error } = await q.limit(10000)
+
+    if (error) {
+      console.warn('⚠️ [licitacoes classificação] Erro:', error.message, error.code)
+      return []
+    }
+    const todas = processarLoteLicitacoes(data || [])
+    if (todas.length > 0) {
+      console.log(`✅ [licitacoes] ${todas.length} licitações por setor e subsetor (como no cadastro)`)
+    }
+    return todas
+  } catch (e) {
+    console.warn('⚠️ [licitacoes classificação] Erro:', e.message)
+    return []
+  }
+}
+
 /**
  * Busca as licitações mais recentes do banco (COM PAGINAÇÃO).
  * Ordenação: data_publicacao_pncp DESC — só os N mais recentes.
@@ -449,20 +625,7 @@ export async function buscarLicitacoesDoBanco(onProgress = null, maxRegistros = 
     while (continuar && todasLicitacoes.length < maxRegistros) {
       const { data, error } = await supabase
         .from('licitacoes')
-        .select(`
-          id,
-          numero_controle_pncp,
-          objeto_compra,
-          data_publicacao_pncp,
-          data_atualizacao,
-          uf_sigla,
-          modalidade_nome,
-          orgao_razao_social,
-          valor_total_estimado,
-          dados_completos,
-          anexos,
-          itens
-        `)
+        .select(LICITACOES_SELECT)
         .order('data_publicacao_pncp', { ascending: false })
         .range(offset, offset + TAMANHO_LOTE - 1)
 

@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AuthLayout } from '@/components/layout/AuthLayout'
 import { PublicRoute } from '@/components/PublicRoute'
-import { solicitarRecuperacaoSenha } from '@/lib/auth'
+import { supabase } from '@/lib/supabase'
 import { Mail, ArrowLeft, CheckCircle2 } from 'lucide-react'
 
 const recuperarSchema = z.object({
@@ -34,7 +34,15 @@ export function RecuperarSenhaPage() {
     setSuccess(false)
     setLoading(true)
     try {
-      await solicitarRecuperacaoSenha(data.email)
+      if (!supabase) {
+        throw new Error('Sistema temporariamente indisponível. Tente mais tarde.')
+      }
+      const { data: res, error: fnError } = await supabase.functions.invoke('recuperar-senha-whatsapp', {
+        body: { email: data.email },
+      })
+      if (fnError) throw new Error(fnError.message || 'Erro ao enviar. Tente novamente.')
+      const msg = res?.error
+      if (msg) throw new Error(typeof msg === 'string' ? msg : 'Erro ao solicitar recuperação.')
       setSuccess(true)
     } catch (err) {
       setError(err.message || 'Erro ao solicitar recuperação de senha. Tente novamente.')
@@ -52,10 +60,9 @@ export function RecuperarSenhaPage() {
               <div className="flex justify-center">
                 <CheckCircle2 className="w-16 h-16 text-green-500" />
               </div>
-              <h3 className="text-xl font-semibold text-gray-800">Email enviado!</h3>
+              <h3 className="text-xl font-semibold text-gray-800">Mensagem enviada!</h3>
               <p className="text-gray-600">
-                Se o seu email estiver cadastrado, você receberá um link de recuperação.
-                Verifique a caixa de entrada e a pasta de spam.
+                Se o seu email estiver cadastrado e houver telefone no perfil, você receberá no WhatsApp uma mensagem com as opções *Sim* ou *Não* para redefinir a senha. Toque em *Sim* e depois digite a nova senha quando solicitado.
               </p>
               <div className="pt-4">
                 <Link href="/login">

@@ -1,21 +1,30 @@
 import { useFiltroContext } from '@/contexts/FiltroContext'
 import { CheckCircle2, Loader2, Database, Filter, Sparkles } from 'lucide-react'
 
-const ETAPAS = [
+const ETAPAS_COMPLETAS = [
   { label: 'Carregando dados', min: 0, max: 30, icon: Database },
   { label: 'Filtrando perfil', min: 30, max: 55, icon: Filter },
   { label: 'Processando filtros', min: 55, max: 90, icon: Sparkles },
   { label: 'Concluído', min: 90, max: 101, icon: CheckCircle2 },
 ]
 
-function stepAt(percent) {
-  const i = ETAPAS.findIndex((e) => percent >= e.min && percent < e.max)
-  return i >= 0 ? i : (percent >= 100 ? 3 : 0)
+// Quando o progresso fica em 0%, os dados vêm do banco (por setor) — não há "Filtrando perfil" nem "Processando filtros"
+const ETAPAS_POR_SETOR = [
+  { label: 'Carregando dados', min: 0, max: 50, icon: Database },
+  { label: 'Concluído', min: 50, max: 101, icon: CheckCircle2 },
+]
+
+function stepAt(etapas, percent) {
+  const i = etapas.findIndex((e) => percent >= e.min && percent < e.max)
+  return i >= 0 ? i : (percent >= 100 ? etapas.length - 1 : 0)
 }
 
 export function SidebarLogsFiltro({ aberto, onFechar }) {
   const { processandoFiltro, progressoPercentual, mensagemProgresso } = useFiltroContext()
-  const etapaAtual = stepAt(progressoPercentual)
+  // Dados por setor (banco): progresso fica em 0%, mostrar só "Carregando dados" e "Concluído"
+  const modoPorSetor = progressoPercentual <= 30
+  const etapas = modoPorSetor ? ETAPAS_POR_SETOR : ETAPAS_COMPLETAS
+  const etapaAtual = modoPorSetor && !processandoFiltro ? etapas.length - 1 : stepAt(etapas, progressoPercentual)
 
   if (!aberto) return null
 
@@ -37,7 +46,7 @@ export function SidebarLogsFiltro({ aberto, onFechar }) {
           <div>
             <span className="text-sm font-medium text-gray-600 mb-4 block">Etapas</span>
             <ul className="relative space-y-0">
-              {ETAPAS.map((etapa, i) => {
+              {etapas.map((etapa, i) => {
                 const Icon = etapa.icon
                 const concluido = i < etapaAtual || (i === etapaAtual && progressoPercentual >= 100)
                 const atual = i === etapaAtual && processandoFiltro
@@ -45,7 +54,7 @@ export function SidebarLogsFiltro({ aberto, onFechar }) {
                 const percentNaEtapa = atual && processandoFiltro ? Math.round(progressoPercentual) : null
                 return (
                   <li key={etapa.label} className="relative flex gap-4 pb-8 last:pb-0">
-                    {i < ETAPAS.length - 1 && (
+                    {i < etapas.length - 1 && (
                       <div
                         className={`absolute left-[11px] top-8 bottom-0 w-0.5 rounded-full transition-colors ${
                           concluido ? 'bg-green-300' : 'bg-gray-200'

@@ -582,7 +582,7 @@ export function correspondeAtividades(
   // Sem palavras-chave: se a empresa tem setores cadastrados, não mostrar (evitar mostrar editais de outras áreas)
   if (!palavrasChaveFormatadas || palavrasChaveFormatadas.length === 0) {
     if (setoresAtividades?.length > 0) return false
-    return true
+    return true 
   }
   
   const objetoCompleto = obterObjetoCompleto(licitacao)
@@ -814,7 +814,7 @@ export function correspondeAtividades(
     const doBanco = (palavrasIncompatibilidadePorSetor || {})[chave] || []
     palavrasIncompatibilidade[chave] = [...new Set([...fallback, ...doBanco])]
   }
-
+  
   // Verificar incompatibilidades antes de processar
   if (setoresAtividades && setoresAtividades.length > 0) {
     for (const setor of setoresAtividades) {
@@ -1096,26 +1096,26 @@ export function correspondeAtividades(
     // Isso aumenta a cobertura sem perder muita precisão
     
     // REGRA: Com setores cadastrados, exige SEMPRE vocabulário do setor + pelo menos uma palavra forte (mostrar só o compatível).
-    const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
+      const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
     const temPalavraForte = exigePalavraForteDoSetor(objetoNormalizado, palavrasUnicasEncontradas, setoresAtividades, palavrasFortesMescladas)
     const exigeVocab = vocabularioSetor.size === 0 || correspondeVocabulario
 
     // CASO 1: Pontuação alta (6+) + vocabulário + palavra forte (abaixado de 7 para trazer mais)
     if (pontuacaoCorrespondencia >= 6 && exigeVocab && temPalavraForte) {
-      return true
-    }
+        return true
+      }
     // CASO 2: Pontuação média-alta (5+) + pelo menos 2 termos do setor + vocabulário + palavra forte
     if (pontuacaoCorrespondencia >= 5 && palavrasUnicasEncontradas.size >= 2 && exigeVocab && temPalavraForte) {
-      return true
-    }
+        return true
+      }
     // CASO 3: Subsetor completo no objeto (5+ pts) + 1 termo + vocabulário + palavra forte (abrange mais, mantém compatível)
     if (pontuacaoCorrespondencia >= 5 && palavrasUnicasEncontradas.size >= 1 && exigeVocab && temPalavraForte) {
-      return true
-    }
+          return true
+        }
     // CASO 4: Pontuação média (5+) + 2+ termos + vocabulário + palavra forte (reforço contra falso positivo)
     if (pontuacaoCorrespondencia >= 5 && palavrasUnicasEncontradas.size >= 2 && exigeVocab && temPalavraForte) {
-      return true
-    }
+        return true
+      }
     // Não passou: não mostrar (só compatíveis com setores e atividades cadastrados)
   }
   
@@ -1215,8 +1215,8 @@ export function correspondeAtividades(
       if (correspondeVocabulario || vocabularioSetor.size === 0) {
         // Só aceitar se o objeto tiver pelo menos uma palavra forte do setor (evita editais fora do setor)
         if (exigePalavraForteDoSetor(objetoNormalizado, new Set(palavrasPrincipais), setoresAtividades, palavrasFortesMescladas)) {
-          return true
-        }
+        return true
+      }
       }
       return false
     }
@@ -1228,7 +1228,7 @@ export function correspondeAtividades(
     const correspondeVocabulario = correspondeVocabularioSetor(objetoNormalizado, vocabularioSetor)
     if (correspondeVocabulario) {
       if (exigePalavraForteDoSetor(objetoNormalizado, new Set(palavrasSecundarias), setoresAtividades, palavrasFortesMescladas)) {
-        return true
+      return true
       }
     }
     
@@ -1294,6 +1294,153 @@ export function correspondeAtividades(
   })
   
   return temCorrespondenciaSinonimo
+}
+
+/**
+ * Calcula score de aderência (0–100) e label para exibição em cards.
+ * Usa a mesma lógica de pontuação do filtro semântico (setores/subsetores).
+ * @param {Object} licitacao
+ * @param {Object} palavrasChave - { principais, secundarias, todas } (ex.: extrairPalavrasChaveDosSetores)
+ * @param {Object} [sinonimosPersonalizados]
+ * @param {Object} [sinonimosBanco]
+ * @param {Array} [setoresAtividades]
+ * @returns {{ score: number, label: 'alta'|'média'|'baixa' }}
+ */
+export function calcularScoreAderencia(
+  licitacao,
+  palavrasChave,
+  sinonimosPersonalizados = {},
+  sinonimosBanco = {},
+  setoresAtividades = []
+) {
+  const objetoCompleto = obterObjetoCompleto(licitacao)
+  if (!objetoCompleto || !setoresAtividades?.length) {
+    return { score: 0, label: 'baixa' }
+  }
+  const objetoNormalizado = normalizarTexto(objetoCompleto)
+  const palavrasObjeto = objetoNormalizado.split(/\s+/).filter(p => p.length >= 4)
+  const palavrasContexto = extrairPalavrasContexto(setoresAtividades)
+  const palavrasGenericas = [
+    'servico', 'servicos', 'manutencao', 'manutenção', 'prestacao', 'prestação',
+    'fornecimento', 'fornecer', 'material', 'materiais', 'escolar', 'escolares',
+    'kit', 'kits', 'aquisição', 'aquisicao', 'compra', 'adquirir',
+    'contratacao', 'contratação', 'publico', 'publica', 'municipal',
+    'estadual', 'federal', 'governo', 'orgao', 'órgão'
+  ]
+  let pontuacaoCorrespondencia = 0
+  const palavrasUnicasEncontradas = new Set()
+
+  for (const setor of setoresAtividades) {
+    if (setor.setor) {
+      const setorNormalizado = normalizarTexto(setor.setor)
+      if (objetoNormalizado.includes(setorNormalizado)) {
+        palavrasUnicasEncontradas.add(setorNormalizado)
+        pontuacaoCorrespondencia += 3
+      } else if (palavrasObjeto.some(po => correspondeParcial(setorNormalizado, po))) {
+        palavrasUnicasEncontradas.add(setorNormalizado)
+        pontuacaoCorrespondencia += 1
+      }
+    }
+    if (setor.subsetores && Array.isArray(setor.subsetores)) {
+      for (const subsetor of setor.subsetores) {
+        if (!subsetor) continue
+        const subsetorNormalizado = normalizarTexto(subsetor)
+        if (objetoNormalizado.includes(subsetorNormalizado)) {
+          palavrasUnicasEncontradas.add(subsetorNormalizado)
+          pontuacaoCorrespondencia += 5
+          continue
+        }
+        const palavrasSubsetor = extrairPalavrasChave(subsetor)
+        let palavrasEncontradas = 0
+        for (const palavraSubsetor of palavrasSubsetor) {
+          const palavraNormalizada = normalizarTexto(palavraSubsetor)
+          if (palavrasGenericas.includes(palavraNormalizada)) {
+            const temContexto = palavrasContexto.some(pc => {
+              const pcNorm = normalizarTexto(pc)
+              const idxPalavra = objetoNormalizado.indexOf(palavraNormalizada)
+              const idxContexto = objetoNormalizado.indexOf(pcNorm)
+              if (idxContexto === -1) return false
+              return Math.abs(idxPalavra - idxContexto) <= 130
+            })
+            if (temContexto) {
+              palavrasEncontradas++
+              palavrasUnicasEncontradas.add(palavraNormalizada)
+              pontuacaoCorrespondencia += 2
+            }
+            continue
+          }
+          if (objetoNormalizado.includes(palavraNormalizada)) {
+            palavrasEncontradas++
+            palavrasUnicasEncontradas.add(palavraNormalizada)
+            pontuacaoCorrespondencia += 2
+            continue
+          }
+          if (palavrasObjeto.some(po => correspondeParcial(palavraNormalizada, po))) {
+            palavrasEncontradas++
+            palavrasUnicasEncontradas.add(palavraNormalizada)
+            pontuacaoCorrespondencia += 1
+            continue
+          }
+          const raizSubsetor = extrairRaizPalavra(palavraNormalizada)
+          if (raizSubsetor.length >= 4 && palavrasObjeto.some(po => extrairRaizPalavra(po) === raizSubsetor)) {
+            palavrasEncontradas++
+            palavrasUnicasEncontradas.add(palavraNormalizada)
+            pontuacaoCorrespondencia += 1
+          }
+        }
+        if (palavrasEncontradas >= 2) pontuacaoCorrespondencia += 2
+      }
+    }
+  }
+
+  const score = Math.min(100, Math.round(pontuacaoCorrespondencia * 10))
+  const label = score >= 70 ? 'alta' : score >= 40 ? 'média' : 'baixa'
+  return { score, label }
+}
+
+/** Fallback mínimo de termos incompatíveis por setor (para resumo na tela do edital) */
+const FALLBACK_INCOMPATIBILIDADE_RESUMO = {
+  saude: ['medicamento', 'hospitalar', 'laboratorial', 'diesel', 'veiculo', 'construcao', 'fardamento', 'eventos'],
+  alimentacao: ['diesel', 'veiculo', 'construcao', 'medicamento', 'hospitalar', 'fardamento', 'software', 'informatica'],
+  informatica: ['escolar', 'alimento', 'medicamento', 'construcao', 'diesel', 'frota', 'eventos', 'jardinagem'],
+  engenharia: ['medicamento', 'alimentacao', 'fardamento', 'eventos', 'seguro', 'passagem aerea', 'leilao'],
+  construcao: ['medicamento', 'alimentacao', 'fardamento', 'eventos', 'advocacia', 'contabilidade', 'telemarketing'],
+  transporte: ['medicamento', 'material escolar', 'construcao', 'pedagio', 'leilao de veiculos'],
+  financeiro: ['construcao', 'obra', 'medicamento', 'fardamento', 'solda', 'serralheria', 'pintura predial'],
+  eventos: ['medicamento', 'diesel', 'construcao', 'material escolar', 'seguro', 'leilao', 'pedagio'],
+  educacao: ['diesel', 'combustivel', 'construcao', 'medicamento', 'seguro', 'leilao', 'pedagio'],
+}
+
+/**
+ * Retorna termos de incompatibilidade encontrados no texto do edital (para resumo na tela).
+ * @param {string} objetoTexto - Objeto da licitação + informações complementares
+ * @param {Array} setoresAtividades - Setores do perfil do usuário
+ * @param {Object} palavrasIncompatibilidadePorSetor - Do banco (usePalavrasIncompatibilidade)
+ * @returns {{ encontrados: string[], porSetor: Array<{ setor: string, termos: string[] }> }}
+ */
+export function termosIncompatibilidadeEncontrados(objetoTexto, setoresAtividades, palavrasIncompatibilidadePorSetor = {}) {
+  const encontrados = []
+  const porSetor = []
+  if (!objetoTexto || !setoresAtividades?.length) return { encontrados, porSetor }
+  const textoNorm = normalizarTexto(objetoTexto)
+  const banco = palavrasIncompatibilidadePorSetor || {}
+
+  for (const setor of setoresAtividades) {
+    if (!setor.setor) continue
+    const setorNorm = normalizarTexto(setor.setor)
+    const fallback = FALLBACK_INCOMPATIBILIDADE_RESUMO[setorNorm] || []
+    const doBanco = banco[setorNorm] || []
+    const termosSetor = [...new Set([...fallback, ...doBanco])]
+    const encontradosSetor = termosSetor.filter(termo => {
+      const t = normalizarTexto(termo)
+      return t.length >= 3 && textoNorm.includes(t)
+    })
+    if (encontradosSetor.length > 0) {
+      encontradosSetor.forEach(t => { if (!encontrados.includes(t)) encontrados.push(t) })
+      porSetor.push({ setor: setor.setor, termos: encontradosSetor })
+    }
+  }
+  return { encontrados: [...new Set(encontrados)], porSetor }
 }
 
 /**

@@ -15,17 +15,29 @@ services:
       - key: VITE_SUPABASE_ANON_KEY
         sync: false
 
-  # Cron: dispara alerta WhatsApp diário (chama a Edge Function no horário)
-  # Roda a cada hora (UTC); a Edge Function usa horário Brasil e processa só alertas do minuto atual.
+  # Cron: dispara alertas WhatsApp e E-mail (chama as Edge Functions no horário)
+  # Roda a cada hora (UTC); as Edge Functions usam horário Brasil e processam só alertas do minuto atual.
   - type: cron
-    name: alerta-whatsapp-diario
+    name: alertas-diarios
     env: node
     schedule: "0 * * * *"
     buildCommand: npm install
-    startCommand: node scripts/trigger-alerta-whatsapp.js
+    startCommand: node scripts/trigger-alertas.js
     envVars:
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
         sync: false
 
+  # Cron: classifica licitações por setor/UF e grava em licitacoes_por_setor (usa mesma lógica do filtro semântico)
+  - type: cron
+    name: classificar-licitacoes-por-setor
+    env: node
+    schedule: "0 * * * *"
+    buildCommand: npm install
+    startCommand: node scripts/classificar-licitacoes-por-setor.js 7
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false

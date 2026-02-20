@@ -35,6 +35,94 @@ interface Documento {
   nomeArquivo: string
 }
 
+function normalizarNumero(num: string): string {
+  const digits = String(num || '').replace(/\D/g, '')
+  return digits.startsWith('55') ? digits : `55${digits}`
+}
+
+async function enviarTexto(numero: string, text: string, token: string, instanceId?: string) {
+  const url = `${UAZAPI_BASE.replace(/\/$/, '')}/send/text`
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', token }
+  if (instanceId) headers['instance'] = instanceId
+  await fetch(url, { method: 'POST', headers, body: JSON.stringify({ number: numero, text }) })
+}
+
+// Fluxo recuperação de senha (Sim/Não + digitar nova senha). Retorna true se tratou.
+async function processarPasswordResetUazapi(body: any, supabase: any): Promise<boolean> {
+  const numberRaw = body.number || body.chatId || body.from || ''
+  if (!numberRaw) return false
+  const numero = normalizarNumero(numberRaw)
+
+  const buttonId = (body.buttonId || body.button_id || body.selectedId || body.message?.button?.id || '') as string
+  const texto = (body.text || body.body || body.message?.text || body.message?.body || body.data?.text || '').toString().trim()
+
+  const { data: row } = await supabase
+    .from('password_reset_pendente')
+    .select('id, user_id, estado, created_at')
+    .eq('telefone', numero)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!row) return false
+
+  const token = Deno.env.get('UAZAPI_TOKEN') ?? Deno.env.get('UAZAPI_BEARER_TOKEN')
+  if (!token) return false
+  const tokenValue = token.replace(/^Bearer\s+/i, '').trim()
+  const instanceId = Deno.env.get('UAZAPI_INSTANCE_ID')?.trim()
+
+  const EXPIRA_MIN = 15
+  const criado = new Date(row.created_at).getTime()
+  if (Date.now() - criado > EXPIRA_MIN * 60 * 1000) {
+    await supabase.from('password_reset_pendente').delete().eq('id', row.id)
+    await enviarTexto(numero, '⏱ Solicitação expirada. Solicite novamente pelo site em "Esqueci minha senha".', tokenValue, instanceId)
+    return true
+  }
+
+  if (row.estado === 'aguardando_confirmacao') {
+    const idOuTexto = `${buttonId} ${texto}`.trim()
+    const ehSim = buttonId === 'sim_redefinir' || /sim, redefinir/i.test(buttonId) || /^sim$/i.test(texto) || /sim, redefinir/i.test(texto) || /sim, redefinir senha/i.test(idOuTexto)
+    const ehNao = buttonId === 'nao_redefinir' || /n[aã]o, encerrar/i.test(buttonId) || /^n[aã]o$/i.test(texto) || /n[aã]o, encerrar/i.test(texto)
+
+    if (ehNao) {
+      await supabase.from('password_reset_pendente').delete().eq('id', row.id)
+      await enviarTexto(numero, '📋 *Encerrado*\n\nPara redefinir a senha depois, entre em contato com o administrador da conta.', tokenValue, instanceId)
+      return true
+    }
+    if (ehSim) {
+      await supabase.from('password_reset_pendente').update({ estado: 'aguardando_senha' }).eq('id', row.id)
+      const msgSenha =
+        '🔐 *Nova senha*\n\n' +
+        'Digite sua nova senha *nesta conversa*, seguindo as regras:\n\n' +
+        '• Mínimo *6 caracteres*\n' +
+        '• Use letras e números\n\n' +
+        'Toque no campo de mensagem e digite a senha desejada.'
+      await enviarTexto(numero, msgSenha, tokenValue, instanceId)
+      return true
+    }
+    await enviarTexto(numero, '🔐 *Redefinir senha*\n\nToque em uma das opções: *Sim, redefinir senha* ou *Não, encerrar*.', tokenValue, instanceId)
+    return true
+  }
+
+  if (row.estado === 'aguardando_senha') {
+    const novaSenha = texto
+    if (!novaSenha || novaSenha.length < 6) {
+      await enviarTexto(numero, 'Senha deve ter no mínimo 6 caracteres. Tente novamente.', tokenValue, instanceId)
+      return true
+    }
+    const { error: updateError } = await supabase.auth.admin.updateUserById(row.user_id, { password: novaSenha })
+    await supabase.from('password_reset_pendente').delete().eq('id', row.id)
+    if (updateError) {
+      await enviarTexto(numero, 'Não foi possível alterar a senha. Tente novamente ou entre em contato com o suporte.', tokenValue, instanceId)
+      return true
+    }
+    await enviarTexto(numero, '✅ *Senha alterada com sucesso!*\n\nAgora você pode fazer login com a nova senha no site.', tokenValue, instanceId)
+    return true
+  }
+
+  return false
+}
+
 serve(async (req) => {
   // CORS preflight
   if (req.method === 'OPTIONS') {
@@ -62,12 +150,29 @@ serve(async (req) => {
 
     console.log('📥 [Webhook UAZAPI] Payload recebido:', JSON.stringify(body, null, 2))
 
-    // EXTRAÇÃO FLEXÍVEL DOS CAMPOS IMPORTANTES -----------------------------
-    const number: string =
-      body.number ||
-      body.chatId ||
-      body.from ||
-      ''
+    const number: string = body.number || body.chatId || body.from || ''
+
+    if (!number) {
+      console.warn('⚠️ [Webhook UAZAPI] Campo number não encontrado. Ignorando.')
+      return new Response(
+        JSON.stringify({ ok: true, ignored: true, reason: 'missing_number' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (supabaseUrl && supabaseServiceKey) {
+      const supabase = createClient(supabaseUrl, supabaseServiceKey)
+      const tratouReset = await processarPasswordResetUazapi(body, supabase)
+      if (tratouReset) {
+        console.log('✅ [Webhook UAZAPI] Fluxo de recuperação de senha processado.')
+        return new Response(
+          JSON.stringify({ success: true, message: 'reset_senha' }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+    }
 
     // ID do botão clicado – ajustar conforme o formato real da UAZAPI
     const buttonId: string =
@@ -86,14 +191,6 @@ serve(async (req) => {
       body.trackId ||
       body.metadata?.track_id ||
       ''
-
-    if (!number) {
-      console.warn('⚠️ [Webhook UAZAPI] Campo number não encontrado. Ignorando.')
-      return new Response(
-        JSON.stringify({ ok: true, ignored: true, reason: 'missing_number' }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
 
     if (!buttonId) {
       console.log('ℹ️ [Webhook UAZAPI] Mensagem recebida sem buttonId. Nada a fazer.')
