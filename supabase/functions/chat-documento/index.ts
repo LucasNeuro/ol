@@ -7,6 +7,9 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
+// TESTE DEPLOY: chave no código para validar em produção (Secret pode não estar no projeto de deploy). Remover quando Secret estiver ok.
+const TEST_MISTRAL_API_KEY = 'PJ0ycgJfwpx7hoyzjLohMoMkCTSusHtp'
+
 serve(async (req) => {
  
   if (req.method === 'OPTIONS') {
@@ -45,7 +48,7 @@ serve(async (req) => {
       console.warn('⚠️ URL do documento não parece ser uma URL HTTP válida')
     }
 
-    // Secret MISTRAL_API_KEY (sanitizado: trim, aspas, Bearer, newlines)
+    // Chave: 1) teste no código (TEST_MISTRAL_API_KEY), 2) fallback = Secret MISTRAL_API_KEY
     let rawKey = Deno.env.get('MISTRAL_API_KEY')
     if (rawKey && typeof rawKey === 'string') {
       rawKey = rawKey
@@ -56,9 +59,10 @@ serve(async (req) => {
       if (rawKey.toLowerCase().startsWith('bearer ')) rawKey = rawKey.slice(7).trim()
       rawKey = rawKey.replace(/[\x00-\x1F\x7F]/g, '')
     }
-    const mistralApiKey = rawKey || ''
+    const mistralApiKey = (TEST_MISTRAL_API_KEY && TEST_MISTRAL_API_KEY.trim()) || rawKey || ''
+    const usandoChaveTeste = !!(TEST_MISTRAL_API_KEY && TEST_MISTRAL_API_KEY.trim())
     const prefix = mistralApiKey.length >= 2 ? mistralApiKey.slice(0, 2) + '...' : '(vazia)'
-    console.log('MISTRAL_API_KEY:', !!mistralApiKey, 'comprimento:', mistralApiKey.length, 'prefixo:', prefix)
+    console.log('MISTRAL_API_KEY:', usandoChaveTeste ? 'chave no código (teste deploy)' : 'Secret', 'comprimento:', mistralApiKey.length, 'prefixo:', prefix)
 
     if (!mistralApiKey) {
       throw new Error('MISTRAL_API_KEY não encontrada. Supabase → Edge Functions → Secrets → adicione MISTRAL_API_KEY e faça redeploy da função chat-documento.')
