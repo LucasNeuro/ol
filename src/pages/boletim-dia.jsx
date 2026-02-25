@@ -97,12 +97,20 @@ function IconWhatsApp({ className = 'w-4 h-4' }) {
   )
 }
 
-// Máscara de telefone: (11) 99999-9999
+// Máscara de telefone: (11) 99999-9999 — só DDD + celular (não inclui 55)
 function maskTelefone(value) {
   const digits = String(value || '').replace(/\D/g, '')
   if (digits.length <= 2) return digits ? `(${digits}` : ''
   if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`
+}
+
+// Normaliza para só DDD + número (11 dígitos). Remove 55 na frente se vier do banco.
+function normalizarDDDCelular(numero) {
+  const digits = String(numero || '').replace(/\D/g, '')
+  if (digits.length === 13 && digits.startsWith('55')) return digits.slice(2) // 55 + 11
+  if (digits.length >= 10 && digits.length <= 11) return digits.slice(0, 11)
+  return digits
 }
 
 // Modal com estado local para não travar ao digitar (evita re-render do pai a cada tecla)
@@ -227,13 +235,13 @@ function LicitacoesContent() {
     retry: 1,
   })
 
-  // Sincronizar lista de números com os já salvos no banco
+  // Sincronizar lista de números com os já salvos no banco (sempre em DDD+celular, sem 55)
   useEffect(() => {
     if (!Array.isArray(numerosWhatsApp)) return
     const list = numerosWhatsApp
-      .filter((n) => (n.numero_telefone || '').replace(/\D/g, '').length >= 10)
+      .filter((n) => normalizarDDDCelular(n.numero_telefone).length >= 10)
       .map((n) => ({
-        numero_telefone: n.numero_telefone,
+        numero_telefone: normalizarDDDCelular(n.numero_telefone),
         label: n.label || '',
       }))
     setListaNumerosWhatsApp(list)
@@ -661,7 +669,7 @@ function LicitacoesContent() {
         || licitacao.resumo
         || 'Não informado'
       const payload = {
-        telefone: numero.startsWith('55') ? numero : `55${numero}`,
+        telefone: numero.replace(/\D/g, '').startsWith('55') ? numero.replace(/\D/g, '') : `55${numero.replace(/\D/g, '')}`,
         objeto_licitacao: objetoEdital,
         objeto: objetoEdital,
         orgao: licitacao.orgao_razao_social || 'Não informado',
@@ -709,7 +717,7 @@ function LicitacoesContent() {
       // Registrar falha para auditoria (não conta no limite)
       try {
         await registerSend(
-          numero.startsWith('55') ? numero : `55${numero}`,
+          numero.replace(/\D/g, '').startsWith('55') ? numero.replace(/\D/g, '') : `55${numero.replace(/\D/g, '')}`,
           licitacao.numero_controle_pncp || licitacao.id,
           'failed'
         )
@@ -731,7 +739,7 @@ function LicitacoesContent() {
       const num = (n.numero_telefone || '').replace(/\D/g, '')
       if (num.length < 10) continue
       try {
-        await enviarParaWhatsApp(n.numero_telefone.startsWith('55') ? n.numero_telefone : `55${n.numero_telefone}`, licitacao)
+        await enviarParaWhatsApp(`55${normalizarDDDCelular(n.numero_telefone)}`, licitacao)
         enviados++
       } catch {
         erros++
@@ -2188,13 +2196,13 @@ function LicitacoesContent() {
     setWhatsAppSlotsSaving(true)
     try {
       const numeros = listaNumerosWhatsApp
-        .map((s) => ({ ...s, numero_telefone: (s.numero_telefone || '').replace(/\D/g, '') }))
+        .map((s) => ({ ...s, numero_telefone: normalizarDDDCelular(s.numero_telefone) }))
         .filter((s) => s.numero_telefone.length >= 10)
       await supabase.from('usuario_whatsapp_numeros').delete().eq('usuario_id', user.id)
       if (numeros.length > 0) {
         const rows = numeros.slice(0, 3).map((s, i) => ({
           usuario_id: user.id,
-          numero_telefone: s.numero_telefone.startsWith('55') ? s.numero_telefone : `55${s.numero_telefone}`,
+          numero_telefone: s.numero_telefone,
           label: (s.label || '').trim() || null,
           ordem: i + 1,
           ativo: true,
@@ -2212,10 +2220,9 @@ function LicitacoesContent() {
   }
 
   const adicionarNumeroWhatsApp = () => {
-    const raw = whatsAppNovoNumero.replace(/\D/g, '')
-    if (raw.length < 10 || listaNumerosWhatsApp.length >= 3) return
-    const num = raw.startsWith('55') ? raw : `55${raw}`
-    if (listaNumerosWhatsApp.some((n) => (n.numero_telefone || '').replace(/\D/g, '') === num.replace(/\D/g, ''))) return
+    const num = normalizarDDDCelular(whatsAppNovoNumero)
+    if (num.length < 10 || listaNumerosWhatsApp.length >= 3) return
+    if (listaNumerosWhatsApp.some((n) => normalizarDDDCelular(n.numero_telefone) === num)) return
     setListaNumerosWhatsApp((prev) => [...prev, { numero_telefone: num, label: whatsAppNovoLabel.trim() || '' }])
     setWhatsAppNovoNumero('')
     setWhatsAppNovoLabel('')
@@ -2602,7 +2609,7 @@ function LicitacoesContent() {
                         variant="outline"
                         className="h-8 rounded-lg border-border text-xs shrink-0"
                         onClick={adicionarNumeroWhatsApp}
-                        disabled={listaNumerosWhatsApp.length >= 3 || whatsAppNovoNumero.replace(/\D/g, '').length < 10}
+                        disabled={listaNumerosWhatsApp.length >= 3 || normalizarDDDCelular(whatsAppNovoNumero).length < 10}
                       >
                         Adicionar
                       </Button>
@@ -2610,8 +2617,8 @@ function LicitacoesContent() {
                     {listaNumerosWhatsApp.length > 0 && (
                       <ul className="space-y-1 mt-2">
                         {listaNumerosWhatsApp.map((item, index) => {
-                          const num = (item.numero_telefone || '').replace(/\D/g, '')
-                          const display = num.length >= 10 ? maskTelefone(item.numero_telefone) : item.numero_telefone
+                          const num = normalizarDDDCelular(item.numero_telefone)
+                          const display = num.length >= 10 ? maskTelefone(num) : item.numero_telefone
                           return (
                             <li key={index} className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md bg-gray-50 border border-border/60 text-[11px]">
                               <span className="truncate flex-1 min-w-0">
