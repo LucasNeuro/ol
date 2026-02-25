@@ -88,7 +88,7 @@ function AlertasContent() {
               Filtros salvos e alertas por e-mail
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Salve filtros (estado, palavra-chave, setor etc.) e ative o envio por e-mail no horário que preferir.
+              Salve filtros (estado, palavra-chave, setor etc.) e ative o envio <strong>somente por e-mail</strong> no horário que preferir.
             </p>
           </div>
           <Link href="/licitacoes">
@@ -106,7 +106,7 @@ function AlertasContent() {
           <CardContent className="text-sm text-muted-foreground space-y-2">
             <p>1. Na tela de <strong>Licitações</strong>, aplique os filtros desejados (UF, busca, setor, valor, etc.) e clique em <strong>Salvar filtro atual</strong> no painel à esquerda.</p>
             <p>2. O filtro aparecerá aqui. Ative o interruptor e defina o <strong>horário</strong> em que deseja receber o e-mail.</p>
-            <p>3. Todo dia, no horário configurado, o sistema busca as licitações que batem com esse filtro (últimos 2 dias) e envia um resumo para o e-mail informado.</p>
+            <p>3. Todo dia, no horário configurado, o sistema busca as licitações que batem com esse filtro (últimos 2 dias) e envia um resumo somente por e-mail.</p>
           </CardContent>
         </Card>
 
