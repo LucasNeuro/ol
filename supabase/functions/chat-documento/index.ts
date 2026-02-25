@@ -8,7 +8,7 @@ const corsHeaders = {
 }
 
 // TESTE DEPLOY: chave no código para validar em produção (Secret pode não estar no projeto de deploy). Remover quando Secret estiver ok.
-const TEST_MISTRAL_API_KEY = 'PJ0ycgJfwpx7hoyzjLohMoMkCTSusHtp'
+const TEST_MISTRAL_API_KEY = 'KO5YphNWJESTWK4GmvuhFwCMwZZnE4D2'
 
 serve(async (req) => {
  
