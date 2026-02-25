@@ -11,7 +11,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Filter,
-  Users
+  Users,
+  Mail
 } from 'lucide-react'
 
 export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
@@ -42,6 +43,7 @@ export function AppLayout({ children, onToggleFiltros, filtrosAbertos }) {
   const menuItems = [
     { icon: FileText, label: 'Licitações', path: '/licitacoes' },
     { icon: Star, label: 'Favoritos', path: '/favoritos' },
+    { icon: Mail, label: 'Filtros salvos', path: '/alertas' },
     { icon: User, label: 'Meu Perfil', path: '/perfil' },
     // Menu administrativo - apenas para super admins
     ...(user?.is_adm ? [{ icon: Users, label: 'Controle de Usuários', path: '/admin/usuarios' }] : []),

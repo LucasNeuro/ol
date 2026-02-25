@@ -16,11 +16,11 @@ services:
         sync: false
 
   # Cron: dispara alertas WhatsApp e E-mail (chama as Edge Functions no horário)
-  # Roda a cada hora (UTC); as Edge Functions usam horário Brasil e processam só alertas do minuto atual.
+  # Roda a cada 15 min (UTC); as Edge Functions usam horário Brasil e processam alertas do horário atual.
   - type: cron
     name: alertas-diarios
     env: node
-    schedule: "0 * * * *"
+    schedule: "*/15 * * * *"
     buildCommand: npm install
     startCommand: node scripts/trigger-alertas.js
     envVars:

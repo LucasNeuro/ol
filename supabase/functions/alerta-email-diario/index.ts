@@ -133,8 +133,17 @@ serve(async (req) => {
         .limit(50)
 
       if (filtros.uf) q = q.eq('uf_sigla', filtros.uf)
+      if (filtros.modalidade && String(filtros.modalidade).trim()) q = q.eq('modalidade_nome', String(filtros.modalidade).trim())
       if (filtros.valorMin != null && filtros.valorMin !== '') q = q.gte('valor_total_estimado', Number(filtros.valorMin))
       if (filtros.valorMax != null && filtros.valorMax !== '') q = q.lte('valor_total_estimado', Number(filtros.valorMax))
+      if (filtros.setor_principal_id) q = q.eq('setor_principal_id', filtros.setor_principal_id)
+      const buscaObjeto = filtros.buscaObjeto && String(filtros.buscaObjeto).trim()
+      if (buscaObjeto) {
+        const termos = buscaObjeto.split(',').map((t: string) => t.trim()).filter(Boolean)
+        for (const termo of termos.slice(0, 5)) {
+          q = q.ilike('objeto_compra', `%${termo}%`)
+        }
+      }
 
       const { data: licitacoes, error: errLicit } = await q
       if (errLicit) {
@@ -161,14 +170,12 @@ serve(async (req) => {
         const objeto = escapeHtml(objetoRaw.slice(0, 150)) + (objetoRaw.length > 150 ? '...' : '')
         const orgao = escapeHtml(lic.orgao_razao_social ?? '-')
         const uf = lic.uf_sigla ?? '-'
-        const linkPncp = (lic.link_portal_pncp && lic.link_portal_pncp.startsWith('http')) ? lic.link_portal_pncp : '#'
         return `
           <div style="background:#f9fafb;border-radius:6px;padding:14px 16px;margin-bottom:12px;border-left:4px solid #f97316;">
             <p style="margin:0 0 4px 0;font-size:11px;color:#6b7280;font-weight:600;">Objeto</p>
             <p style="margin:0 0 8px 0;font-size:14px;color:#1f2937;line-height:1.4;">${objeto}</p>
             <p style="margin:0 0 2px 0;font-size:11px;color:#6b7280;">Órgão: ${orgao}${uf !== '-' ? ` · UF: ${uf}` : ''}</p>
             <p style="margin:0;font-size:12px;color:#1f2937;font-weight:600;">Valor: ${valorFmt}</p>
-            ${linkPncp !== '#' ? `<p style="margin:8px 0 0 0;"><a href="${linkPncp}" style="color:#f97316;font-size:12px;font-weight:600;text-decoration:none;">Ver no PNCP →</a></p>` : ''}
           </div>`
       }).join('')
 

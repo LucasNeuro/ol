@@ -86,49 +86,58 @@ serve(async (req) => {
     }
 
     // Baixar arquivo primeiro para validar
-    const pdfBlob = await downloadResponse.blob()
-    const pdfArrayBuffer = await pdfBlob.arrayBuffer()
-    const pdfBuffer = new Uint8Array(pdfArrayBuffer)
-
-    // Validação robusta de PDF:
-    // 1. Verificar assinatura do arquivo (PDF sempre começa com "%PDF") - MAIS IMPORTANTE
-    const firstBytes = new TextDecoder().decode(pdfBuffer.slice(0, 4))
-    const isPdfSignature = firstBytes === '%PDF'
-    
-    // 2. Verificar Content-Type
+    let pdfBlob = await downloadResponse.blob()
+    let pdfArrayBuffer = await pdfBlob.arrayBuffer()
+    let pdfBuffer = new Uint8Array(pdfArrayBuffer)
     const contentType = downloadResponse.headers.get('content-type') || ''
-    const isContentTypePDF = contentType.includes('pdf')
-    const isOctetStream = contentType.includes('application/octet-stream')
-    
-    // 3. Verificar extensão na URL
     const urlLower = urlDocumento.toLowerCase()
-    const hasPdfExtension = urlLower.includes('.pdf') || urlLower.includes('pdf')
-    
-    // Aceitar se tiver assinatura PDF (mesmo que Content-Type seja application/octet-stream)
-    // Muitos servidores retornam application/octet-stream mesmo para PDFs válidos
-    if (isPdfSignature) {
-      // Se tem assinatura PDF, aceitar mesmo que Content-Type seja application/octet-stream
-      console.log('✅ Arquivo tem assinatura PDF válida, aceitando mesmo com Content-Type:', contentType)
-    } else {
-      // Se não tem assinatura PDF, verificar outras validações
-      if (!isContentTypePDF && !hasPdfExtension) {
-        console.warn('⚠️ Validação de PDF falhou:', {
-          contentType,
-          hasPdfExtension,
-          isPdfSignature,
-          firstBytes
+    const hasPdfExtension = urlLower.includes('.pdf')
+
+    // Detecção de ZIP por bytes (PK = 0x50 0x4B; evita dependência de TextDecoder)
+    const isZipByBytes = pdfBuffer.length >= 4 &&
+      pdfBuffer[0] === 0x50 && pdfBuffer[1] === 0x4B &&
+      (pdfBuffer[2] === 0x03 || pdfBuffer[2] === 0x05) // 03 04 = local file, 05 06 = empty zip
+
+    let nomeArquivoFinal = nomeArquivo
+    if (isZipByBytes) {
+      console.log('📦 Arquivo detectado como ZIP (PK), descompactando para obter o primeiro PDF...')
+      try {
+        const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default
+        const zip = await JSZip.loadAsync(pdfBuffer)
+        const entry = Object.entries(zip.files).find(([path, e]) => {
+          const entry = e as { dir?: boolean }
+          if (entry.dir) return false
+          const nome = path.split('/').pop() || path
+          const ext = nome.toLowerCase().split('.').pop()
+          return ext === 'pdf'
         })
-        throw new Error(`Tipo de arquivo inválido: ${contentType || 'desconhecido'}. Apenas PDF é permitido.`)
+        if (!entry) {
+          throw new Error('O arquivo é um ZIP mas não contém nenhum PDF. Descompacte manualmente e abra o PDF.')
+        }
+        const [path, pdfEntry] = entry
+        pdfBuffer = new Uint8Array(await (pdfEntry as any).async('uint8array'))
+        nomeArquivoFinal = path.split('/').pop() || nomeArquivo.replace(/\.zip$/i, '.pdf')
+        console.log('✅ Primeiro PDF extraído do ZIP:', nomeArquivoFinal, 'tamanho:', (pdfBuffer.length / 1024).toFixed(1), 'KB')
+      } catch (zipErr) {
+        console.error('❌ Erro ao descompactar ZIP:', zipErr)
+        throw new Error(zipErr?.message || 'Arquivo parece ser ZIP mas não foi possível descompactar. Tente baixar e abrir manualmente.')
       }
-      // Se tem Content-Type PDF ou extensão PDF mas não tem assinatura, avisar mas aceitar
-      console.warn('⚠️ Arquivo parece ser PDF mas não tem assinatura válida. Aceitando mesmo assim.')
     }
 
-    console.log('✅ Validação de PDF passou:', {
-      contentType,
-      hasPdfExtension,
-      isPdfSignature
-    })
+    // Validação de PDF (após eventual extração do ZIP)
+    const isPdfSignature = pdfBuffer.length >= 4 &&
+      pdfBuffer[0] === 0x25 && pdfBuffer[1] === 0x50 && pdfBuffer[2] === 0x44 && pdfBuffer[3] === 0x46 // %PDF
+    const isContentTypePDF = contentType.includes('pdf')
+
+    if (isPdfSignature) {
+      console.log('✅ Arquivo tem assinatura PDF válida')
+    } else {
+      if (!isContentTypePDF && !hasPdfExtension) {
+        console.warn('⚠️ Validação de PDF falhou:', { contentType, hasPdfExtension, isPdfSignature, firstBytes: pdfBuffer.slice(0, 4).join(',') })
+        throw new Error(`Tipo de arquivo inválido: ${contentType || 'desconhecido'}. Esperado: PDF ou ZIP contendo PDF.`)
+      }
+      console.warn('⚠️ Arquivo sem assinatura %PDF; aceitando por extensão/content-type.')
+    }
 
     console.log('✅ Download concluído:', (pdfBuffer.length / 1024 / 1024).toFixed(2), 'MB')
 
@@ -160,7 +169,7 @@ serve(async (req) => {
 
     // 3. Gerar nome único para o arquivo
     const timestamp = Date.now()
-    const sanitizedFileName = nomeArquivo
+    const sanitizedFileName = nomeArquivoFinal
       .replace(/[^a-zA-Z0-9.-]/g, '_')
       .replace(/_{2,}/g, '_')
     
@@ -226,7 +235,7 @@ serve(async (req) => {
         .insert({
           licitacao_id: licitacaoId,
           usuario_id: userId,
-          nome_arquivo: nomeArquivo,
+          nome_arquivo: nomeArquivoFinal,
           url_original: urlDocumento,
           url_storage: publicUrl,
           tamanho_bytes: pdfBuffer.length,
@@ -250,7 +259,7 @@ serve(async (req) => {
         success: true,
         documento: {
           id: docData?.id,
-          nome: nomeArquivo,
+          nome: nomeArquivoFinal,
           urlStorage: publicUrl,
           urlOriginal: urlDocumento,
           tamanhoMB: (pdfBuffer.length / 1024 / 1024).toFixed(2),
@@ -267,6 +276,7 @@ serve(async (req) => {
   } catch (error) {
     console.error('❌ Erro ao processar documento:', error)
     console.error('❌ Stack trace:', error.stack)
+    
     console.error('❌ Error name:', error.name)
     console.error('❌ Error message:', error.message)
     

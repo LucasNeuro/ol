@@ -66,15 +66,37 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, serviceKey)
 
-    // Buscar perfil pelo e-mail e pegar o telefone
-    const { data: profile, error: profileError } = await supabase
+    // Buscar perfil pelo e-mail (profiles.email) ou fallback: buscar user no Auth e depois profile por id
+    let profile: { id: string; user_id?: string; telefone?: string } | null = null
+    const { data: profileByEmail, error: profileError } = await supabase
       .from('profiles')
       .select('id, user_id, email, telefone')
       .eq('email', emailNorm)
       .eq('ativo', true)
       .maybeSingle()
 
-    if (profileError || !profile) {
+    if (profileByEmail) {
+      profile = profileByEmail
+    }
+    if (!profile && (!profileError || profileError.code !== 'PGRST116')) {
+      console.error('[recuperar-senha-whatsapp] profile error:', profileError?.message)
+    }
+    // Fallback: buscar user_id por email via RPC (auth.users) e depois profile por id
+    if (!profile) {
+      const { data: userIdFromRpc, error: rpcError } = await supabase.rpc('get_user_id_by_email', { p_email: emailNorm })
+      if (rpcError) console.warn('[recuperar-senha-whatsapp] RPC get_user_id_by_email:', rpcError.message)
+      if (userIdFromRpc) {
+        const { data: profileById } = await supabase
+          .from('profiles')
+          .select('id, user_id, telefone')
+          .eq('id', userIdFromRpc)
+          .eq('ativo', true)
+          .maybeSingle()
+        if (profileById) profile = { id: profileById.id, user_id: profileById.user_id ?? profileById.id, telefone: profileById.telefone }
+      }
+    }
+
+    if (!profile) {
       return new Response(
         JSON.stringify({ error: 'E-mail não encontrado ou conta inativa.' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -92,7 +114,7 @@ serve(async (req) => {
     }
 
     const numero = telefoneRaw.startsWith('55') ? telefoneRaw : `55${telefoneRaw}`
-    const userId = profile.user_id ?? profile.id
+    const userId = (profile as { user_id?: string }).user_id ?? profile.id
     if (!userId) {
       return new Response(
         JSON.stringify({ error: 'Perfil sem vínculo com usuário.' }),

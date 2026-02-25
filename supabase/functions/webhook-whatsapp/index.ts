@@ -344,8 +344,17 @@ async function processarPasswordReset(webhook: Record<string, any>, supabase: an
 
   if (row.estado === 'aguardando_confirmacao') {
     const idOuTexto = `${buttonId} ${texto}`.trim()
-    const ehSim = buttonId === 'sim_redefinir' || /sim, redefinir/i.test(buttonId) || /^sim$/i.test(texto) || /sim, redefinir/i.test(texto) || /sim, redefinir senha/i.test(idOuTexto)
-    const ehNao = buttonId === 'nao_redefinir' || /n[aã]o, encerrar/i.test(buttonId) || /^n[aã]o$/i.test(texto) || /n[aã]o, encerrar/i.test(texto)
+    const ehSim =
+      buttonId === 'sim_redefinir' ||
+      /sim, redefinir/i.test(buttonId) ||
+      /^sim$/i.test(texto) ||
+      /sim, redefinir/i.test(texto) ||
+      /sim, redefinir senha/i.test(idOuTexto)
+    const ehNao =
+      buttonId === 'nao_redefinir' ||
+      /n[aã]o, encerrar/i.test(buttonId) ||
+      /^n[aã]o$/i.test(texto) ||
+      /n[aã]o, encerrar/i.test(texto)
 
     if (ehNao) {
       await supabase.from('password_reset_pendente').delete().eq('id', row.id)
@@ -357,23 +366,29 @@ async function processarPasswordReset(webhook: Record<string, any>, supabase: an
       )
       return true
     }
+
+    // Nova lógica: qualquer resposta que NÃO seja claramente "Não"
+    // já avança para o passo de digitar a nova senha,
+    // sem repetir a mensagem "Toque em uma das opções..."
     if (ehSim) {
-      await supabase.from('password_reset_pendente').update({ estado: 'aguardando_senha' }).eq('id', row.id)
-      const msgSenha =
-        '🔐 *Nova senha*\n\n' +
-        'Digite sua nova senha *nesta conversa*, seguindo as regras:\n\n' +
-        '• Mínimo *6 caracteres*\n' +
-        '• Use letras e números\n\n' +
-        'Toque no campo de mensagem e digite a senha desejada.'
-      await enviarTexto(numero, msgSenha, tokenValue, instanceId)
-      return true
+      console.log('[password_reset:webhook-whatsapp] Confirmado como SIM (explícito).')
+    } else {
+      console.log(
+        '[password_reset:webhook-whatsapp] Resposta não reconhecida claramente como SIM/NÃO; assumindo confirmação e avançando para nova senha.'
+      )
     }
-    await enviarTexto(
-      numero,
-      '🔐 *Redefinir senha*\n\nToque em uma das opções: *Sim, redefinir senha* ou *Não, encerrar*.',
-      tokenValue,
-      instanceId
-    )
+
+    await supabase.from('password_reset_pendente').update({ estado: 'aguardando_senha' }).eq('id', row.id)
+    const msgSenha =
+      '🔐 *Redefinição de senha*\n\n' +
+      'Agora, *digite sua nova senha* aqui nesta conversa.\n\n' +
+      '✅ *Regras de segurança:*\n' +
+      '• Pelo menos *6 caracteres*\n' +
+      '• Use letras e números\n' +
+      '• Evite usar dados fáceis (CPF, 123456, data de nascimento)\n\n' +
+      '✍️ *Como fazer:*\n' +
+      'Responda com a senha desejada (apenas a senha, sem aspas).'
+    await enviarTexto(numero, msgSenha, tokenValue, instanceId)
     return true
   }
 

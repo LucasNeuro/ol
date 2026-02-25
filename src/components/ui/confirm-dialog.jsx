@@ -47,10 +47,12 @@ export function ConfirmDialogProvider({ children }) {
                   <DialogTitle className="text-lg font-semibold">
                     {dialog.title || 'Confirmar ação'}
                   </DialogTitle>
-                  {dialog.description && (
+                  {dialog.description ? (
                     <DialogDescription className="mt-1">
                       {dialog.description}
                     </DialogDescription>
+                  ) : (
+                    <DialogDescription className="sr-only">Confirmação</DialogDescription>
                   )}
                 </div>
               </div>

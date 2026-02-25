@@ -14,6 +14,7 @@ import { LoginPage } from '@/pages/login'
 import { CadastroPage } from '@/pages/cadastro'
 import { RecuperarSenhaPage } from '@/pages/recuperar-senha'
 import { RedefinirSenhaPage } from '@/pages/redefinir-senha'
+import { OrcamentoPage } from '@/pages/orcamento'
 
 // Páginas protegidas (lazy: melhor tempo de navegação e primeiro clique)
 const ModulosPage = lazy(() => import('@/pages/modulos').then(m => ({ default: m.ModulosPage })))
@@ -24,6 +25,7 @@ const FavoritosPage = lazy(() => import('@/pages/favoritos').then(m => ({ defaul
 const EditalPage = lazy(() => import('@/pages/edital').then(m => ({ default: m.EditalPage })))
 const PerfilPage = lazy(() => import('@/pages/perfil').then(m => ({ default: m.PerfilPage })))
 const AdminUsuariosPage = lazy(() => import('@/pages/admin/usuarios').then(m => ({ default: m.AdminUsuariosPage })))
+const AlertasPage = lazy(() => import('@/pages/alertas').then(m => ({ default: m.AlertasPage })))
 
 /**
  * Função para limpar cache antigo do localStorage ao iniciar a aplicação
@@ -78,6 +80,7 @@ function ProtectedLicitacoes() { return <ProtectedRoute><BoletimDiaPage /></Prot
 function ProtectedFavoritos() { return <ProtectedRoute><FavoritosPage /></ProtectedRoute> }
 function ProtectedEdital() { return <ProtectedRoute><EditalPage /></ProtectedRoute> }
 function ProtectedAdminUsuarios() { return <ProtectedRoute><AdminUsuariosPage /></ProtectedRoute> }
+function ProtectedAlertas() { return <ProtectedRoute><AlertasPage /></ProtectedRoute> }
 
 function PageFallback() {
   return (
@@ -99,6 +102,7 @@ function AppContent() {
       <Route path="/cadastro" component={CadastroPage} />
       <Route path="/recuperar-senha" component={RecuperarSenhaPage} />
       <Route path="/redefinir-senha" component={RedefinirSenhaPage} />
+      <Route path="/orcamento" component={OrcamentoPage} />
       
       {/* Rotas Protegidas - Exigem Autenticação */}
       <Route path="/modulos" component={ProtectedModulos} />
@@ -107,6 +111,7 @@ function AppContent() {
       <Route path="/boletim" component={ProtectedBoletim} />
       <Route path="/licitacoes" component={ProtectedLicitacoes} />
       <Route path="/favoritos" component={ProtectedFavoritos} />
+      <Route path="/alertas" component={ProtectedAlertas} />
       <Route path="/edital/:numeroControle" component={ProtectedEdital} />
       
       {/* Rotas Administrativas */}

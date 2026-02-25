@@ -49,12 +49,20 @@ async function enviarTexto(numero: string, text: string, token: string, instance
 
 // Fluxo recuperação de senha (Sim/Não + digitar nova senha). Retorna true se tratou.
 async function processarPasswordResetUazapi(body: any, supabase: any): Promise<boolean> {
-  const numberRaw = body.number || body.chatId || body.from || ''
+  const numberRaw = body.number || body.chatId || body.from || body.data?.number || ''
   if (!numberRaw) return false
   const numero = normalizarNumero(numberRaw)
 
-  const buttonId = (body.buttonId || body.button_id || body.selectedId || body.message?.button?.id || '') as string
-  const texto = (body.text || body.body || body.message?.text || body.message?.body || body.data?.text || '').toString().trim()
+  // Reconhecer clique no botão do card em qualquer formato que a UAZAPI enviar
+  const buttonId = (
+    body.buttonId || body.button_id || body.selectedId || body.selected_id ||
+    body.message?.button?.id || body.data?.buttonId || body.data?.id || body.data?.selectedId ||
+    body.selectedReplyId || body.interactive?.button_reply?.id || body.reply?.id || ''
+  ) as string
+  const texto = (
+    body.text || body.body || body.message?.text || body.message?.body ||
+    body.data?.text || body.data?.message?.text || body.payload?.text || body.content?.text || ''
+  ).toString().trim()
 
   const { data: row } = await supabase
     .from('password_reset_pendente')
@@ -81,26 +89,38 @@ async function processarPasswordResetUazapi(body: any, supabase: any): Promise<b
 
   if (row.estado === 'aguardando_confirmacao') {
     const idOuTexto = `${buttonId} ${texto}`.trim()
-    const ehSim = buttonId === 'sim_redefinir' || /sim, redefinir/i.test(buttonId) || /^sim$/i.test(texto) || /sim, redefinir/i.test(texto) || /sim, redefinir senha/i.test(idOuTexto)
-    const ehNao = buttonId === 'nao_redefinir' || /n[aã]o, encerrar/i.test(buttonId) || /^n[aã]o$/i.test(texto) || /n[aã]o, encerrar/i.test(texto)
+    // Clique no card "Sim, redefinir senha" (buttonId ou texto da mensagem)
+    const ehSim =
+      buttonId === 'sim_redefinir' || /sim_redefinir/i.test(buttonId) || /sim, redefinir/i.test(buttonId) ||
+      /^sim$/i.test(texto) || /sim, redefinir/i.test(texto) || /sim, redefinir senha/i.test(texto) || /sim, redefinir senha/i.test(idOuTexto)
+    const ehNao =
+      buttonId === 'nao_redefinir' || /nao_redefinir/i.test(buttonId) || /n[aã]o, encerrar/i.test(buttonId) ||
+      /^n[aã]o$/i.test(texto) || /n[aã]o, encerrar/i.test(texto)
 
     if (ehNao) {
       await supabase.from('password_reset_pendente').delete().eq('id', row.id)
       await enviarTexto(numero, '📋 *Encerrado*\n\nPara redefinir a senha depois, entre em contato com o administrador da conta.', tokenValue, instanceId)
       return true
     }
+    // Nova lógica: qualquer resposta que NÃO seja claramente \"Não\" leva direto para o passo de digitar a nova senha.
+    // Isso evita o fallback redundante \"Toque em uma das opções...\" e simplifica o fluxo para o usuário.
     if (ehSim) {
-      await supabase.from('password_reset_pendente').update({ estado: 'aguardando_senha' }).eq('id', row.id)
-      const msgSenha =
-        '🔐 *Nova senha*\n\n' +
-        'Digite sua nova senha *nesta conversa*, seguindo as regras:\n\n' +
-        '• Mínimo *6 caracteres*\n' +
-        '• Use letras e números\n\n' +
-        'Toque no campo de mensagem e digite a senha desejada.'
-      await enviarTexto(numero, msgSenha, tokenValue, instanceId)
-      return true
+      console.log('[password_reset] Confirmado como SIM (explícito).')
+    } else {
+      console.log('[password_reset] Resposta não reconhecida como SIM/NÃO; assumindo confirmação e avançando para nova senha.')
     }
-    await enviarTexto(numero, '🔐 *Redefinir senha*\n\nToque em uma das opções: *Sim, redefinir senha* ou *Não, encerrar*.', tokenValue, instanceId)
+
+    await supabase.from('password_reset_pendente').update({ estado: 'aguardando_senha' }).eq('id', row.id)
+    const msgSenha =
+      '🔐 *Redefinição de senha*\n\n' +
+      'Agora, *digite sua nova senha* aqui nesta conversa.\n\n' +
+      '✅ *Regras de segurança:*\n' +
+      '• Pelo menos *6 caracteres*\n' +
+      '• Use letras e números\n' +
+      '• Evite usar dados fáceis (CPF, 123456, data de nascimento)\n\n' +
+      '✍️ *Como fazer:*\n' +
+      'Responda com a senha desejada (apenas a senha, sem aspas).'
+    await enviarTexto(numero, msgSenha, tokenValue, instanceId)
     return true
   }
 

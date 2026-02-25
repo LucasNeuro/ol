@@ -1,12 +1,14 @@
-
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
+
+// TESTE: chave no código para validar 401. REMOVA após o teste e use só o Secret (fallback abaixo).
+const TEST_MISTRAL_API_KEY = 'PJ0ycgJfwpx7hoyzjLohMoMkCTSusHtp'
 
 serve(async (req) => {
  
@@ -34,10 +36,11 @@ serve(async (req) => {
       throw new Error('URL do documento inválida')
     }
 
+    const MAX_HISTORICO = 6
     console.log('💬 Nova pergunta:', pergunta)
     console.log('📄 Documento URL:', documentoUrl)
     console.log('🏢 Dados empresa:', dadosEmpresa ? 'Sim' : 'Não')
-    console.log('📚 Histórico:', historico.length, 'mensagens')
+    console.log('📚 Histórico (total/limitado):', historico?.length ?? 0, '/', Math.min(MAX_HISTORICO, historico?.length ?? 0), 'mensagens')
 
     // Verificar se a URL é acessível (opcional, mas recomendado)
     // O Document QnA do Mistral precisa de URL pública e acessível
@@ -45,11 +48,24 @@ serve(async (req) => {
       console.warn('⚠️ URL do documento não parece ser uma URL HTTP válida')
     }
 
-   
-    const mistralApiKey = Deno.env.get('MISTRAL_API_KEY')
-    
+    // Chave: 1) teste no código (TEST_MISTRAL_API_KEY), 2) fallback = Secret MISTRAL_API_KEY
+    let rawKey = Deno.env.get('MISTRAL_API_KEY')
+    if (rawKey && typeof rawKey === 'string') {
+      rawKey = rawKey
+        .replace(/\r?\n|\r/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/^["']|["']$/g, '')
+      if (rawKey.toLowerCase().startsWith('bearer ')) rawKey = rawKey.slice(7).trim()
+      rawKey = rawKey.replace(/[\x00-\x1F\x7F]/g, '')
+    }
+    const mistralApiKey = (TEST_MISTRAL_API_KEY && TEST_MISTRAL_API_KEY.trim()) || rawKey || ''
+    const usandoChaveTeste = !!(TEST_MISTRAL_API_KEY && TEST_MISTRAL_API_KEY.trim())
+    const prefix = mistralApiKey.length >= 2 ? mistralApiKey.slice(0, 2) + '...' : '(vazia)'
+    console.log('MISTRAL_API_KEY:', usandoChaveTeste ? 'chave de teste (código)' : 'Secret', 'comprimento:', mistralApiKey.length, 'prefixo:', prefix)
+
     if (!mistralApiKey) {
-      throw new Error('MISTRAL_API_KEY não configurada')
+      throw new Error('MISTRAL_API_KEY não encontrada. Supabase → Edge Functions → Secrets → adicione MISTRAL_API_KEY e faça redeploy da função chat-documento.')
     }
 
 
@@ -79,171 +95,108 @@ serve(async (req) => {
       }
     }
 
-    // Preparar mensagens com system prompt em português - Assistente Conversacional Especializado
-    // IMPORTANTE: O Document QnA do Mistral processa o documento automaticamente
-    // O documento deve ser incluído em cada mensagem do usuário para garantir que o contexto seja mantido
+    // Limitar histórico para evitar estouro de contexto (128k) e lentidão
+    const historicoLimitado = Array.isArray(historico) ? historico.slice(-MAX_HISTORICO) : []
+
+    // Preparar mensagens: documento só na mensagem ATUAL (evita N cópias do PDF = menos tokens e mais rápido)
+    const systemPrompt = `# Identidade
+Você é o Assistente do Sistema Licitação: especialista em licitações públicas brasileiras (Lei 14.133/2021, Pregão, RDC, etc.). Sua única fonte de verdade nesta conversa é o documento PDF anexado na última mensagem (acessado via Document QnA). Responda sempre com base nele e mantenha coerência com o histórico.
+
+# Skills (competências obrigatórias)
+- **Análise de edital**: extrair e citar objeto, órgão, valor estimado, datas, modalidade, tipo de licitação, requisitos de habilitação e de proposta.
+- **Citação com origem**: toda informação deve ser atribuível ao documento (ex.: "Conforme o edital, na seção X...", "O valor estimado consta como R$ ...").
+- **Requisitos técnicos e jurídicos**: identificar e explicar exigências de qualificação técnica, econômico-financeira, certidões e cláusulas relevantes.
+- **Comparação empresa × edital**: quando houver dados da empresa do usuário, use-os para avaliar aderência (setor, CNAE, porte, UF) sem inventar requisitos do documento.
+- **Honestidade de cobertura**: se a informação não existir no documento, responda de forma explícita: "Não encontrei essa informação no documento" ou "O documento não detalha esse ponto".
+- **Nunca alucinar**: proibir-se de inventar valores, datas, artigos, páginas ou requisitos que não estejam no PDF.
+
+# Regras rígidas
+1. Responda SOMENTE com base no conteúdo do PDF anexado e no histórico da conversa.
+2. Cite o documento de forma específica (seção, página, valor, data) quando possível.
+3. Não invente nem deduza informações que o documento não explicita.
+4. Em perguntas sobre "minha empresa pode participar?", use os dados da empresa apenas para contextualizar; os requisitos devem vir exclusivamente do edital.
+5. Respostas objetivas: 1 a 3 parágrafos, em português (PT-BR), tom profissional e cordial.
+
+# Formato de saída
+- Idioma: português (PT-BR).
+- Tom: cordial e profissional.
+- Tamanho: direto ao ponto (evitar textos longos sem necessidade).
+- Valores: use o formato do documento ou R$ X.XXX,XX quando aplicável.${contextoEmpresa}
+
+# Nota técnica
+O PDF está anexado apenas na última mensagem do usuário. Use-o para responder à pergunta atual; o histórico contém apenas texto (sem novo anexo).`
+
     const messages = [
       {
         role: "system",
-        content: `Você é o "Assistente Sistema Licitação", um especialista em licitações públicas brasileiras. Você tem acesso DIRETO ao conteúdo completo do documento PDF através do Document QnA da Mistral.
-
-SUA FUNÇÃO PRINCIPAL:
-- Use o Document QnA para ler e analisar TODO o conteúdo do documento PDF fornecido
-- Responda perguntas baseando-se EXCLUSIVAMENTE no conteúdo real do documento
-- Cite informações específicas do documento (páginas, seções, valores, datas, requisitos técnicos)
-- Use os dados da empresa do usuário para contextualizar respostas sobre participação${contextoEmpresa}
-
-REGRAS DE RESPOSTA:
-1. SEMPRE analise o documento PDF fornecido antes de responder
-2. Cite informações específicas: "Segundo o edital, na página X...", "O valor estimado é de R$ X...", "O requisito técnico especifica..."
-3. Se não encontrar informação no documento, diga claramente: "Não encontrei essa informação específica no documento"
-4. Quando perguntado sobre participação, compare os requisitos do edital com os dados da empresa
-5. Evite respostas genéricas - seja específico e baseado no conteúdo real
-6. NUNCA invente informações que não estão no documento
-7. Se a pergunta for sobre algo que não está no documento, seja honesto e diga isso
-
-ESTILO:
-- Português (PT-BR), tom cordial e profissional
-- Respostas diretas e objetivas (1-3 parágrafos)
-- Cite valores, datas e requisitos exatos do documento
-- Use os dados da empresa apenas para contextualizar, não para inventar requisitos
-
-IMPORTANTE:
-- Você está conversando com o documento REAL - use o Document QnA para buscar informações precisas
-- Cada pergunta deve ser analisada com base no conteúdo atual do PDF
-- Se a resposta parecer repetitiva, verifique se está analisando o documento correto e forneça informações mais específicas`
+        content: systemPrompt,
       },
-      // Incluir histórico, mas garantir que mensagens do usuário tenham o documento
-      ...historico.map((msg: any) => {
-        if (msg.role === 'user') {
-          // Se for mensagem do usuário, garantir que tenha o documento
-          const content = Array.isArray(msg.content) ? msg.content : [{ type: "text", text: msg.content }]
-          // Verificar se já tem document_url
-          const hasDocument = content.some((c: any) => c.type === 'document_url')
-          if (!hasDocument) {
-            content.push({
-              type: "document_url",
-              document_url: documentoUrl
-            })
-          }
-          return {
-            role: msg.role,
-            content: content
-          }
-        }
-        return {
-          role: msg.role,
-          content: msg.content
-        }
-      }),
+      // Histórico só como texto (sem document_url) para não repetir o PDF e estourar contexto
+      ...historicoLimitado.map((msg: any) => ({
+        role: msg.role,
+        content: Array.isArray(msg.content) ? (msg.content.find((c: any) => c.type === 'text')?.text ?? msg.content) : msg.content
+      })),
+      // Documento apenas na mensagem atual: uma única cópia processada pela API
       {
         role: "user",
         content: [
-          {
-            type: "text",
-            text: pergunta
-          },
-          {
-            type: "document_url",
-            document_url: documentoUrl
-          }
+          { type: "text", text: pergunta },
+          { type: "document_url", document_url: documentoUrl }
         ]
       }
     ]
 
-    console.log('📤 Enviando para Mistral API com Document QnA...')
-    console.log('📋 Estrutura da mensagem:', JSON.stringify({
-      model: 'mistral-small-latest',
-      messages_count: messages.length,
-      last_message_has_document: messages[messages.length - 1]?.content?.some((c: any) => c.type === 'document_url'),
-      document_url: documentoUrl
-    }, null, 2))
+    // Apenas Document QnA: uma única chamada à Mistral, sem tools/chamadas externas (mais rápido, sem CORS extra)
+    const MISTRAL_TIMEOUT_MS = 120000 // 120 segundos
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), MISTRAL_TIMEOUT_MS)
 
-    // 3. Chamar Mistral API com timeout e retry
-    let mistralResponse
-    let retries = 2
-    let lastError
-    
-    while (retries > 0) {
-      try {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 60000) // 60s timeout
-        
-        mistralResponse = await fetch('https://api.mistral.ai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${mistralApiKey}`
-          },
-          body: JSON.stringify({
-            model: 'mistral-small-latest',
-            messages: messages,
-            temperature: 0.5,
-            max_tokens: 2000 // Aumentado para respostas mais completas
-          }),
-          signal: controller.signal
-        })
-        
-        clearTimeout(timeoutId)
-        
-        if (mistralResponse.ok) {
-          break
-        } else if (mistralResponse.status >= 500 && retries > 1) {
-          retries--
-          await new Promise(resolve => setTimeout(resolve, 3000))
-          continue
-        } else {
-          const errorText = await mistralResponse.text()
-          throw new Error(`Erro Mistral API: ${mistralResponse.status} - ${errorText}`)
-        }
-      } catch (error) {
-        lastError = error
-        if (error.name === 'AbortError') {
-          throw new Error('Timeout ao processar pergunta (60s)')
-        }
-        retries--
-        if (retries > 0) {
-          await new Promise(resolve => setTimeout(resolve, 3000))
-        }
-      }
-    }
-    
-    if (!mistralResponse || !mistralResponse.ok) {
-      const errorText = lastError?.message || 'Erro desconhecido'
-      throw new Error(errorText)
-    }
+    console.log('📤 Enviando para Mistral API (Document QnA apenas)...')
+
+    const mistralResponse = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${mistralApiKey}` },
+      body: JSON.stringify({
+        model: 'mistral-medium-latest', // mais rápido que large; use mistral-small-latest se quiser ainda mais velocidade
+        messages,
+        temperature: 0.5,
+        max_tokens: 2000,
+      }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
 
     if (!mistralResponse.ok) {
       const errorText = await mistralResponse.text()
-      console.error('❌ Erro Mistral API:', errorText)
+      if (mistralResponse.status === 401) {
+        // Log da resposta da Mistral para diagnóstico (ex.: billing, key invalid)
+        console.error('Mistral 401 resposta:', errorText)
+        // Passos oficiais Mistral Quickstart: billing em admin.mistral.ai; API keys em console.mistral.ai
+        throw new Error(
+          'Chave da Mistral rejeitada (401). Siga a documentação oficial: 1) Ative o Billing: acesse https://admin.mistral.ai → Organization → Billing, adicione forma de pagamento e escolha um plano (Experiment ou Scale). ' +
+          '2) Crie a chave em https://console.mistral.ai → API Keys (no seu Workspace) → Create new key; copie e guarde (só aparece uma vez). ' +
+          '3) Chave nova pode levar alguns minutos para ativar. ' +
+          '4) No Supabase: Edge Functions → Secrets → MISTRAL_API_KEY = valor da chave (sem aspas, sem "Bearer"). Depois: supabase functions deploy chat-documento'
+        )
+      }
       throw new Error(`Erro Mistral API: ${mistralResponse.status} - ${errorText}`)
     }
 
     const mistralData = await mistralResponse.json()
-    
-    // Validar resposta do Mistral
-    if (!mistralData.choices || !mistralData.choices[0] || !mistralData.choices[0].message) {
-      throw new Error('Resposta inválida da API Mistral')
-    }
-    
-    const resposta = mistralData.choices[0].message.content
-    
-    if (!resposta || resposta.trim().length === 0) {
-      throw new Error('Resposta vazia da API Mistral')
+    const resposta = mistralData?.choices?.[0]?.message?.content?.trim()
+    if (!resposta) {
+      throw new Error('Resposta vazia da API Mistral. Tente reformular a pergunta.')
     }
 
     console.log('✅ Resposta recebida:', resposta.substring(0, 100) + '...')
-    console.log('📊 Tokens usados:', {
-      prompt: mistralData.usage?.prompt_tokens || 0,
-      completion: mistralData.usage?.completion_tokens || 0,
-      total: mistralData.usage?.total_tokens || 0
-    })
+    const usage = mistralData?.usage || {}
+    console.log('📊 Tokens usados:', { prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0, total: usage.total_tokens || 0 })
 
-    // 4. Registrar acesso ao documento (se documentoId fornecido)
-    if (documentoId) {
-      const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-      const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-      const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    // Registrar acesso ao documento (se documentoId fornecido)
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (documentoId && supabaseUrl && serviceKey) {
+      const supabase = createClient(supabaseUrl, serviceKey)
 
       await supabase.rpc('registrar_acesso_documento', { doc_id: documentoId })
     }
@@ -257,9 +210,9 @@ IMPORTANTE:
         success: true,
         resposta: resposta,
         tokens: {
-          prompt: mistralData.usage.prompt_tokens,
-          completion: mistralData.usage.completion_tokens,
-          total: mistralData.usage.total_tokens
+          prompt: usage.prompt_tokens ?? 0,
+          completion: usage.completion_tokens ?? 0,
+          total: usage.total_tokens ?? 0
         },
         timestamp: new Date().toISOString()
       }),
@@ -271,11 +224,14 @@ IMPORTANTE:
 
   } catch (error) {
     console.error('❌ Erro ao processar chat:', error)
-    
+    let mensagem = error?.message || 'Erro desconhecido ao processar chat'
+    if (error?.name === 'AbortError' || mensagem.includes('signal has been aborted')) {
+      mensagem = 'A resposta está demorando mais que o limite (timeout). O documento pode ser grande ou o modelo está sob carga. Tente uma pergunta mais objetiva ou aguarde e tente novamente.'
+    }
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message || 'Erro desconhecido ao processar chat'
+        error: mensagem
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

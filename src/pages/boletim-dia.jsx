@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { useUserStore } from '@/store/userStore'
-import { useLocation } from 'wouter'
+import { useLocation, Link } from 'wouter'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -56,6 +56,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { VisualizadorDocumento } from '@/components/VisualizadorDocumento'
 import { useNotifications } from '@/hooks/useNotifications'
+import { useAlertasEmail } from '@/hooks/useAlertasEmail'
 import { useWhatsAppRateLimit } from '@/hooks/useWhatsAppRateLimit'
 import { usePalavrasFortes } from '@/hooks/usePalavrasFortes'
 import { usePalavrasIncompatibilidade } from '@/hooks/usePalavrasIncompatibilidade'
@@ -78,6 +79,14 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+  SheetFooter,
+} from '@/components/ui/sheet'
 
 // Ícone WhatsApp (logo preta)
 function IconWhatsApp({ className = 'w-4 h-4' }) {
@@ -178,23 +187,14 @@ function LicitacoesContent() {
   const [recomendadaSelecionada, setRecomendadaSelecionada] = useState(null)
   const [alertaEmailDestino, setAlertaEmailDestino] = useState('')
   const [alertaEmailSaving, setAlertaEmailSaving] = useState(false)
+  const [modalSalvarFiltroAberto, setModalSalvarFiltroAberto] = useState(false)
+  const [nomeSalvarFiltro, setNomeSalvarFiltro] = useState('')
+  const [emailSalvarFiltro, setEmailSalvarFiltro] = useState('')
+  const [horarioSalvarFiltro, setHorarioSalvarFiltro] = useState('08:00')
 
-  // Buscar alerta E-mail do usuário (tipo email)
-  const { data: alertaEmail } = useQuery({
-    queryKey: ['alerta-email', user?.id],
-    queryFn: async () => {
-      if (!user?.id) return null
-      const { data, error } = await supabase
-        .from('alertas_usuario')
-        .select('id, ativo, horario_verificacao, filtros, email_notificacao, resumo_semanal_ativo')
-        .eq('usuario_id', user.id)
-        .eq('tipo', 'email')
-        .maybeSingle()
-      if (error) throw error
-      return data
-    },
-    enabled: !!user?.id,
-  })
+  // Alertas por e-mail (filtros salvos): lista para contar + primeiro para o bloco rápido na sidebar
+  const { alertas: alertasEmailLista, criar: criarAlertaEmail } = useAlertasEmail()
+  const alertaEmail = alertasEmailLista?.[0] ?? null
 
   useEffect(() => {
     if (alertaEmail) {
@@ -217,10 +217,14 @@ function LicitacoesContent() {
         .eq('usuario_id', user.id)
         .eq('ativo', true)
         .order('ordem', { ascending: true })
-      if (error) throw error
+      if (error) {
+        if (error.code === '42P01' || error.message?.includes('does not exist')) return []
+        throw error
+      }
       return data || []
     },
     enabled: !!user?.id,
+    retry: 1,
   })
 
   // Sincronizar lista de números com os já salvos no banco
@@ -1014,6 +1018,18 @@ function LicitacoesContent() {
       })
     }
   }, [arquivosZipDescompactados])
+
+  // Assinatura estável das dependências do filtro (evita "Maximum update depth exceeded")
+  const depsAplicarFiltros = useMemo(() => JSON.stringify({
+    licLen: licitacoes?.length,
+    licIds: (licitacoes || []).slice(0, 5).map(l => l.id ?? l.numero_controle_pncp).join(','),
+    fa: filtrosAplicados,
+    perfSetores: perfilUsuario?.setores_atividades?.length,
+    perfEstados: perfilUsuario?.estados_interesse?.length,
+    mostrar: mostrarTodasLicitacoes,
+    sinonimosKeys: sinonimosBanco ? Object.keys(sinonimosBanco).sort().join(',') : '',
+    dataF: dataFiltro,
+  }), [licitacoes, filtrosAplicados, perfilUsuario, mostrarTodasLicitacoes, sinonimosBanco, dataFiltro])
   
   // Filtrar por status do edital, perfil da empresa e exclusões (assíncrono para IA)
   useEffect(() => {
@@ -1693,19 +1709,17 @@ function LicitacoesContent() {
   }
     
     aplicarFiltros()
-    // palavrasFortesPorSetor e palavrasIncompatibilidadePorSetor omitidos de propósito: são objetos
-    // que mudam de referência a cada render e causariam loop (Maximum update depth). Usados dentro do effect.
-  }, [
-    licitacoes, 
-    filtrosAplicados,
-    perfilUsuario, 
-    mostrarTodasLicitacoes,
-    sinonimosBanco,
-    dataFiltro,
-  ])
+    // Dependências estáveis para evitar "Maximum update depth exceeded" (objetos que mudam referência a cada render)
+  }, [depsAplicarFiltros])
 
   // Licitações finais (sem filtros permanentes)
   const licitacoesFinais = licitacoesFiltradas
+
+  // Skeleton até carregar E até o efeito de filtros preencher licitacoesFiltradas (evita "0 editais" / "Nenhuma licitação" antes da hora)
+  const carregandoOuPreparando = Boolean(
+    isLoading || isFetching || processandoFiltro ||
+    (Array.isArray(licitacoes) && licitacoes.length > 0 && licitacoesFiltradas.length === 0)
+  )
 
   // Lista sem duplicatas por id (evita "two children with the same key" e cards repetidos)
   const licitacoesParaExibir = useMemo(() => {
@@ -2211,6 +2225,30 @@ function LicitacoesContent() {
     setListaNumerosWhatsApp((prev) => prev.filter((_, i) => i !== index))
   }
 
+  const abrirModalSalvarFiltro = () => {
+    setNomeSalvarFiltro('')
+    setEmailSalvarFiltro(perfilUsuario?.email || alertaEmailDestino || '')
+    setHorarioSalvarFiltro(alertaEmailHorario || '08:00')
+    setModalSalvarFiltroAberto(true)
+  }
+
+  const salvarFiltroAtualComoAlerta = async () => {
+    const nome = nomeSalvarFiltro.trim() || 'Filtro salvo'
+    try {
+      await criarAlertaEmail.mutateAsync({
+        nome_alerta: nome,
+        filtros: filtrosAplicados,
+        email_notificacao: emailSalvarFiltro.trim() || null,
+        horario_verificacao: horarioSalvarFiltro,
+        ativo: false,
+      })
+      success('Filtro salvo. Ative e ajuste o horário em "Filtros salvos" no menu.')
+      setModalSalvarFiltroAberto(false)
+    } catch (e) {
+      showError('Erro ao salvar filtro: ' + (e?.message || e))
+    }
+  }
+
   const salvarAlertaEmail = async () => {
     if (!user?.id) return
     const emailParaAlerta = alertaEmailDestino.trim() || perfilUsuario?.email
@@ -2231,19 +2269,18 @@ function LicitacoesContent() {
         ativo: alertaEmailAtivo,
         frequencia: 'diario',
         email_notificacao: emailParaAlerta || null,
-        resumo_semanal_ativo: alertaResumoSemanalAtivo,
       }
       if (alertaEmail?.id) {
         const { error } = await supabase
           .from('alertas_usuario')
-          .update({ ativo: payload.ativo, horario_verificacao: payload.horario_verificacao, filtros: payload.filtros, email_notificacao: payload.email_notificacao, resumo_semanal_ativo: payload.resumo_semanal_ativo, updated_at: new Date().toISOString() })
+          .update({ ativo: payload.ativo, horario_verificacao: payload.horario_verificacao, filtros: payload.filtros, email_notificacao: payload.email_notificacao, updated_at: new Date().toISOString() })
           .eq('id', alertaEmail.id)
         if (error) throw error
       } else {
         const { error } = await supabase.from('alertas_usuario').insert(payload)
         if (error) throw error
       }
-      queryClient.invalidateQueries({ queryKey: ['alerta-email', user.id] })
+      queryClient.invalidateQueries({ queryKey: ['alertas-email', user.id] })
       success('Alerta por e-mail salvo.')
     } catch (err) {
       showError('Erro ao salvar alerta: ' + (err.message || err))
@@ -2617,6 +2654,21 @@ function LicitacoesContent() {
                   <p className="text-[11px] text-muted-foreground">
                     Receba diariamente as licitações novas no horário configurado. Informe o e-mail abaixo ou use o cadastrado no perfil.
                   </p>
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full rounded-lg border-orange-300 text-orange-700 hover:bg-orange-50 h-8 text-xs"
+                      onClick={abrirModalSalvarFiltro}
+                    >
+                      Salvar filtro atual para e-mail
+                    </Button>
+                    <Link href="/alertas">
+                      <a className="text-[11px] text-orange-600 hover:underline">
+                        Ver filtros salvos{alertasEmailLista?.length > 0 ? ` (${alertasEmailLista.length})` : ''}
+                      </a>
+                    </Link>
+                  </div>
                   <div className="space-y-2">
                     <Label className="text-[11px] font-medium text-gray-700">E-mail para receber os alertas</Label>
                     <Input
@@ -2767,9 +2819,15 @@ function LicitacoesContent() {
             )}
                         </div>
 
-          {/* Loading / Filtro em andamento – skeleton cards (garante visibilidade durante todo o carregamento) */}
-          {((isLoading || isFetching || processandoFiltro) && licitacoesFinais.length === 0) && (
-            <LicitacaoCardSkeletonList count={processandoFiltro ? 12 : 8} />
+          {/* Loading / Filtro em andamento – skeleton (evita "0 editais" / "Nenhuma licitação" antes dos dados) */}
+          {carregandoOuPreparando && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-500 flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {processandoFiltro ? 'Aplicando filtros...' : 'Carregando editais...'}
+              </p>
+              <LicitacaoCardSkeletonList count={processandoFiltro ? 12 : 10} />
+            </div>
           )}
 
           {/* Error */}
@@ -2787,8 +2845,8 @@ function LicitacoesContent() {
             </Card>
           )}
 
-          {/* Marcadores de filtragem e contagem — feedback visual claro */}
-          {!error && !((isLoading || isFetching || processandoFiltro) && licitacoesFinais.length === 0) && (
+          {/* Marcadores de filtragem e contagem — só após carregamento (não durante skeleton) */}
+          {!error && !carregandoOuPreparando && (
             <div className="mb-4 flex flex-col gap-3">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-base font-semibold text-gray-800">
@@ -2823,7 +2881,7 @@ function LicitacoesContent() {
           )}
 
           {/* Recomendadas para você: 3 abas por aderência (Alta / Média / Baixa); clique no card mostra só o edital */}
-          {!((isLoading || isFetching || processandoFiltro) && licitacoesFinais.length === 0) && recomendadas.length > 0 && !recomendadaSelecionada && (
+          {!carregandoOuPreparando && recomendadas.length > 0 && !recomendadaSelecionada && (
             <div className="mb-6">
               <h2 className="text-lg font-semibold text-gray-800 mb-2 flex items-center gap-2">
                 <span className="text-orange-500">★</span> Recomendadas para você
@@ -2922,8 +2980,8 @@ function LicitacoesContent() {
             </div>
           )}
 
-          {/* Cards de Licitações (ou só o edital recomendado selecionado) */}
-          {!((isLoading || isFetching || processandoFiltro) && licitacoesFinais.length === 0) && (
+          {/* Cards de Licitações (ou só o edital recomendado selecionado) — só após carregamento */}
+          {!carregandoOuPreparando && (
               <div className="space-y-4">
               {licitacoesParaExibir.length > 0 || recomendadaSelecionada ? (
                 licitacoesNaTela.map((licitacao) => {
@@ -3643,19 +3701,17 @@ function LicitacoesContent() {
                   )
                 })
               ) : (
-                !processandoFiltro && (
-                  <Card className="rounded-xl border border-gray-100 bg-white shadow-sm">
-                    <CardContent className="py-12 text-center">
-                      <FileText className="w-16 h-16 text-orange-200 mx-auto mb-4" />
-                      <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                        Nenhuma licitação encontrada
-                      </h3>
-                      <p className="text-sm text-gray-600">
-                        Tente ajustar os filtros ou verifique se há licitações disponíveis.
-                      </p>
-                    </CardContent>
-                  </Card>
-                )
+                <Card className="rounded-xl border border-gray-100 bg-white shadow-sm">
+                  <CardContent className="py-12 text-center">
+                    <FileText className="w-16 h-16 text-orange-200 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      Nenhuma licitação encontrada
+                    </h3>
+                    <p className="text-sm text-gray-600">
+                      Tente ajustar os filtros ou verifique se há licitações disponíveis.
+                    </p>
+                  </CardContent>
+                </Card>
               )}
             </div>
           )}
@@ -3702,6 +3758,37 @@ function LicitacoesContent() {
         licitacaoId={documentoVisualizacao?.licitacaoId}
       />
 
+      {/* Sideover: Configurar e salvar filtro para envio por e-mail */}
+      <Sheet open={modalSalvarFiltroAberto} onOpenChange={setModalSalvarFiltroAberto}>
+        <SheetContent side="right" className="overflow-y-auto w-full sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle>Salvar filtro para envio por e-mail</SheetTitle>
+            <SheetDescription>
+              Os filtros que você aplicou agora (UF, busca, setor, etc.) serão salvos. Depois, em &quot;Filtros salvos&quot;, ative e escolha o horário para receber o resumo diário.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="space-y-4 py-6">
+            <div>
+              <Label>Nome do filtro</Label>
+              <Input value={nomeSalvarFiltro} onChange={(e) => setNomeSalvarFiltro(e.target.value)} placeholder="Ex: SP - obras" className="mt-1" />
+            </div>
+            <div>
+              <Label>E-mail para receber (opcional)</Label>
+              <Input type="email" value={emailSalvarFiltro} onChange={(e) => setEmailSalvarFiltro(e.target.value)} placeholder="ou use o do perfil" className="mt-1" />
+            </div>
+            <div>
+              <Label>Horário do envio diário</Label>
+              <Input type="time" value={horarioSalvarFiltro} onChange={(e) => setHorarioSalvarFiltro(e.target.value)} className="mt-1" />
+            </div>
+          </div>
+          <SheetFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setModalSalvarFiltroAberto(false)}>Cancelar</Button>
+            <Button onClick={salvarFiltroAtualComoAlerta} disabled={criarAlertaEmail.isPending}>
+              {criarAlertaEmail.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Salvar filtro'}
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
     </AppLayout>
   )

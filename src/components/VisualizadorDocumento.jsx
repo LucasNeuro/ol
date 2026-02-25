@@ -157,9 +157,10 @@ export function VisualizadorDocumento({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, urlDocumento, nomeArquivo])
 
-  // Processar documento para chat quando modal abre (apenas PDFs)
+  // Processar documento para chat quando modal abre (apenas PDFs com URL não-blob; blob = ZIP descompactado, servidor não acessa)
   useEffect(() => {
-    if (open && urlDocumento && isPdf && !documentoProcessado && !processandoDoc) {
+    const urlOkParaChat = urlDocumento && typeof urlDocumento === 'string' && !urlDocumento.startsWith('blob:')
+    if (open && urlOkParaChat && isPdf && !documentoProcessado && !processandoDoc) {
       handleProcessarDocumento()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -267,59 +268,45 @@ export function VisualizadorDocumento({
       setError(null)
       
       
-      // SEMPRE usar Edge Function primeiro para evitar problemas de CORS
-      // A API do PNCP tem problemas de CORS que impedem acesso direto
-      let urlParaUsar = urlDocumento
-      let tentouBucket = false
-      
-      // Estratégia 1: Usar Edge Function para baixar e salvar no bucket (contorna CORS)
+      const isBlobUrl = typeof urlDocumento === 'string' && urlDocumento.startsWith('blob:')
+
+      // URL blob (ex.: PDF descompactado de um ZIP): carregar direto, sem Edge Function
+      if (isBlobUrl) {
+        const loadingTask = pdfjsLib.getDocument({
+          url: urlDocumento,
+          withCredentials: false,
+          verbosity: 0
+        })
+        const pdfData = await loadingTask.promise
+        setPdfDoc(pdfData)
+        setNumPages(pdfData.numPages)
+        setPageNumber(1)
+        setUrlLocal(null)
+        setLoading(false)
+        return
+      }
+
+      // URL externa (PNCP): sempre Edge Function (nunca fallback direto no browser = CORS)
       try {
         const urlLocalStorage = await baixarESalvarNoBucket()
-        urlParaUsar = urlLocalStorage
         setUrlLocal(urlLocalStorage)
-        tentouBucket = true
-        
-        // Tentar carregar o PDF do bucket
         const loadingTask = pdfjsLib.getDocument({
-          url: urlParaUsar,
+          url: urlLocalStorage,
           withCredentials: false,
           httpHeaders: {},
           verbosity: 0
         })
-        
         const pdfData = await loadingTask.promise
-        
         setPdfDoc(pdfData)
         setNumPages(pdfData.numPages)
         setPageNumber(1)
         setLoading(false)
-        return // Sucesso!
+        return
       } catch (bucketError) {
-        
-        // Se o erro for de tamanho, mostrar mensagem específica
         if (bucketError.message.includes('muito grande')) {
-          throw new Error(bucketError.message + ' Você pode visualizar o documento diretamente no site do PNCP usando "Abrir em nova aba".')
+          throw new Error(bucketError.message + ' Use "Abrir em nova aba" para visualizar no PNCP.')
         }
-        
-        // Se o erro for de CORS ou outro, tentar carregar diretamente como fallback
-        try {
-          const loadingTaskDireto = pdfjsLib.getDocument({
-            url: urlDocumento,
-            withCredentials: false,
-            httpHeaders: {},
-            verbosity: 0
-          })
-          
-          const pdfDataDireto = await loadingTaskDireto.promise
-          
-          setPdfDoc(pdfDataDireto)
-          setNumPages(pdfDataDireto.numPages)
-          setPageNumber(1)
-          setLoading(false)
-          return // Sucesso no fallback!
-        } catch (erroDireto) {
-          throw new Error('Não foi possível carregar o documento. O servidor bloqueia o acesso devido a restrições de segurança (CORS). Use "Abrir em nova aba" para visualizar o documento.')
-        }
+        throw new Error(bucketError.message || 'Não foi possível carregar o documento. Use "Abrir em nova aba" ou "Baixar".')
       }
       
     } catch (err) {
@@ -414,7 +401,7 @@ export function VisualizadorDocumento({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[98vw] w-full max-h-[98vh] h-[98vh] p-0 bg-black/80 backdrop-blur-sm border-none overflow-hidden">
+      <DialogContent className="max-w-[98vw] w-full max-h-[98vh] h-[98vh] p-0 bg-black/80 backdrop-blur-sm border-none overflow-hidden" aria-describedby={undefined}>
         <DialogTitle className="sr-only">Visualizador de Documento</DialogTitle>
         <DialogDescription className="sr-only">
           Visualizador de documento PDF integrado
