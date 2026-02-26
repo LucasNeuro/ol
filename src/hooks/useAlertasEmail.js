@@ -7,8 +7,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useUserStore } from '@/store/userStore'
 
-// Colunas sem resumo_semanal_ativo para compatibilidade com bancos que ainda não rodaram a migration
-const COLS = 'id, nome_alerta, filtros, ativo, horario_verificacao, email_notificacao, created_at, updated_at'
+const COLS = 'id, nome_alerta, filtros, ativo, horario_verificacao, email_notificacao, enviar_whatsapp, created_at, updated_at'
+const COLS_WITH_TIPO = 'id, nome_alerta, tipo, filtros, ativo, horario_verificacao, email_notificacao, enviar_whatsapp, created_at, updated_at'
 
 export function useAlertasEmail() {
   const { user } = useUserStore()
@@ -30,8 +30,24 @@ export function useAlertasEmail() {
     enabled: !!user?.id,
   })
 
+  const { data: alertasWhatsApp = [], isLoading: isLoadingWhatsApp } = useQuery({
+    queryKey: ['alertas-whatsapp', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return []
+      const { data, error } = await supabase
+        .from('alertas_usuario')
+        .select(COLS_WITH_TIPO)
+        .eq('usuario_id', user.id)
+        .eq('tipo', 'whatsapp')
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!user?.id,
+  })
+
   const criar = useMutation({
-    mutationFn: async ({ nome_alerta, filtros, email_notificacao, horario_verificacao = '08:00', ativo = false }) => {
+    mutationFn: async ({ nome_alerta, filtros, email_notificacao, horario_verificacao = '08:00', ativo = false, enviar_whatsapp = false }) => {
       if (!user?.id) throw new Error('Usuário não autenticado')
       const payload = {
         usuario_id: user.id,
@@ -42,6 +58,7 @@ export function useAlertasEmail() {
         frequencia: 'diario',
         email_notificacao: email_notificacao || null,
         horario_verificacao: horario_verificacao && String(horario_verificacao).trim() ? String(horario_verificacao).trim().slice(0, 8) : '08:00:00',
+        enviar_whatsapp: !!enviar_whatsapp,
       }
       const { data, error } = await supabase.from('alertas_usuario').insert(payload).select(COLS).single()
       if (error) throw error
@@ -53,13 +70,14 @@ export function useAlertasEmail() {
   })
 
   const atualizar = useMutation({
-    mutationFn: async ({ id, nome_alerta, filtros, ativo, horario_verificacao, email_notificacao }) => {
+    mutationFn: async ({ id, nome_alerta, filtros, ativo, horario_verificacao, email_notificacao, enviar_whatsapp }) => {
       if (!user?.id) throw new Error('Usuário não autenticado')
       const upd = {}
       if (nome_alerta !== undefined) upd.nome_alerta = nome_alerta
       if (filtros !== undefined) upd.filtros = filtros
       if (ativo !== undefined) upd.ativo = ativo
       if (email_notificacao !== undefined) upd.email_notificacao = email_notificacao
+      if (enviar_whatsapp !== undefined) upd.enviar_whatsapp = !!enviar_whatsapp
       if (horario_verificacao !== undefined) upd.horario_verificacao = horario_verificacao && String(horario_verificacao).trim() ? String(horario_verificacao).trim().slice(0, 8) : null
       upd.updated_at = new Date().toISOString()
       const { data, error } = await supabase.from('alertas_usuario').update(upd).eq('id', id).eq('usuario_id', user.id).select(COLS).single()
@@ -68,6 +86,7 @@ export function useAlertasEmail() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['alertas-email', user?.id])
+      queryClient.invalidateQueries(['alertas-whatsapp', user?.id])
     },
   })
 
@@ -79,10 +98,11 @@ export function useAlertasEmail() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['alertas-email', user?.id])
+      queryClient.invalidateQueries(['alertas-whatsapp', user?.id])
     },
   })
 
-  return { alertas, isLoading, criar, atualizar, remover }
+  return { alertas, alertasWhatsApp, isLoading: isLoading || isLoadingWhatsApp, criar, atualizar, remover }
 }
 
 /** Retorna um resumo legível dos filtros (UF, palavra, setor, etc.) */

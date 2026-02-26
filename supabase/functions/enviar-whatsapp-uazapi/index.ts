@@ -38,10 +38,7 @@
     const pub = formatarData((body.data_publicacao ?? null) as string | null)
     const abertura = formatarData((body.data_abertura ?? null) as string | null)
     const encerramento = formatarData((body.data_encerramento ?? null) as string | null)
-    const link = (body.link_pncp ?? '') as string
-
     let text = `📋 *Licitação*\n\n*Objeto:* ${objeto}\n*Órgão:* ${orgao}\n*Modalidade:* ${modalidade}\n*Valor:* ${valor}\n*UF:* ${uf || '—'}\n*Publicação:* ${pub}\n*Abertura:* ${abertura}\n*Encerramento:* ${encerramento}`
-    if (link) text += `\n\n${link}`
     return text
   }
 

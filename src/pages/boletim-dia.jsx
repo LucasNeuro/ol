@@ -97,20 +97,12 @@ function IconWhatsApp({ className = 'w-4 h-4' }) {
   )
 }
 
-// Máscara de telefone: (11) 99999-9999 — só DDD + celular (não inclui 55)
+// Máscara de telefone: (11) 99999-9999
 function maskTelefone(value) {
   const digits = String(value || '').replace(/\D/g, '')
   if (digits.length <= 2) return digits ? `(${digits}` : ''
   if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`
-}
-
-// Normaliza para só DDD + número (11 dígitos). Remove 55 na frente se vier do banco.
-function normalizarDDDCelular(numero) {
-  const digits = String(numero || '').replace(/\D/g, '')
-  if (digits.length === 13 && digits.startsWith('55')) return digits.slice(2) // 55 + 11
-  if (digits.length >= 10 && digits.length <= 11) return digits.slice(0, 11)
-  return digits
 }
 
 // Modal com estado local para não travar ao digitar (evita re-render do pai a cada tecla)
@@ -179,7 +171,8 @@ function LicitacoesContent() {
   const [limitePagina, setLimitePagina] = useState(50)
   const MAX_LICITACOES_EXIBIR = 200 // evita travar a UI com milhares de cards
   const [arquivosZipDescompactados, setArquivosZipDescompactados] = useState({}) // { anexoKey: { loading, arquivos, erro } }
-  const [baixandoDocumentos, setBaixandoDocumentos] = useState(new Set()) // IDs de licitações sendo processadas
+  const [baixandoDocumentos, setBaixandoDocumentos] = useState(new Set())
+  const [progressoDownload, setProgressoDownload] = useState({}) // { licitacaoId: { atual: 2, total: 15 } }
   const [whatsAppModalLicitacao, setWhatsAppModalLicitacao] = useState(null)
   const [whatsAppNumero, setWhatsAppNumero] = useState('')
   const [whatsAppEnviando, setWhatsAppEnviando] = useState(false)
@@ -199,6 +192,7 @@ function LicitacoesContent() {
   const [nomeSalvarFiltro, setNomeSalvarFiltro] = useState('')
   const [emailSalvarFiltro, setEmailSalvarFiltro] = useState('')
   const [horarioSalvarFiltro, setHorarioSalvarFiltro] = useState('08:00')
+  const [whatsappSalvarFiltro, setWhatsappSalvarFiltro] = useState(false)
 
   // Alertas por e-mail (filtros salvos): lista para contar + primeiro para o bloco rápido na sidebar
   const { alertas: alertasEmailLista, criar: criarAlertaEmail } = useAlertasEmail()
@@ -235,13 +229,13 @@ function LicitacoesContent() {
     retry: 1,
   })
 
-  // Sincronizar lista de números com os já salvos no banco (sempre em DDD+celular, sem 55)
+  // Sincronizar lista de números com os já salvos no banco
   useEffect(() => {
     if (!Array.isArray(numerosWhatsApp)) return
     const list = numerosWhatsApp
-      .filter((n) => normalizarDDDCelular(n.numero_telefone).length >= 10)
+      .filter((n) => (n.numero_telefone || '').replace(/\D/g, '').length >= 10)
       .map((n) => ({
-        numero_telefone: normalizarDDDCelular(n.numero_telefone),
+        numero_telefone: n.numero_telefone,
         label: n.label || '',
       }))
     setListaNumerosWhatsApp(list)
@@ -378,12 +372,23 @@ function LicitacoesContent() {
   })
 
   // Valores padrão dos filtros (reutilizado para restauração)
+  // Período padrão de 90 dias para não mostrar editais muito antigos/encerrados
+  const calcularPeriodoPadrao = (dias) => {
+    const hoje = new Date()
+    const inicio = new Date(hoje)
+    inicio.setDate(inicio.getDate() - (dias - 1))
+    const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+    return { dataPublicacaoPeriodoDias: String(dias), dataPublicacaoInicio: fmt(inicio), dataPublicacaoFim: fmt(hoje) }
+  }
+  const periodoPadrao = calcularPeriodoPadrao(90)
+
   const filtrosDefaults = {
     buscaObjeto: '',
     excluirPalavras: '',
     uf: '',
-    dataPublicacaoInicio: '',
-    dataPublicacaoFim: '',
+    dataPublicacaoPeriodoDias: periodoPadrao.dataPublicacaoPeriodoDias,
+    dataPublicacaoInicio: periodoPadrao.dataPublicacaoInicio,
+    dataPublicacaoFim: periodoPadrao.dataPublicacaoFim,
     valorMin: '',
     valorMax: '',
     statusEdital: '',
@@ -460,6 +465,7 @@ function LicitacoesContent() {
       setDataFiltro(dataFormatada)
       setFiltros(prev => ({
         ...prev,
+        dataPublicacaoPeriodoDias: '',
         dataPublicacaoInicio: dataFormatada,
         dataPublicacaoFim: dataFormatada
       }))
@@ -476,8 +482,7 @@ function LicitacoesContent() {
   useEffect(() => {
     setFiltrosAplicados(prev => ({
       ...prev,
-      // Manter buscaObjeto, excluirPalavras, dataPublicacaoInicio e dataPublicacaoFim como estão (só mudam ao clicar em "Aplicar")
-      // Atualizar apenas filtros não-texto e não-data
+      // Atualizar filtros que reagem imediatamente (sem precisar clicar em Aplicar)
       uf: filtros.uf,
       statusEdital: filtros.statusEdital,
       excluirAtividadesIds: filtros.excluirAtividadesIds || [],
@@ -490,6 +495,10 @@ function LicitacoesContent() {
       esfera: filtros.esfera,
       modoDisputa: filtros.modoDisputa,
       amparoLegal: filtros.amparoLegal,
+      // Período de data reage imediatamente (botões de 30/20/15/7 dias)
+      dataPublicacaoPeriodoDias: filtros.dataPublicacaoPeriodoDias,
+      dataPublicacaoInicio: filtros.dataPublicacaoInicio,
+      dataPublicacaoFim: filtros.dataPublicacaoFim,
     }))
   }, [
     filtros.uf, 
@@ -503,8 +512,11 @@ function LicitacoesContent() {
     filtros.situacao, 
     filtros.esfera, 
     filtros.modoDisputa, 
-    filtros.amparoLegal
-    // NÃO incluir: filtros.buscaObjeto, filtros.excluirPalavras, filtros.dataPublicacaoInicio, filtros.dataPublicacaoFim
+    filtros.amparoLegal,
+    filtros.dataPublicacaoPeriodoDias,
+    filtros.dataPublicacaoInicio,
+    filtros.dataPublicacaoFim,
+    // NÃO incluir: filtros.buscaObjeto, filtros.excluirPalavras
     // Esses campos só são aplicados ao clicar no botão "Aplicar"
   ])
 
@@ -540,94 +552,52 @@ function LicitacoesContent() {
     return []
   }, [])
 
-  // Função para baixar e compactar todos os documentos de uma licitação em ZIP
-  const baixarDocumentosComoZip = useCallback(async (licitacao) => {
-    try {
-      const licitacaoId = licitacao.id || licitacao.numero_controle_pncp
-      const numeroControlePNCP = licitacao.numero_controle_pncp
-      
-      setBaixandoDocumentos(prev => new Set(prev).add(licitacaoId))
-      
-      
-      // Obter token de autenticação
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      if (!supabaseUrl) {
-        throw new Error('VITE_SUPABASE_URL não configurado')
-      }
+  // Abre cada documento em nova aba para download nativo do navegador (sem CORS, sem compactação)
+  const baixarTodosDocumentos = useCallback(async (licitacao) => {
+    const licitacaoId = licitacao.id || licitacao.numero_controle_pncp
+    const docs = getDocumentos(licitacao)
 
-      const { supabase } = await import('@/lib/supabase')
-      const { data: session } = await supabase.auth.getSession()
-      const token = session?.session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY
-
-      // Chamar Edge Function
-      const response = await fetch(
-        `${supabaseUrl}/functions/v1/baixar-documentos-zip`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '',
-          },
-          body: JSON.stringify({
-            numeroControlePNCP: numeroControlePNCP,
-            licitacaoId: licitacao.id,
-          }),
-        }
-      )
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Erro desconhecido' }))
-        throw new Error(errorData.error || `Erro ${response.status}: ${response.statusText}`)
-      }
-
-      const result = await response.json()
-
-      if (!result.success || !result.zipBase64) {
-        throw new Error(result.error || 'Erro ao processar ZIP')
-      }
-
-
-      // Converter base64 para blob
-      const binaryString = atob(result.zipBase64)
-      const len = binaryString.length
-      const bytes = new Uint8Array(len)
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i)
-      }
-      const zipBlob = new Blob([bytes], { type: 'application/zip' })
-
-      // Criar link de download
-      const urlZip = URL.createObjectURL(zipBlob)
-      const link = document.createElement('a')
-      link.href = urlZip
-      link.download = result.nomeArquivo || `Documentos_${numeroControlePNCP}_${new Date().toISOString().split('T')[0]}.zip`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-
-      // Limpar URL do blob após um tempo
-      setTimeout(() => URL.revokeObjectURL(urlZip), 1000)
-
-
-      if (result.documentosErros > 0) {
-        success(`Download concluído! ${result.documentosBaixados} documentos baixados com sucesso, ${result.documentosErros} documentos não puderam ser baixados.`)
-      }
-      
-      setBaixandoDocumentos(prev => {
-        const novo = new Set(prev)
-        novo.delete(licitacaoId)
-        return novo
-      })
-    } catch (error) {
-      showError(`Erro ao baixar documentos: ${error.message}`)
-      setBaixandoDocumentos(prev => {
-        const novo = new Set(prev)
-        novo.delete(licitacao.id || licitacao.numero_controle_pncp)
-        return novo
-      })
+    if (!docs.length) {
+      showError('Nenhum documento encontrado nesta licitação.')
+      return
     }
-  }, [success, showError])
+
+    setBaixandoDocumentos(prev => new Set(prev).add(licitacaoId))
+    setProgressoDownload(prev => ({ ...prev, [licitacaoId]: { atual: 0, total: docs.length } }))
+
+    let baixados = 0
+
+    for (let i = 0; i < docs.length; i++) {
+      const doc = docs[i]
+      const url = doc.url || doc.urlDocumento || doc.linkDocumento || doc.link
+      if (!url) continue
+
+      setProgressoDownload(prev => ({ ...prev, [licitacaoId]: { atual: i + 1, total: docs.length } }))
+
+      window.open(url, '_blank', 'noopener,noreferrer')
+      baixados++
+
+      // Intervalo entre aberturas para o navegador não bloquear pop-ups
+      if (i < docs.length - 1) {
+        await new Promise(r => setTimeout(r, 600))
+      }
+    }
+
+    if (baixados > 0) {
+      success(`${baixados} documento(s) aberto(s) para download.`)
+    }
+
+    setBaixandoDocumentos(prev => {
+      const novo = new Set(prev)
+      novo.delete(licitacaoId)
+      return novo
+    })
+    setProgressoDownload(prev => {
+      const novo = { ...prev }
+      delete novo[licitacaoId]
+      return novo
+    })
+  }, [getDocumentos, success, showError])
 
   const enviarParaWhatsApp = useCallback(async (numeroOverride = null, licitacaoOverride = null) => {
     const licitacao = licitacaoOverride ?? whatsAppModalLicitacao
@@ -669,7 +639,7 @@ function LicitacoesContent() {
         || licitacao.resumo
         || 'Não informado'
       const payload = {
-        telefone: numero.replace(/\D/g, '').startsWith('55') ? numero.replace(/\D/g, '') : `55${numero.replace(/\D/g, '')}`,
+        telefone: numero.startsWith('55') ? numero : `55${numero}`,
         objeto_licitacao: objetoEdital,
         objeto: objetoEdital,
         orgao: licitacao.orgao_razao_social || 'Não informado',
@@ -717,7 +687,7 @@ function LicitacoesContent() {
       // Registrar falha para auditoria (não conta no limite)
       try {
         await registerSend(
-          numero.replace(/\D/g, '').startsWith('55') ? numero.replace(/\D/g, '') : `55${numero.replace(/\D/g, '')}`,
+          numero.startsWith('55') ? numero : `55${numero}`,
           licitacao.numero_controle_pncp || licitacao.id,
           'failed'
         )
@@ -739,7 +709,7 @@ function LicitacoesContent() {
       const num = (n.numero_telefone || '').replace(/\D/g, '')
       if (num.length < 10) continue
       try {
-        await enviarParaWhatsApp(`55${normalizarDDDCelular(n.numero_telefone)}`, licitacao)
+        await enviarParaWhatsApp(n.numero_telefone.startsWith('55') ? n.numero_telefone : `55${n.numero_telefone}`, licitacao)
         enviados++
       } catch {
         erros++
@@ -779,74 +749,63 @@ function LicitacoesContent() {
   }, [])
 
   const getStatusEdital = useCallback((licitacao) => {
-    // Tentar buscar de diferentes lugares na estrutura JSONB
-    let dataAbertura = licitacao.dados_completos?.dataAberturaProposta || 
-                        licitacao.dados_completos?.data_abertura_proposta ||
-                        licitacao.dados_completos?.dataAberturaPropostaData
-    let dataEncerramento = licitacao.dados_completos?.dataEncerramentoProposta || 
-                             licitacao.dados_completos?.data_encerramento_proposta ||
-                             licitacao.dados_completos?.dataEncerramentoPropostaData
-    
-    const hoje = new Date()
-    hoje.setHours(0, 0, 0, 0) // Normalizar para comparar apenas datas
-    
-    // Se tem data de abertura, verificar se ainda não abriu (PRÓXIMO)
-    if (dataAbertura) {
-      const abertura = new Date(dataAbertura)
-      abertura.setHours(0, 0, 0, 0)
-      
-      // Se ainda não abriu
-      if (hoje < abertura) {
-        return 'proximo'
-      }
-    }
-    
-    // Se tem data de encerramento, verificar status baseado nela
-    if (dataEncerramento) {
-    const encerramento = new Date(dataEncerramento)
-      encerramento.setHours(0, 0, 0, 0)
-    const diasRestantes = Math.ceil((encerramento - hoje) / (1000 * 60 * 60 * 24))
-    
-    // Encerrado
-      if (diasRestantes < 0) {
-        return 'encerrado'
-      }
-    
-    // Encerrando (3 dias ou menos)
-      if (diasRestantes <= 3 && diasRestantes > 0) {
-        return 'encerrando'
-      }
-    
-      // Em andamento (se já abriu e ainda não encerrou)
-    if (dataAbertura) {
-      const abertura = new Date(dataAbertura)
-        abertura.setHours(0, 0, 0, 0)
-      if (hoje >= abertura && hoje <= encerramento) {
-          return 'andamento'
-        }
-      } else {
-        // Se não tem abertura mas tem encerramento no futuro, considerar em andamento
-        if (diasRestantes > 0) {
-          return 'andamento'
-        }
-      }
-    } else if (dataAbertura) {
-      // Se só tem abertura, verificar se já abriu
-      const abertura = new Date(dataAbertura)
-      abertura.setHours(0, 0, 0, 0)
-      if (hoje >= abertura) {
-        return 'andamento'
-      }
+    const dc = licitacao.dados_completos || {}
+
+    // 1. Verificar status oficial do PNCP (campo situacaoCompraNome ou similar)
+    const situacaoNome = (
+      dc.situacaoCompraNome || dc.situacao_compra_nome ||
+      dc.situacaoCompra?.nome || dc.situacao || ''
+    ).toLowerCase().trim()
+
+    if (situacaoNome) {
+      if (situacaoNome.includes('suspend')) return 'suspenso'
+      if (situacaoNome.includes('revoga')) return 'revogado'
+      if (situacaoNome.includes('anula')) return 'anulado'
+      if (situacaoNome.includes('desert')) return 'deserto'
+      if (situacaoNome.includes('fracassa')) return 'fracassado'
+      if (situacaoNome.includes('adjudica') || situacaoNome.includes('homologa')) return 'adjudicado'
     }
 
-    // Se não tem datas específicas mas tem data de publicação recente, considerar ativa
+    // 2. Cálculo por datas (abertura, encerramento)
+    const dataAbertura = dc.dataAberturaProposta || dc.data_abertura_proposta || dc.dataAberturaPropostaData
+    const dataEncerramento = dc.dataEncerramentoProposta || dc.data_encerramento_proposta || dc.dataEncerramentoPropostaData
+
+    const hoje = new Date()
+    hoje.setHours(0, 0, 0, 0)
+
+    if (dataAbertura) {
+      const abertura = new Date(dataAbertura)
+      abertura.setHours(0, 0, 0, 0)
+      if (hoje < abertura) return 'proximo'
+    }
+
+    if (dataEncerramento) {
+      const encerramento = new Date(dataEncerramento)
+      encerramento.setHours(0, 0, 0, 0)
+      const diasRestantes = Math.ceil((encerramento - hoje) / (1000 * 60 * 60 * 24))
+
+      if (diasRestantes < 0) return 'encerrado'
+      if (diasRestantes <= 3 && diasRestantes > 0) return 'encerrando'
+
+      if (dataAbertura) {
+        const abertura = new Date(dataAbertura)
+        abertura.setHours(0, 0, 0, 0)
+        if (hoje >= abertura && hoje <= encerramento) return 'andamento'
+      } else if (diasRestantes > 0) {
+        return 'andamento'
+      }
+    } else if (dataAbertura) {
+      const abertura = new Date(dataAbertura)
+      abertura.setHours(0, 0, 0, 0)
+      if (hoje >= abertura) return 'andamento'
+    }
+
+    // 3. Sem datas: publicação recente = considerar em andamento
     if (!dataAbertura && !dataEncerramento && licitacao.data_publicacao_pncp) {
       const publicacao = new Date(licitacao.data_publicacao_pncp)
       publicacao.setHours(0, 0, 0, 0)
       const diasDesdePublicacao = Math.ceil((hoje - publicacao) / (1000 * 60 * 60 * 24))
-      if (diasDesdePublicacao <= 30 && diasDesdePublicacao >= 0) {
-        return 'andamento'
-      }
+      if (diasDesdePublicacao <= 30 && diasDesdePublicacao >= 0) return 'andamento'
     }
 
     return null
@@ -1723,10 +1682,23 @@ function LicitacoesContent() {
   // Licitações finais (sem filtros permanentes)
   const licitacoesFinais = licitacoesFiltradas
 
-  // Skeleton até carregar E até o efeito de filtros preencher licitacoesFiltradas (evita "0 editais" / "Nenhuma licitação" antes da hora)
+  // Skeleton apenas enquanto dados realmente carregam ou filtro está sendo processado
+  // Quando qualquer filtro está ativo e retorna 0 resultados, mostrar "Nenhum edital" (não loading)
+  const temFiltroAtivo = Boolean(
+    filtrosAplicados.dataPublicacaoPeriodoDias ||
+    filtrosAplicados.dataPublicacaoInicio ||
+    filtrosAplicados.dataPublicacaoFim ||
+    filtrosAplicados.statusEdital ||
+    filtrosAplicados.uf ||
+    filtrosAplicados.valorMin ||
+    filtrosAplicados.valorMax ||
+    filtrosAplicados.comDocumentos ||
+    filtrosAplicados.comItens ||
+    filtrosAplicados.comValor
+  )
   const carregandoOuPreparando = Boolean(
     isLoading || isFetching || processandoFiltro ||
-    (Array.isArray(licitacoes) && licitacoes.length > 0 && licitacoesFiltradas.length === 0)
+    (!temFiltroAtivo && Array.isArray(licitacoes) && licitacoes.length > 0 && licitacoesFiltradas.length === 0)
   )
 
   // Lista sem duplicatas por id (evita "two children with the same key" e cards repetidos)
@@ -1898,18 +1870,22 @@ function LicitacoesContent() {
     return diasRestantes > 0 && diasRestantes <= 7
   }
 
-  // Statuses presentes nos editais carregados (para popular o dropdown dinamicamente)
+  // Todos os status possíveis para o filtro (sempre exibidos, independente dos dados carregados)
   const statusesPresentesNosEditais = useMemo(() => {
-    if (!licitacoes?.length) return []
-    const set = new Set()
-    licitacoes.forEach(lic => {
-      const s = getStatusEdital(lic)
-      if (s) set.add(s)
-      if (isUrgente(lic)) set.add('urgente')
-    })
-    const ordem = ['proximo', 'andamento', 'encerrando', 'urgente', 'encerrado']
-    return ordem.filter(s => set.has(s))
-  }, [licitacoes, getStatusEdital])
+    return [
+      { value: 'proximo', label: 'Próximo (Ainda não abriu)' },
+      { value: 'andamento', label: 'Em Andamento' },
+      { value: 'encerrando', label: 'Encerrando (3 dias ou menos)' },
+      { value: 'urgente', label: 'Urgente (7 dias ou menos)' },
+      { value: 'encerrado', label: 'Encerrado' },
+      { value: 'suspenso', label: 'Suspenso' },
+      { value: 'revogado', label: 'Revogado' },
+      { value: 'anulado', label: 'Anulado' },
+      { value: 'deserto', label: 'Deserto' },
+      { value: 'fracassado', label: 'Fracassado' },
+      { value: 'adjudicado', label: 'Adjudicado / Homologado' },
+    ]
+  }, [])
 
   // Toggle favorito
   const toggleFavorito = useMutation({
@@ -2122,6 +2098,7 @@ function LicitacoesContent() {
       excluirPalavras: '',
       uf: '',
       statusEdital: '',
+      dataPublicacaoPeriodoDias: '',
       dataPublicacaoInicio: '',
       dataPublicacaoFim: '',
       valorMin: '',
@@ -2181,7 +2158,7 @@ function LicitacoesContent() {
     if (filtros.excluirPalavras) count++
     if (filtros.uf) count++
     if (filtros.statusEdital) count++
-    if (filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim) count++
+    if (filtros.dataPublicacaoPeriodoDias || filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim) count++
     if (filtros.valorMin || filtros.valorMax) count++
     if (filtros.comDocumentos) count++
     if (filtros.comItens) count++
@@ -2196,13 +2173,13 @@ function LicitacoesContent() {
     setWhatsAppSlotsSaving(true)
     try {
       const numeros = listaNumerosWhatsApp
-        .map((s) => ({ ...s, numero_telefone: normalizarDDDCelular(s.numero_telefone) }))
+        .map((s) => ({ ...s, numero_telefone: (s.numero_telefone || '').replace(/\D/g, '') }))
         .filter((s) => s.numero_telefone.length >= 10)
       await supabase.from('usuario_whatsapp_numeros').delete().eq('usuario_id', user.id)
       if (numeros.length > 0) {
         const rows = numeros.slice(0, 3).map((s, i) => ({
           usuario_id: user.id,
-          numero_telefone: s.numero_telefone,
+          numero_telefone: s.numero_telefone.startsWith('55') ? s.numero_telefone : `55${s.numero_telefone}`,
           label: (s.label || '').trim() || null,
           ordem: i + 1,
           ativo: true,
@@ -2220,9 +2197,10 @@ function LicitacoesContent() {
   }
 
   const adicionarNumeroWhatsApp = () => {
-    const num = normalizarDDDCelular(whatsAppNovoNumero)
-    if (num.length < 10 || listaNumerosWhatsApp.length >= 3) return
-    if (listaNumerosWhatsApp.some((n) => normalizarDDDCelular(n.numero_telefone) === num)) return
+    const raw = whatsAppNovoNumero.replace(/\D/g, '')
+    if (raw.length < 10 || listaNumerosWhatsApp.length >= 3) return
+    const num = raw.startsWith('55') ? raw : `55${raw}`
+    if (listaNumerosWhatsApp.some((n) => (n.numero_telefone || '').replace(/\D/g, '') === num.replace(/\D/g, ''))) return
     setListaNumerosWhatsApp((prev) => [...prev, { numero_telefone: num, label: whatsAppNovoLabel.trim() || '' }])
     setWhatsAppNovoNumero('')
     setWhatsAppNovoLabel('')
@@ -2236,6 +2214,7 @@ function LicitacoesContent() {
     setNomeSalvarFiltro('')
     setEmailSalvarFiltro(perfilUsuario?.email || alertaEmailDestino || '')
     setHorarioSalvarFiltro(alertaEmailHorario || '08:00')
+    setWhatsappSalvarFiltro(listaNumerosWhatsApp.length > 0)
     setModalSalvarFiltroAberto(true)
   }
 
@@ -2247,7 +2226,8 @@ function LicitacoesContent() {
         filtros: filtrosAplicados,
         email_notificacao: emailSalvarFiltro.trim() || null,
         horario_verificacao: horarioSalvarFiltro,
-        ativo: false,
+        ativo: true,
+        enviar_whatsapp: whatsappSalvarFiltro,
       })
       success('Filtro salvo. Ative e ajuste o horário em "Filtros salvos" no menu.')
       setModalSalvarFiltroAberto(false)
@@ -2415,24 +2395,55 @@ function LicitacoesContent() {
                   </span>
                 </AccordionTrigger>
                 <AccordionContent className="px-3 pb-3 pt-1 space-y-3 border-t border-border/60">
-                  {/* Data Publicação */}
+                  {/* Período de Publicação */}
                 <div>
-                    <Label className="text-[11px] font-medium text-gray-600 mb-1 block">Data Publicação</Label>
-                    <div className="flex gap-1.5">
-                  <Input
-                        type="date"
-                        value={filtros.dataPublicacaoInicio}
-                        onChange={(e) => setFiltros({ ...filtros, dataPublicacaoInicio: e.target.value })}
-                        className="h-8 rounded-md text-xs border-border/80"
-                      />
-                      <Input
-                        type="date"
-                        value={filtros.dataPublicacaoFim}
-                        onChange={(e) => setFiltros({ ...filtros, dataPublicacaoFim: e.target.value })}
-                        className="h-8 rounded-md text-xs border-border/80"
-                      />
-          </div>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">Vazio = sem filtro por data (mostra todos)</p>
+                    <Label className="text-[11px] font-medium text-gray-600 mb-1 block">Publicados nos últimos</Label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[90, 60, 30, 20, 15, 7].map((dias) => (
+                        <Button
+                          key={dias}
+                          type="button"
+                          variant={String(filtros.dataPublicacaoPeriodoDias) === String(dias) ? "default" : "outline"}
+                          className="h-8 text-xs px-0"
+                          onClick={() => {
+                            const hoje = new Date()
+                            const fim = new Date(hoje)
+                            const inicio = new Date(hoje)
+                            inicio.setDate(inicio.getDate() - (dias - 1))
+                            const paraData = (d) => {
+                              const y = d.getFullYear()
+                              const m = String(d.getMonth() + 1).padStart(2, '0')
+                              const day = String(d.getDate()).padStart(2, '0')
+                              return `${y}-${m}-${day}`
+                            }
+                            setFiltros({
+                              ...filtros,
+                              dataPublicacaoPeriodoDias: String(dias),
+                              dataPublicacaoInicio: paraData(inicio),
+                              dataPublicacaoFim: paraData(fim),
+                            })
+                          }}
+                        >
+                          {dias} dias
+                        </Button>
+                      ))}
+                    </div>
+                    <div className="mt-1.5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-7 text-[11px] px-2"
+                        onClick={() => setFiltros({
+                          ...filtros,
+                          dataPublicacaoPeriodoDias: '',
+                          dataPublicacaoInicio: '',
+                          dataPublicacaoFim: '',
+                        })}
+                      >
+                        Limpar período
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Escolha rápida: 30, 20, 15 ou 7 dias.</p>
                 </div>
                 
                   {/* UF */}
@@ -2461,12 +2472,8 @@ function LicitacoesContent() {
                       <SelectContent>
                         <SelectItem value="TODOS">Todos os Status</SelectItem>
                         {statusesPresentesNosEditais.map(s => (
-                          <SelectItem key={s} value={s}>
-                            {s === 'proximo' ? 'Próximo (Ainda não abriu)' :
-                             s === 'andamento' ? 'Em Andamento' :
-                             s === 'encerrando' ? 'Encerrando (≤ 3 dias)' :
-                             s === 'encerrado' ? 'Encerrado' :
-                             s === 'urgente' ? 'Urgente (≤ 7 dias)' : s}
+                          <SelectItem key={s.value} value={s.value}>
+                            {s.label}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -2609,7 +2616,7 @@ function LicitacoesContent() {
                         variant="outline"
                         className="h-8 rounded-lg border-border text-xs shrink-0"
                         onClick={adicionarNumeroWhatsApp}
-                        disabled={listaNumerosWhatsApp.length >= 3 || normalizarDDDCelular(whatsAppNovoNumero).length < 10}
+                        disabled={listaNumerosWhatsApp.length >= 3 || whatsAppNovoNumero.replace(/\D/g, '').length < 10}
                       >
                         Adicionar
                       </Button>
@@ -2617,8 +2624,8 @@ function LicitacoesContent() {
                     {listaNumerosWhatsApp.length > 0 && (
                       <ul className="space-y-1 mt-2">
                         {listaNumerosWhatsApp.map((item, index) => {
-                          const num = normalizarDDDCelular(item.numero_telefone)
-                          const display = num.length >= 10 ? maskTelefone(num) : item.numero_telefone
+                          const num = (item.numero_telefone || '').replace(/\D/g, '')
+                          const display = num.length >= 10 ? maskTelefone(item.numero_telefone) : item.numero_telefone
                           return (
                             <li key={index} className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md bg-gray-50 border border-border/60 text-[11px]">
                               <span className="truncate flex-1 min-w-0">
@@ -2774,19 +2781,19 @@ function LicitacoesContent() {
                 {filtrosAplicados.statusEdital && (
                   <Badge variant="secondary" className="gap-1">
                     Status: {
-                      filtrosAplicados.statusEdital === 'proximo' ? 'Próximo' :
-                      filtrosAplicados.statusEdital === 'andamento' ? 'Em Andamento' :
-                      filtrosAplicados.statusEdital === 'encerrando' ? 'Encerrando' :
-                      filtrosAplicados.statusEdital === 'urgente' ? 'Urgente' :
-                      'Encerrado'
+                      statusesPresentesNosEditais.find(s => s.value === filtrosAplicados.statusEdital)?.label
+                      || filtrosAplicados.statusEdital
                     }
                     <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, statusEdital: '' }; setFiltros(n); setFiltrosAplicados(n); }} />
                   </Badge>
                 )}
-                {(filtrosAplicados.dataPublicacaoInicio || filtrosAplicados.dataPublicacaoFim) && (
+                {(filtrosAplicados.dataPublicacaoPeriodoDias || filtrosAplicados.dataPublicacaoInicio || filtrosAplicados.dataPublicacaoFim) && (
                   <Badge variant="secondary" className="gap-1">
-                    Data: {filtrosAplicados.dataPublicacaoInicio ? formatarData(filtrosAplicados.dataPublicacaoInicio) : '...'} - {filtrosAplicados.dataPublicacaoFim ? formatarData(filtrosAplicados.dataPublicacaoFim) : '...'}
-                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, dataPublicacaoInicio: '', dataPublicacaoFim: '' }; setFiltros(n); setFiltrosAplicados(n); }} />
+                    {filtrosAplicados.dataPublicacaoPeriodoDias
+                      ? `Data: últimos ${filtrosAplicados.dataPublicacaoPeriodoDias} dias`
+                      : `Data: ${filtrosAplicados.dataPublicacaoInicio ? formatarData(filtrosAplicados.dataPublicacaoInicio) : '...'} - ${filtrosAplicados.dataPublicacaoFim ? formatarData(filtrosAplicados.dataPublicacaoFim) : '...'}`
+                    }
+                    <X className="w-3 h-3 cursor-pointer" onClick={() => { const n = { ...filtrosAplicados, dataPublicacaoPeriodoDias: '', dataPublicacaoInicio: '', dataPublicacaoFim: '' }; setFiltros(n); setFiltrosAplicados(n); }} />
                   </Badge>
                 )}
                 {(filtrosAplicados.valorMin || filtrosAplicados.valorMax) && (
@@ -2877,7 +2884,7 @@ function LicitacoesContent() {
                 )}
               </div>
               {(filtros.buscaObjeto || filtros.excluirPalavras || filtros.uf || filtros.statusEdital || 
-                filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim || filtros.valorMin || 
+                filtros.dataPublicacaoPeriodoDias || filtros.dataPublicacaoInicio || filtros.dataPublicacaoFim || filtros.valorMin || 
                 filtros.valorMax || filtros.comDocumentos || 
                 filtros.comItens || filtros.comValor || dataFiltro) && licitacoesParaExibir.length > 100 && (
                 <p className="text-xs text-orange-600">
@@ -3072,20 +3079,24 @@ function LicitacoesContent() {
                       
                       return (
                         <>
-                          {documentos.length > 0 && (
+                          {documentos.length > 0 && (() => {
+                            const licId = licitacao.id || licitacao.numero_controle_pncp
+                            const progresso = progressoDownload[licId]
+                            const baixando = baixandoDocumentos.has(licId)
+                            return (
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
-                              baixarDocumentosComoZip(licitacao)
+                              baixarTodosDocumentos(licitacao)
                             }}
-                            disabled={baixandoDocumentos.has(licitacao.id || licitacao.numero_controle_pncp)}
+                            disabled={baixando}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-xs font-medium text-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Baixar todos os documentos em ZIP"
+                            title={baixando ? `Abrindo documento ${progresso?.atual || '...'}/${progresso?.total || '...'}` : 'Baixar todos os documentos'}
                           >
-                            {baixandoDocumentos.has(licitacao.id || licitacao.numero_controle_pncp) ? (
+                            {baixando ? (
                               <>
-                                <div className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                                Compactando...
+                                <div className="w-3 h-3 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+                                {progresso?.atual || 0}/{progresso?.total || '?'}
                               </>
                             ) : (
                               <>
@@ -3094,7 +3105,8 @@ function LicitacoesContent() {
                               </>
                             )}
                           </button>
-                        )}
+                            )
+                          })()}
                           {itens.length > 0 && (
                           <button
                             className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-xs font-medium text-gray-700 transition-colors"
@@ -3714,9 +3726,50 @@ function LicitacoesContent() {
                     <h3 className="text-lg font-semibold text-gray-900 mb-2">
                       Nenhuma licitação encontrada
                     </h3>
-                    <p className="text-sm text-gray-600">
-                      Tente ajustar os filtros ou verifique se há licitações disponíveis.
-                    </p>
+                    {filtrosAplicados.dataPublicacaoPeriodoDias ? (
+                      <div className="space-y-3">
+                        <p className="text-sm text-gray-600">
+                          Não há licitações publicadas nos últimos <strong>{filtrosAplicados.dataPublicacaoPeriodoDias} dias</strong>.
+                        </p>
+                        <div className="flex flex-wrap justify-center gap-2 mt-3">
+                          {[90, 60, 30, 20, 15, 7].filter(d => String(d) !== String(filtrosAplicados.dataPublicacaoPeriodoDias)).map(d => {
+                            const hoje = new Date()
+                            const inicio = new Date(hoje)
+                            inicio.setDate(inicio.getDate() - (d - 1))
+                            const paraData = (dt) => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
+                            return (
+                              <button
+                                key={d}
+                                type="button"
+                                className="px-3 py-1.5 text-xs rounded-md border border-orange-300 text-orange-600 hover:bg-orange-50 transition-colors"
+                                onClick={() => {
+                                  const n = { ...filtrosAplicados, dataPublicacaoPeriodoDias: String(d), dataPublicacaoInicio: paraData(inicio), dataPublicacaoFim: paraData(hoje) }
+                                  setFiltros(n)
+                                  setFiltrosAplicados(n)
+                                }}
+                              >
+                                Últimos {d} dias
+                              </button>
+                            )
+                          })}
+                          <button
+                            type="button"
+                            className="px-3 py-1.5 text-xs rounded-md border border-gray-300 text-gray-500 hover:bg-gray-50 transition-colors"
+                            onClick={() => {
+                              const n = { ...filtrosAplicados, dataPublicacaoPeriodoDias: '', dataPublicacaoInicio: '', dataPublicacaoFim: '' }
+                              setFiltros(n)
+                              setFiltrosAplicados(n)
+                            }}
+                          >
+                            Ver todos
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-600">
+                        Tente ajustar os filtros ou verifique se há licitações disponíveis.
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
               )}
@@ -3786,6 +3839,25 @@ function LicitacoesContent() {
             <div>
               <Label>Horário do envio diário</Label>
               <Input type="time" value={horarioSalvarFiltro} onChange={(e) => setHorarioSalvarFiltro(e.target.value)} className="mt-1" />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3 bg-green-50 border-green-200">
+              <div className="flex items-center gap-2">
+                <IconWhatsApp className="w-4 h-4 text-green-600" />
+                <div>
+                  <p className="text-sm font-medium text-green-900">Também enviar por WhatsApp</p>
+                  <p className="text-xs text-green-700">
+                    {listaNumerosWhatsApp.length > 0
+                      ? `${listaNumerosWhatsApp.length} número(s) cadastrado(s)`
+                      : 'Cadastre números na sidebar primeiro'}
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={whatsappSalvarFiltro}
+                onCheckedChange={setWhatsappSalvarFiltro}
+                disabled={listaNumerosWhatsApp.length === 0}
+                className="data-[state=checked]:bg-green-500"
+              />
             </div>
           </div>
           <SheetFooter className="gap-2 sm:gap-0">

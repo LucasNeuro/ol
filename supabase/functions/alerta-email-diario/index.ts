@@ -65,6 +65,19 @@ serve(async (req) => {
     const hora = brTime.getHours()
     const minuto = brTime.getMinutes()
     const horarioAtual = `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`
+    const totalMinutosAgora = hora * 60 + minuto
+
+    function dentroJanela(horario: string): boolean {
+      const partes = String(horario).slice(0, 5).split(':')
+      if (partes.length < 2) return false
+      const hAlerta = parseInt(partes[0], 10)
+      const mAlerta = parseInt(partes[1], 10)
+      if (isNaN(hAlerta) || isNaN(mAlerta)) return false
+      const totalMinutosAlerta = hAlerta * 60 + mAlerta
+      const diff = Math.abs(totalMinutosAgora - totalMinutosAlerta)
+      const diffCorrigido = Math.min(diff, 1440 - diff)
+      return diffCorrigido <= 5
+    }
 
     const { data: alertas, error: errAlertas } = await supabase
       .from('alertas_usuario')
@@ -83,8 +96,7 @@ serve(async (req) => {
     const alertasParaRodar = alertas.filter((a) => {
       const h = a.horario_verificacao
       if (!h) return false
-      const s = String(h).slice(0, 5)
-      return s === horarioAtual
+      return dentroJanela(String(h))
     })
 
     if (alertasParaRodar.length === 0) {
@@ -162,6 +174,7 @@ serve(async (req) => {
       const idsEncontrados = (licitacoes ?? []).map((l) => l.id)
 
       const linkBoletim = `${siteUrl.replace(/\/$/, '')}/boletim`
+      const linkCancelar = `${siteUrl.replace(/\/$/, '')}/alertas`
       const listaLicitacoes = licitacoes ?? []
       const cardsEditais = listaLicitacoes.slice(0, 20).map((lic) => {
         const valor = lic.valor_total_estimado
@@ -225,14 +238,15 @@ serve(async (req) => {
                 </tr>
               </table>
               `}
-              <p style="color:#6b7280;margin:30px 0 0 0;font-size:14px;line-height:1.6;">
-                Se você não deseja receber estes alertas, desative na configuração do sistema.
+              <p style="color:#9ca3af;margin:30px 0 0 0;font-size:12px;line-height:1.6;text-align:center;">
+                Você está recebendo este e-mail porque ativou alertas no Sistema Licitação.<br>
+                <a href="${linkCancelar}" style="color:#f97316;text-decoration:underline;">Gerenciar ou cancelar alertas</a>
               </p>
             </td>
           </tr>
           <tr>
-            <td style="background-color:#f9fafb;padding:20px 30px;text-align:center;border-radius:0 0 8px 8px;border-top:1px solid #e5e7eb;">
-              <p style="color:#6b7280;margin:0;font-size:12px;">Sistema Licitação - Portal de Licitações Públicas</p>
+            <td style="background-color:#f9fafb;padding:16px 30px;text-align:center;border-radius:0 0 8px 8px;border-top:1px solid #e5e7eb;">
+              <p style="color:#9ca3af;margin:0;font-size:11px;">Sistema Licitação · Portal de Licitações Públicas</p>
             </td>
           </tr>
         </table>
@@ -251,6 +265,11 @@ serve(async (req) => {
           to: [emailDestino],
           subject: assunto,
           html,
+          headers: {
+            'List-Unsubscribe': `<${linkCancelar}>`,
+            'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+            'X-Entity-Ref-ID': alerta.id,
+          },
         })
         if (errResend) throw errResend
         totalEmailsEnviados++

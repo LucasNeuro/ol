@@ -17,6 +17,9 @@
     "testar-filtro-por-cadastro-id": "node scripts/testar-filtro-por-cadastro-id.js",
     "trigger-alerta-whatsapp": "node scripts/trigger-alerta-whatsapp.js",
     "trigger-alerta-email": "node scripts/trigger-alerta-email.js",
+    "diagnostico-alertas": "node scripts/diagnostico-alertas.js",
+    "testar-envio-email": "node scripts/testar-envio-email.js",
+    "testar-envio-whatsapp": "node scripts/testar-envio-whatsapp.js",
     "trigger-alertas": "node scripts/trigger-alertas.js",
     "classificar-licitacoes-por-setor": "node scripts/classificar-licitacoes-por-setor.js",
     "atualizar-cnae": "node scripts/atualizar-cnae-ibge.js"

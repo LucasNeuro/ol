@@ -1,7 +1,6 @@
 // Edge Function para baixar arquivos ZIP (contorna CORS)
-// O cliente descompacta usando JSZip após receber os dados
+// Retorna o ZIP como stream binário — o cliente descompacta usando JSZip
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -9,133 +8,95 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    // Parse do body com tratamento de erro
     let body
     try {
       body = await req.json()
-    } catch (parseError) {
-      console.error('❌ Erro ao fazer parse do JSON:', parseError)
+    } catch {
       throw new Error('Erro ao processar requisição: body inválido')
     }
 
     const { urlZip, nomeArquivo } = body
-    
+
     if (!urlZip) {
       throw new Error('URL do arquivo ZIP é obrigatória')
     }
 
     console.log('📦 [Edge Function] Baixando ZIP:', { urlZip, nomeArquivo })
 
-    // Baixar o arquivo ZIP do servidor (sem CORS) com timeout e retry
-    let zipResponse
+    let zipResponse: Response | null = null
     let retries = 3
-    let lastError
-    
+
     while (retries > 0) {
       try {
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 30000) // 30s timeout
-        
+        const timeoutId = setTimeout(() => controller.abort(), 30000)
+
         zipResponse = await fetch(urlZip, {
           signal: controller.signal,
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
           }
         })
-        
+
         clearTimeout(timeoutId)
-        
-        if (zipResponse.ok) {
-          break
-        } else if (zipResponse.status >= 500 && retries > 1) {
+
+        if (zipResponse.ok) break
+        if (zipResponse.status >= 500 && retries > 1) {
           retries--
-          await new Promise(resolve => setTimeout(resolve, 2000))
+          await new Promise(r => setTimeout(r, 2000))
           continue
-        } else {
-          throw new Error(`Erro ao baixar ZIP: ${zipResponse.status} ${zipResponse.statusText}`)
         }
+        throw new Error(`Erro ao baixar ZIP: ${zipResponse.status} ${zipResponse.statusText}`)
       } catch (error) {
-        lastError = error
-        if (error.name === 'AbortError') {
+        if ((error as Error).name === 'AbortError') {
           throw new Error('Timeout ao baixar ZIP (30s)')
         }
         retries--
-        if (retries > 0) {
-          await new Promise(resolve => setTimeout(resolve, 2000))
-        }
+        if (retries > 0) await new Promise(r => setTimeout(r, 2000))
+        else throw error
       }
     }
-    
+
     if (!zipResponse || !zipResponse.ok) {
-      throw lastError || new Error(`Erro ao baixar ZIP após ${3 - retries} tentativas`)
+      throw new Error('Erro ao baixar ZIP após tentativas')
     }
 
     const zipArrayBuffer = await zipResponse.arrayBuffer()
     const zipBuffer = new Uint8Array(zipArrayBuffer)
-    
+
     console.log('✅ [Edge Function] ZIP baixado, tamanho:', zipBuffer.length, 'bytes')
 
-   
     if (zipBuffer.length > 50 * 1024 * 1024) {
       throw new Error('Arquivo ZIP muito grande. Máximo: 50MB')
     }
 
-    
-    let base64 = ''
-    try {
-      
-      const base64Array = []
-      const chunkSize = 8192
-      for (let i = 0; i < zipBuffer.length; i += chunkSize) {
-        const chunk = zipBuffer.slice(i, Math.min(i + chunkSize, zipBuffer.length))
-        // Converter chunk para base64
-        const chunkBase64 = btoa(String.fromCharCode.apply(null, Array.from(chunk)))
-        base64Array.push(chunkBase64)
-      }
-      base64 = base64Array.join('')
-    } catch (conversionError) {
-      console.error('❌ Erro ao converter para base64:', conversionError)
-      throw new Error(`Erro ao converter ZIP para base64: ${conversionError.message}`)
-    }
-    
-    console.log('✅ [Edge Function] ZIP convertido para base64')
-    
-    return new Response(
-      JSON.stringify({ 
-        success: true,
-        zipBase64: base64,
-        tamanho: zipBuffer.length,
-        nomeArquivo: nomeArquivo || 'arquivo.zip',
-        mensagem: 'ZIP baixado com sucesso. Descompacte no cliente.'
-      }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200
-      }
-    )
+    // Retornar ZIP como resposta binária direta (sem base64)
+    return new Response(zipBuffer, {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${nomeArquivo || 'arquivo.zip'}"`,
+        'X-Zip-Size': String(zipBuffer.length),
+      },
+    })
   } catch (error) {
-    console.error('❌ [Edge Function] Erro:', error)
-    console.error('❌ Stack trace:', error.stack)
-    console.error('❌ Error name:', error.name)
-    console.error('❌ Error message:', error.message)
-    
+    console.error('❌ [Edge Function] Erro:', (error as Error).message)
+
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         success: false,
-        error: error.message || 'Erro desconhecido ao processar arquivo ZIP',
-        details: error.stack || 'Sem detalhes adicionais'
+        error: (error as Error).message || 'Erro desconhecido ao processar arquivo ZIP',
       }),
-      { 
+      {
         status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     )
   }
 })
-

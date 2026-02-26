@@ -2,6 +2,7 @@
 // EDGE FUNCTION: BAIXAR DOCUMENTOS COMO ZIP
 // ============================================
 // Baixa todos os documentos de uma licitação e compacta em ZIP
+// Retorna o ZIP como stream binário (não base64) para evitar corrupção e limites de tamanho
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -10,6 +11,7 @@ import JSZip from 'https://esm.sh/jszip@3.10.1'
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Expose-Headers': 'X-Nome-Arquivo, X-Docs-Sucesso, X-Docs-Erros, X-Docs-Total, Content-Disposition',
 }
 
 interface Documento {
@@ -22,51 +24,43 @@ interface Documento {
   nomeDocumento?: string
 }
 
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
+}
+
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    // Parse do body
     let body
     try {
       body = await req.json()
-    } catch (parseError) {
-      console.error('❌ Erro ao fazer parse do JSON:', parseError)
-      return new Response(
-        JSON.stringify({ error: 'Body inválido' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    } catch {
+      return jsonResponse({ error: 'Body inválido' }, 400)
     }
 
     const { numeroControlePNCP, licitacaoId } = body
 
     if (!numeroControlePNCP && !licitacaoId) {
-      return new Response(
-        JSON.stringify({ error: 'Parâmetros obrigatórios: numeroControlePNCP ou licitacaoId' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return jsonResponse({ error: 'Parâmetros obrigatórios: numeroControlePNCP ou licitacaoId' }, 400)
     }
 
     console.log('📋 Parâmetros recebidos:', { numeroControlePNCP, licitacaoId })
 
-    // Criar cliente Supabase
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-    
+
     if (!supabaseUrl || !supabaseServiceKey) {
-      console.error('❌ Variáveis de ambiente não configuradas')
-      return new Response(
-        JSON.stringify({ error: 'Configuração do Supabase não encontrada' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return jsonResponse({ error: 'Configuração do Supabase não encontrada' }, 500)
     }
-    
+
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    // Buscar licitação no banco
     let query = supabase
       .from('licitacoes')
       .select('id, numero_controle_pncp, anexos, dados_completos')
@@ -82,10 +76,7 @@ serve(async (req) => {
 
     if (errorLicitacao || !licitacoes || licitacoes.length === 0) {
       console.error('❌ Erro ao buscar licitação:', errorLicitacao)
-      return new Response(
-        JSON.stringify({ error: 'Licitação não encontrada' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return jsonResponse({ error: 'Licitação não encontrada' }, 404)
     }
 
     const licitacao = licitacoes[0]
@@ -117,14 +108,8 @@ serve(async (req) => {
       licitacao.anexos.forEach((anexo: any) => {
         const url = anexo.url || anexo.urlDocumento || anexo.linkDocumento || anexo.link
         const nome = anexo.nomeArquivo || anexo.nome || anexo.nomeDocumento || anexo.tipoDocumentoNome
-        if (url) {
-          // Evitar duplicatas baseado na URL
-          if (!documentos.some(d => d.urlDocumento === url)) {
-            documentos.push({
-              urlDocumento: url,
-              nomeArquivo: nome || 'Documento.pdf'
-            })
-          }
+        if (url && !documentos.some(d => d.urlDocumento === url)) {
+          documentos.push({ urlDocumento: url, nomeArquivo: nome || 'Documento.pdf' })
         }
       })
       console.log(`📎 ${licitacao.anexos.length} anexos encontrados no campo anexos`)
@@ -134,62 +119,36 @@ serve(async (req) => {
     if (licitacao.dados_completos) {
       let dadosCompletos = licitacao.dados_completos
       if (typeof dadosCompletos === 'string') {
-        try {
-          dadosCompletos = JSON.parse(dadosCompletos)
-        } catch (e) {
-          console.warn('⚠️ Erro ao parsear dados_completos:', e)
-        }
+        try { dadosCompletos = JSON.parse(dadosCompletos) } catch { /* ignore */ }
       }
 
-      // Anexos em dados_completos
-      if (dadosCompletos.anexos && Array.isArray(dadosCompletos.anexos)) {
-        dadosCompletos.anexos.forEach((anexo: any) => {
-          const url = anexo.url || anexo.urlDocumento || anexo.linkDocumento || anexo.link
-          const nome = anexo.nomeArquivo || anexo.nome || anexo.nomeDocumento
-          if (url) {
-            // Evitar duplicatas
-            if (!documentos.some(d => d.urlDocumento === url)) {
-              documentos.push({
-                urlDocumento: url,
-                nomeArquivo: nome || 'Documento.pdf'
-              })
-            }
+      const extrairDocs = (arr: any[]) => {
+        arr.forEach((item: any) => {
+          const url = item.url || item.urlDocumento || item.linkDocumento || item.link
+          const nome = item.nomeArquivo || item.nome || item.nomeDocumento
+          if (url && !documentos.some(d => d.urlDocumento === url)) {
+            documentos.push({ urlDocumento: url, nomeArquivo: nome || 'Documento.pdf' })
           }
         })
+      }
+
+      if (Array.isArray(dadosCompletos.anexos)) {
+        extrairDocs(dadosCompletos.anexos)
         console.log(`📦 ${dadosCompletos.anexos.length} anexos encontrados em dados_completos`)
       }
-
-      // Documentos em dados_completos
-      if (dadosCompletos.documentos && Array.isArray(dadosCompletos.documentos)) {
-        dadosCompletos.documentos.forEach((doc: any) => {
-          const url = doc.url || doc.urlDocumento || doc.linkDocumento || doc.link
-          const nome = doc.nomeArquivo || doc.nome || doc.nomeDocumento
-          if (url) {
-            // Evitar duplicatas
-            if (!documentos.some(d => d.urlDocumento === url)) {
-              documentos.push({
-                urlDocumento: url,
-                nomeArquivo: nome || 'Documento.pdf'
-              })
-            }
-          }
-        })
+      if (Array.isArray(dadosCompletos.documentos)) {
+        extrairDocs(dadosCompletos.documentos)
         console.log(`📄 ${dadosCompletos.documentos.length} documentos encontrados em dados_completos`)
       }
     }
 
     if (documentos.length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'Nenhum documento encontrado para esta licitação' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return jsonResponse({ error: 'Nenhum documento encontrado para esta licitação' }, 404)
     }
 
-    console.log(`📦 Total de ${documentos.length} documentos únicos encontrados após remover duplicatas`)
-    console.log(`📋 Lista de documentos:`, documentos.map((d, i) => `${i + 1}. ${d.nomeArquivo} (${d.urlDocumento?.substring(0, 50)}...)`))
+    console.log(`📦 Total de ${documentos.length} documentos únicos`)
 
     // Criar ZIP
-    // JSZip pode vir como default export ou named export dependendo do esm.sh
     let JSZipClass
     if (typeof JSZip === 'function') {
       JSZipClass = JSZip
@@ -200,148 +159,112 @@ serve(async (req) => {
     } else {
       throw new Error('Não foi possível inicializar JSZip')
     }
+
     const zip = new JSZipClass()
     let sucesso = 0
     let erros = 0
-    const nomesUsados = new Map<string, number>() // Para rastrear nomes duplicados
+    const nomesUsados = new Map<string, number>()
 
-    // Baixar cada documento e adicionar ao ZIP
     for (let i = 0; i < documentos.length; i++) {
       const doc = documentos[i]
       const url = doc.urlDocumento || doc.url || doc.linkDocumento || doc.link
-      let nome = doc.nomeArquivo || doc.nome || `Documento_${i + 1}.pdf`
+      const nome = doc.nomeArquivo || doc.nome || `Documento_${i + 1}.pdf`
 
       if (!url) {
-        console.warn(`⚠️ Documento ${i + 1} sem URL, pulando...`)
         erros++
         continue
       }
 
-      // Garantir nome único no ZIP (evitar sobrescrita)
       const nomeBase = nome.replace(/[<>:"/\\|?*]/g, '_')
       const extIndex = nomeBase.lastIndexOf('.')
       const nomeSemExt = extIndex > 0 ? nomeBase.substring(0, extIndex) : nomeBase
       const extensao = extIndex > 0 ? nomeBase.substring(extIndex) : '.pdf'
-      
+
       let nomeFinal = nomeBase
       if (nomesUsados.has(nomeBase)) {
-        // Se já existe, incrementar contador e renomear
         const contador = nomesUsados.get(nomeBase)! + 1
         nomesUsados.set(nomeBase, contador)
         nomeFinal = `${nomeSemExt}_${contador}${extensao}`
       } else {
-        // Primeira ocorrência, marcar como usado
         nomesUsados.set(nomeBase, 0)
       }
 
       try {
-        console.log(`📥 Baixando documento ${i + 1}/${documentos.length}: ${nome} -> ${nomeFinal}`)
+        console.log(`📥 Baixando ${i + 1}/${documentos.length}: ${nomeFinal}`)
 
-        // Tentar baixar com timeout e retry
-        let downloadResponse
+        let downloadResponse: Response | null = null
         let retries = 3
-        let lastError
 
         while (retries > 0) {
           try {
             const controller = new AbortController()
-            const timeoutId = setTimeout(() => controller.abort(), 30000) // 30s timeout
+            const timeoutId = setTimeout(() => controller.abort(), 30000)
 
             downloadResponse = await fetch(url, {
               signal: controller.signal,
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; PNCP-Processor/1.0)'
-              }
+              headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PNCP-Processor/1.0)' }
             })
 
             clearTimeout(timeoutId)
 
-            if (downloadResponse.ok) {
-              break
-            } else if (downloadResponse.status >= 500 && retries > 1) {
+            if (downloadResponse.ok) break
+            if (downloadResponse.status >= 500 && retries > 1) {
               retries--
-              await new Promise(resolve => setTimeout(resolve, 2000))
+              await new Promise(r => setTimeout(r, 2000))
               continue
-            } else {
-              throw new Error(`Erro ao baixar documento: ${downloadResponse.status}`)
             }
+            throw new Error(`HTTP ${downloadResponse.status}`)
           } catch (error) {
-            lastError = error
-            if (error.name === 'AbortError') {
+            if ((error as Error).name === 'AbortError') {
               throw new Error('Timeout ao baixar documento (30s)')
             }
             retries--
-            if (retries > 0) {
-              await new Promise(resolve => setTimeout(resolve, 2000))
-            }
+            if (retries > 0) await new Promise(r => setTimeout(r, 2000))
+            else throw error
           }
         }
 
         if (!downloadResponse || !downloadResponse.ok) {
-          throw lastError || new Error(`Erro ao baixar documento após tentativas`)
+          throw new Error('Falha ao baixar documento após tentativas')
         }
 
-        // Obter blob do documento
-        const blob = await downloadResponse.arrayBuffer()
-        
-        // Adicionar ao ZIP (já tem nome sanitizado e único)
-        zip.file(nomeFinal, blob)
+        const arrayBuffer = await downloadResponse.arrayBuffer()
+        zip.file(nomeFinal, arrayBuffer)
         sucesso++
-        console.log(`✅ Documento ${i + 1}/${documentos.length} adicionado ao ZIP: ${nomeFinal}`)
+        console.log(`✅ ${i + 1}/${documentos.length} adicionado: ${nomeFinal} (${(arrayBuffer.byteLength / 1024).toFixed(0)} KB)`)
       } catch (error) {
-        console.error(`❌ Erro ao baixar documento ${i + 1}/${documentos.length} (${nome}):`, error)
+        console.error(`❌ Erro doc ${i + 1} (${nome}):`, (error as Error).message)
         erros++
       }
     }
 
     if (sucesso === 0) {
-      return new Response(
-        JSON.stringify({ error: 'Não foi possível baixar nenhum documento' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return jsonResponse({ error: 'Não foi possível baixar nenhum documento' }, 500)
     }
 
     console.log(`📦 Compactando ${sucesso} documentos em ZIP...`)
 
-    // Gerar ZIP como Uint8Array (mais eficiente)
-    const zipUint8Array = await zip.generateAsync({ type: 'uint8array' })
-    
-    // Converter Uint8Array para base64 de forma eficiente
-    let binary = ''
-    const chunkSize = 8192 // Processar em chunks para evitar problemas de memória
-    for (let i = 0; i < zipUint8Array.length; i += chunkSize) {
-      const chunk = zipUint8Array.subarray(i, i + chunkSize)
-      binary += String.fromCharCode.apply(null, Array.from(chunk))
-    }
-    const base64 = btoa(binary)
+    // Gerar ZIP como Uint8Array e retornar como resposta BINÁRIA
+    const zipUint8Array = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } })
 
-    console.log(`✅ ZIP criado com sucesso! ${sucesso} documentos, ${erros} erros. Tamanho: ${(zipUint8Array.length / 1024 / 1024).toFixed(2)}MB`)
+    const nomeArquivo = `Documentos_${licitacao.numero_controle_pncp}_${new Date().toISOString().split('T')[0]}.zip`
+    console.log(`✅ ZIP criado! ${sucesso} docs, ${erros} erros. Tamanho: ${(zipUint8Array.length / 1024 / 1024).toFixed(2)}MB`)
 
-    // Retornar ZIP como base64
-    return new Response(
-      JSON.stringify({
-        success: true,
-        zipBase64: base64,
-        nomeArquivo: `Documentos_${licitacao.numero_controle_pncp}_${new Date().toISOString().split('T')[0]}.zip`,
-        documentosBaixados: sucesso,
-        documentosErros: erros,
-        totalDocumentos: documentos.length
-      }),
-      {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json'
-        }
-      }
-    )
+    return new Response(zipUint8Array, {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${nomeArquivo}"`,
+        'X-Docs-Sucesso': String(sucesso),
+        'X-Docs-Erros': String(erros),
+        'X-Docs-Total': String(documentos.length),
+        'X-Nome-Arquivo': nomeArquivo,
+      },
+    })
 
   } catch (error) {
     console.error('❌ Erro ao processar requisição:', error)
-    return new Response(
-      JSON.stringify({ error: error.message || 'Erro interno do servidor' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return jsonResponse({ error: (error as Error).message || 'Erro interno do servidor' }, 500)
   }
 })
-

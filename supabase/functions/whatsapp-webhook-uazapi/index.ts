@@ -28,7 +28,7 @@ const UAZAPI_BASE = Deno.env.get('UAZAPI_BASE_URL') || 'https://atendemais.uazap
 // Imagem padrão para os cartões do carrossel (pode ser configurada por env)
 const DEFAULT_DOC_IMAGE =
   Deno.env.get('UAZAPI_DOC_IMAGE_URL') ||
-  'https://via.placeholder.com/400x200.png?text=Documento+do+Edital'
+  'https://ewqqxzvyehhitqbrbqzl.supabase.co/storage/v1/object/public/assets/doc-placeholder.png'
 
 interface Documento {
   urlDocumento: string

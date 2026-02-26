@@ -27,23 +27,16 @@ export function isZipFile(url, nomeArquivo) {
  */
 export async function descompactarZip(url, nomeArquivo) {
   try {
-    
-    // Importar JSZip dinamicamente
     const JSZip = (await import('jszip')).default
     
-    // Tentar usar Edge Function primeiro para contornar CORS
     let blob
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       if (supabaseUrl) {
-        
-        // Obter token de autenticação
-        const { createClient } = await import('@supabase/supabase-js')
         const { supabase } = await import('@/lib/supabase')
         const { data: session } = await supabase.auth.getSession()
         const token = session?.session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY
         
-        // Chamar Edge Function
         const response = await fetch(
           `${supabaseUrl}/functions/v1/descompactar-zip`,
           {
@@ -59,45 +52,22 @@ export async function descompactarZip(url, nomeArquivo) {
           }
         )
         
-        if (response.ok) {
-          const result = await response.json()
-          
-          if (result.success && result.zipBase64) {
-            
-            // Converter base64 para blob de forma eficiente
-            const base64Data = result.zipBase64
-            
-            try {
-              // Decodificar base64 para ArrayBuffer
-              const binaryString = atob(base64Data)
-              const len = binaryString.length
-              const bytes = new Uint8Array(len)
-              for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i)
-              }
-              
-              blob = new Blob([bytes], { type: 'application/zip' })
-              
-              // Validar que o tamanho está correto
-              if (blob.size !== result.tamanho) {
-              }
-            } catch (conversionError) {
-              throw new Error(`Erro ao processar dados do ZIP: ${conversionError.message}`)
-            }
-          } else {
-            const errorMsg = result.error || 'Erro desconhecido na Edge Function'
-            throw new Error(errorMsg)
+        if (!response.ok) {
+          const contentType = response.headers.get('content-type') || ''
+          if (contentType.includes('application/json')) {
+            const errorData = await response.json().catch(() => ({}))
+            throw new Error(errorData.error || `Edge Function erro ${response.status}`)
           }
-        } else {
-          const errorText = await response.text().catch(() => 'Erro desconhecido')
-          throw new Error(`Edge Function retornou erro ${response.status}: ${errorText}`)
+          throw new Error(`Edge Function erro ${response.status}`)
         }
+
+        // A resposta agora é binária (application/zip) — receber como blob diretamente
+        blob = await response.blob()
       } else {
         throw new Error('VITE_SUPABASE_URL não configurado')
       }
     } catch (edgeError) {
-      
-      // Fallback: tentar baixar diretamente
+      // Fallback: tentar baixar diretamente (pode falhar por CORS)
       const response = await fetch(url)
       if (!response.ok) {
         throw new Error(`Erro ao baixar ZIP: ${response.status} ${response.statusText}. Tente novamente mais tarde.`)
@@ -105,34 +75,26 @@ export async function descompactarZip(url, nomeArquivo) {
       blob = await response.blob()
     }
     
-    
     // Descompactar usando JSZip
     const zip = await JSZip.loadAsync(blob)
     
-    // Processar cada arquivo no ZIP
     const arquivos = []
     const promises = []
     
     for (const [caminho, arquivo] of Object.entries(zip.files)) {
-      // Ignorar pastas (arquivos que terminam com /)
       if (arquivo.dir) continue
       
-      // Ignorar arquivos muito grandes (> 50MB) para evitar problemas de memória
       if (arquivo._data && arquivo._data.uncompressedSize > 50 * 1024 * 1024) {
         continue
       }
       
-      // Extrair nome do arquivo do caminho
       const nome = caminho.split('/').pop() || caminho
-      
-      // Determinar tipo do arquivo pela extensão
       const extensao = nome.split('.').pop()?.toLowerCase() || ''
       const tipo = getTipoArquivo(extensao)
       
-      // Criar URL blob para o arquivo
       promises.push(
-        arquivo.async('blob').then(blob => {
-          const blobUrl = URL.createObjectURL(blob)
+        arquivo.async('blob').then(fileBlob => {
+          const blobUrl = URL.createObjectURL(fileBlob)
           
           arquivos.push({
             nome,
@@ -140,16 +102,14 @@ export async function descompactarZip(url, nomeArquivo) {
             url: blobUrl,
             tipo,
             extensao,
-            tamanho: blob.size,
+            tamanho: fileBlob.size,
             nomeOriginal: nomeArquivo,
             caminhoZip: caminho
           })
-          
         })
       )
     }
     
-    // Aguardar todos os arquivos serem processados
     await Promise.all(promises)
     
     return arquivos
@@ -201,4 +161,3 @@ export function limparBlobUrls(arquivos) {
     }
   })
 }
-
