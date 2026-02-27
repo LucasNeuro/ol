@@ -18,10 +18,14 @@ import {
   Star,
   AlertCircle,
   Trash2,
-  MessageSquare,
   Loader2,
-  Brain
+  Brain,
+  StickyNote,
+  Plus,
+  Save,
+  Quote
 } from 'lucide-react'
+import { Textarea } from '@/components/ui/textarea'
 import { supabase } from '@/lib/supabase'
 import { useUserStore } from '@/store/userStore'
 import { format } from 'date-fns'
@@ -29,6 +33,97 @@ import { ptBR } from 'date-fns/locale'
 import { ChatDocumento } from '@/components/ChatDocumento'
 import { VisualizadorDocumento } from '@/components/VisualizadorDocumento'
 import { useNotifications } from '@/hooks/useNotifications'
+import { useNotasEdital } from '@/hooks/useNotasEdital'
+
+// ── Componente inline de notas por licitação ──────────────────────────────
+function NotasCardInline({ licitacaoId, formatarData }) {
+  const { notas, isLoading, adicionarNota, adicionando, deletarNota, habilitado } =
+    useNotasEdital(licitacaoId)
+  const [textNota, setTextNota] = useState('')
+
+  if (!habilitado) return null
+
+  const handleSalvar = async (e) => {
+    e?.preventDefault()
+    if (!textNota.trim()) return
+    try {
+      await adicionarNota({ nota: textNota })
+      setTextNota('')
+    } catch (_) {}
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSalvar()
+  }
+
+  return (
+    <div className="mt-4 border-t pt-4">
+      {/* Cabeçalho */}
+      <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5 mb-3">
+        <StickyNote className="w-4 h-4 text-yellow-500" />
+        Anotações
+        {notas.length > 0 && (
+          <span className="bg-yellow-100 text-yellow-700 text-xs px-1.5 py-0.5 rounded-full font-bold">
+            {notas.length}
+          </span>
+        )}
+      </h4>
+
+      {/* Input de anotação */}
+      <form onSubmit={handleSalvar} className="mb-3 space-y-2">
+        <Textarea
+          value={textNota}
+          onChange={e => setTextNota(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Adicionar anotação... (Ctrl+Enter para salvar)"
+          rows={2}
+          className="w-full text-sm resize-none"
+        />
+        <div className="flex justify-end">
+          <Button
+            type="submit"
+            size="sm"
+            disabled={adicionando || !textNota.trim()}
+            className="gap-1.5"
+          >
+            {adicionando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Salvar
+          </Button>
+        </div>
+      </form>
+
+      {/* Lista de notas */}
+      {isLoading && (
+        <p className="text-xs text-gray-400 flex items-center gap-1">
+          <Loader2 className="w-3 h-3 animate-spin" /> Carregando...
+        </p>
+      )}
+      {!isLoading && notas.length === 0 && (
+        <p className="text-xs text-gray-400 italic">Nenhuma anotação ainda.</p>
+      )}
+      <div className="space-y-2">
+        {notas.map(n => (
+          <div
+            key={n.id}
+            className="flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 group"
+          >
+            <p className="flex-1 text-sm text-gray-700 leading-relaxed">{n.nota}</p>
+            <div className="flex-shrink-0 flex flex-col items-end gap-1">
+              <span className="text-xs text-gray-400 whitespace-nowrap">{formatarData(n.criado_em)}</span>
+              <button
+                onClick={() => deletarNota(n.id)}
+                className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all"
+                title="Excluir"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 function FavoritosContent() {
   const { user } = useUserStore()
@@ -37,9 +132,27 @@ function FavoritosContent() {
   const [cardsExpandidos, setCardsExpandidos] = useState(new Set())
   const [chatAberto, setChatAberto] = useState(false)
   const [documentoSelecionado, setDocumentoSelecionado] = useState(null)
-  const [resumosIA, setResumosIA] = useState({})
   const [visualizadorAberto, setVisualizadorAberto] = useState(false)
   const [documentoVisualizacao, setDocumentoVisualizacao] = useState(null)
+
+  // Buscar contagem de notas por licitação (para badge nos cards)
+  const { data: notasContagemMap = {} } = useQuery({
+    queryKey: ['notas-edital-contagem', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return {}
+      const { data, error } = await supabase
+        .from('notas_edital')
+        .select('licitacao_id')
+        .eq('usuario_id', user.id)
+      if (error) return {}
+      return (data || []).reduce((acc, n) => {
+        acc[n.licitacao_id] = (acc[n.licitacao_id] || 0) + 1
+        return acc
+      }, {})
+    },
+    enabled: !!user?.id,
+    staleTime: 1000 * 60 * 2,
+  })
 
   // Buscar favoritos do usuário
   const { data: favoritos = [], isLoading, error } = useQuery({
@@ -109,122 +222,6 @@ function FavoritosContent() {
       return newSet
     })
     
-    // Se está expandindo E não tem resumo ainda, gerar
-    if (!estaExpandido && !resumosIA[licitacaoId]) {
-      gerarResumo(licitacaoId, licitacao)
-    }
-  }
-
-  const gerarResumo = async (licitacaoId, licitacao) => {
-    setResumosIA(prev => ({
-      ...prev,
-      [licitacaoId]: { loading: true, resumo: null, erro: null }
-    }))
-
-    try {
-      const mistralApiKey = import.meta.env.VITE_MISTRAL_API_KEY
-
-      if (!mistralApiKey) {
-        throw new Error('Chave da API Mistral não configurada')
-      }
-
-      const contextoLicitacao = `
-EDITAL: ${licitacao.numero_controle_pncp}
-OBJETO: ${licitacao.objeto_compra}
-ÓRGÃO: ${licitacao.orgao_razao_social} (${licitacao.uf_sigla})
-MODALIDADE: ${licitacao.modalidade_nome}
-VALOR: R$ ${licitacao.valor_total_estimado?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || 'Não informado'}
-PUBLICAÇÃO: ${formatarData(licitacao.data_publicacao_pncp)}
-${licitacao.dados_completos?.dataAberturaProposta ? `ABERTURA: ${formatarData(licitacao.dados_completos.dataAberturaProposta)}` : ''}
-${licitacao.dados_completos?.dataEncerramentoProposta ? `ENCERRAMENTO: ${formatarData(licitacao.dados_completos.dataEncerramentoProposta)}` : ''}
-ITENS: ${licitacao.itens?.length || 0}
-DOCUMENTOS: ${licitacao.anexos?.length || 0}
-      `.trim()
-
-      let cnaesSecundarios = []
-      try {
-        if (user?.cnaes_secundarios) {
-          cnaesSecundarios = Array.isArray(user.cnaes_secundarios) 
-            ? user.cnaes_secundarios 
-            : JSON.parse(user.cnaes_secundarios)
-        }
-      } catch (e) {
-        cnaesSecundarios = []
-      }
-      
-      const perfilEmpresa = user ? `
-EMPRESA LOGADA:
-Razão Social: ${user.razao_social || 'Não informado'}
-CNPJ: ${user.cnpj || 'Não informado'}
-CNAE Principal: ${user.cnae_principal || 'Não informado'}
-CNAEs Secundários: ${cnaesSecundarios.length > 0 ? cnaesSecundarios.join(', ') : 'Nenhum'}
-Porte: ${user.porte_empresa || 'Não informado'}
-UF: ${user.uf || 'Não informado'}
-      `.trim() : ''
-
-      const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${mistralApiKey}`
-        },
-        body: JSON.stringify({
-          model: 'mistral-small-latest',
-          messages: [
-            {
-              role: 'system',
-              content: 'Você é um assistente especializado em análise de licitações públicas brasileiras. Seja objetivo, técnico e preciso. NUNCA use emojis.'
-            },
-            {
-              role: 'user',
-              content: `Analise esta licitação e crie um resumo executivo profissional em UM ÚNICO PARÁGRAFO (máximo 120 palavras).
-
-ESTRUTURA OBRIGATÓRIA:
-1. Inicie com "Edital [NÚMERO] - [MODALIDADE]"
-2. Descreva o objeto resumidamente
-3. Informe valor e prazo de encerramento
-4. Avalie a compatibilidade da empresa com base nos CNAEs (use ALTA/MÉDIA/BAIXA em NEGRITO)
-5. Finalize com recomendação clara (PARTICIPAR ou NÃO PARTICIPAR em NEGRITO)
-
-${contextoLicitacao}
-
-${perfilEmpresa}
-
-REGRAS CRÍTICAS:
-- UM ÚNICO PARÁGRAFO, texto corrido
-- Use **negrito** para destacar: COMPATIBILIDADE, VALOR, PRAZO e RECOMENDAÇÃO
-- SEM emojis, SEM quebras de linha, SEM listas
-- Linguagem técnica e objetiva
-- Foque na análise de aderência aos CNAEs da empresa`
-            }
-          ],
-          temperature: 0.2,
-          max_tokens: 300
-        })
-      })
-
-      if (!response.ok) {
-        throw new Error(`Erro na API: ${response.status}`)
-      }
-
-      const data = await response.json()
-      const resumo = data.choices[0].message.content
-
-      setResumosIA(prev => ({
-        ...prev,
-        [licitacaoId]: { loading: false, resumo, erro: null }
-      }))
-
-    } catch (error) {
-      setResumosIA(prev => ({
-        ...prev,
-        [licitacaoId]: { 
-          loading: false, 
-          resumo: null, 
-          erro: error.message 
-        }
-      }))
-    }
   }
 
   const handleRemoverFavorito = async (e, favoritoId) => {
@@ -340,6 +337,12 @@ REGRAS CRÍTICAS:
                             <Badge variant="outline" className="text-xs">
                               <FileText className="w-3 h-3 mr-1" />
                               {licitacao.itens.length} {licitacao.itens.length > 1 ? 'itens' : 'item'}
+                            </Badge>
+                          )}
+                          {notasContagemMap[licitacao.id] > 0 && (
+                            <Badge className="bg-yellow-100 text-yellow-700 border-yellow-300 text-xs border">
+                              <StickyNote className="w-3 h-3 mr-1" />
+                              {notasContagemMap[licitacao.id]} {notasContagemMap[licitacao.id] === 1 ? 'nota' : 'notas'}
                             </Badge>
                           )}
                         </>
@@ -484,17 +487,11 @@ REGRAS CRÍTICAS:
                     </div>
                   )}
 
-                  {/* Notas */}
-                  {favorito.notas && (
-                    <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                      <p className="text-sm text-gray-700">
-                        <span className="font-semibold">Notas:</span> {favorito.notas}
-                      </p>
-                    </div>
-                  )}
+                  {/* Notas e Anotações */}
+                  <NotasCardInline licitacaoId={licitacao.id} formatarData={formatarData} />
 
                   {/* Footer */}
-                  <div className="flex items-center justify-between pt-4 border-t">
+                  <div className="flex items-center justify-between pt-4 border-t mt-4">
                     <div className="flex items-center gap-2 text-sm text-gray-500">
                       <span>Favoritado em: {formatarData(favorito.data_adicao)}</span>
                     </div>
@@ -503,70 +500,6 @@ REGRAS CRÍTICAS:
                   {/* Seção Expansível com Detalhes */}
                   {cardsExpandidos.has(licitacao.id) && (
                     <div className="mt-6 pt-6 border-t space-y-6 animate-in slide-in-from-top-2">
-                      {/* Resumo IA */}
-                      <div className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-lg p-4 border border-purple-200">
-                        <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                          <MessageSquare className="w-5 h-5 text-purple-600" />
-                          Resumo Inteligente (IA)
-                          <Badge className="bg-purple-600 text-white text-xs">Mistral AI</Badge>
-                        </h4>
-                        
-                        {/* Loading */}
-                        {resumosIA[licitacao.id]?.loading && (
-                          <div className="flex items-center gap-3 py-6">
-                            <Loader2 className="w-5 h-5 text-purple-600 animate-spin" />
-                            <p className="text-sm text-gray-600">Gerando resumo inteligente...</p>
-                          </div>
-                        )}
-                        
-                        {/* Erro */}
-                        {resumosIA[licitacao.id]?.erro && (
-                          <div className="bg-red-50 border border-red-200 rounded p-3">
-                            <p className="text-sm text-red-700">
-                              ⚠️ {resumosIA[licitacao.id].erro}
-                            </p>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => gerarResumo(licitacao.id, licitacao)}
-                              className="mt-2 text-xs"
-                            >
-                              Tentar novamente
-                            </Button>
-                          </div>
-                        )}
-                        
-                        {/* Resumo */}
-                        {resumosIA[licitacao.id]?.resumo && (
-                          <div className="bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
-                            <div 
-                              className="text-sm text-gray-800 leading-loose text-justify"
-                              dangerouslySetInnerHTML={{
-                                __html: resumosIA[licitacao.id].resumo
-                                  .replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-gray-900">$1</strong>')
-                                  .replace(/\*(.*?)\*/g, '<em class="italic">$1</em>')
-                              }}
-                            />
-                            
-                            {/* Rodapé com info */}
-                            <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
-                              <p className="text-xs text-gray-500 flex items-center gap-1">
-                                <MessageSquare className="w-3 h-3" />
-                                Análise gerada por IA
-                              </p>
-                              <button
-                                onClick={() => {
-                                  navigator.clipboard.writeText(resumosIA[licitacao.id].resumo)
-                                  // TODO: Mostrar toast de sucesso
-                                }}
-                                className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1"
-                              >
-                                Copiar resumo
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
 
                       {/* Anexos/Documentos */}
                       {licitacao.anexos && licitacao.anexos.length > 0 && (
@@ -618,7 +551,8 @@ REGRAS CRÍTICAS:
                                       if (anexo.url) {
                                         setDocumentoVisualizacao({
                                           url: anexo.url,
-                                          nome: anexo.nomeArquivo || anexo.nome || anexo.nomeDocumento || `Documento ${index + 1}`
+                                          nome: anexo.nomeArquivo || anexo.nome || anexo.nomeDocumento || `Documento ${index + 1}`,
+                                          licitacaoId: licitacao.id
                                         })
                                         setVisualizadorAberto(true)
                                       }
@@ -822,6 +756,7 @@ REGRAS CRÍTICAS:
         onOpenChange={setVisualizadorAberto}
         urlDocumento={documentoVisualizacao?.url}
         nomeArquivo={documentoVisualizacao?.nome}
+        licitacaoId={documentoVisualizacao?.licitacaoId}
       />
 
     </AppLayout>

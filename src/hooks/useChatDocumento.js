@@ -80,7 +80,8 @@ export function useChatDocumento() {
   }, [])
 
   // Enviar pergunta ao documento
-  const enviarPergunta = useCallback(async (pergunta) => {
+  // contextoPagina: { paginaAtual?: number, textoPagina?: string }
+  const enviarPergunta = useCallback(async (pergunta, contextoPagina = null) => {
     if (!documentoProcessado) {
       throw new Error('Nenhum documento processado')
     }
@@ -126,7 +127,9 @@ export function useChatDocumento() {
             historico: mensagens.map(m => ({
               role: m.role,
               content: m.content
-            }))
+            })),
+            paginaAtual: contextoPagina?.paginaAtual ?? null,
+            textoPagina: contextoPagina?.textoPagina ?? null,
           }),
         }
       )
