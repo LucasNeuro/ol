@@ -7,13 +7,11 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-// ── Limpar chave da API ───────────────────────────────────────────────────
-function sanitizeKey(raw: string): string {
-  return raw
-    .replace(/[\r\n\x00-\x1F\x7F]/g, '')
-    .replace(/^["'\s]+|["'\s]+$/g, '')
-    .replace(/^(?:bearer\s+)/i, '')
-    .trim()
+// ── Ler chave da API (apenas trim) ────────────────────────────────────────
+function readApiKey(): string {
+  const raw = Deno.env.get('MISTRAL_API_KEY') ?? ''
+  const key = raw.trim()
+  return key
 }
 
 // ── Buscar bytes do PDF ───────────────────────────────────────────────────
@@ -64,8 +62,7 @@ serve(async (req) => {
 
   // ── GET = teste de chave (sem abrir documento) ───────────────────────────
   if (req.method === 'GET') {
-    const rawKey = Deno.env.get('MISTRAL_API_KEY') ?? ''
-    const key = sanitizeKey(rawKey)
+    const key = readApiKey()
     const keyOk = key.length >= 20
     if (!keyOk) {
       return new Response(
@@ -139,12 +136,13 @@ serve(async (req) => {
     console.log('📄 URL:', documentoUrl)
 
     // ── Chave Mistral ──────────────────────────────────────────────────────
-    const mistralApiKey = sanitizeKey(Deno.env.get('MISTRAL_API_KEY') || '')
-    console.log('🔑 Key length:', mistralApiKey.length, '| prefix:', mistralApiKey.slice(0, 6) + '...')
+    const mistralApiKey = readApiKey()
+    console.log('🔑 Key length:', mistralApiKey.length, '| prefix:', mistralApiKey.slice(0, 8) + '...')
 
-    if (!mistralApiKey) {
+    if (!mistralApiKey || mistralApiKey.length < 20) {
       throw new Error(
-        'MISTRAL_API_KEY não encontrada. Supabase → Edge Functions → Manage secrets → adicione MISTRAL_API_KEY (sem aspas). Depois faça redeploy da função.',
+        `MISTRAL_API_KEY não encontrada ou inválida (length=${mistralApiKey.length}). ` +
+        'Supabase → Edge Functions → Manage secrets → MISTRAL_API_KEY. Depois faça redeploy.',
       )
     }
 
@@ -155,6 +153,7 @@ serve(async (req) => {
     let ultimaMensagem
 
     if (textoPagina && typeof textoPagina === 'string' && textoPagina.trim().length > 0) {
+      console.log(`📄 Modo TEXTO da página (${textoPagina.trim().length} chars) — NÃO baixando PDF`)
       const paginaLabel = paginaAtual ? `página ${paginaAtual}` : 'página atual'
       const textoLimitado =
         textoPagina.length > 20_000
@@ -294,12 +293,6 @@ Você é o Assistente do Sistema Licitação: especialista em licitações públ
     console.log('✅ Resposta:', resposta.slice(0, 120) + '...')
     const usage = mistralData?.usage ?? {}
     console.log('📊 Tokens:', usage)
-
-    // ── Registrar acesso (best-effort) ─────────────────────────────────────
-    if (documentoId && supabaseUrl && serviceKey) {
-      const sb = createClient(supabaseUrl, serviceKey)
-      await sb.rpc('registrar_acesso_documento', { doc_id: documentoId }).catch(() => {})
-    }
 
     return new Response(
       JSON.stringify({
